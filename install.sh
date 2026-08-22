@@ -1,0 +1,376 @@
+#!/bin/bash
+# install.sh — set up this Claude Code configuration on your machine.
+#
+# What it touches (and nothing else):
+#   ~/.claude/CLAUDE.md            your standing rulebook (only if you have none)
+#   ~/.claude/hooks/               the two hook scripts + their config files
+#   ~/.claude/project-template/    starter files for new projects
+#   ~/.claude/skills/              the cherry-picked skills (never overwrites)
+#   ~/.claude/settings.json        adds hook registrations, keeps everything else
+#
+# Anything it would overwrite is copied to ~/.claude/.setup-backup-<timestamp>/
+# first. Nothing is ever deleted. Re-running it is safe.
+#
+# Usage:  ./install.sh          interactive (recommended)
+#         ./install.sh --yes    accept safe defaults, ask nothing
+#
+set -u
+
+SRC="$(cd "$(dirname "$0")" && pwd -P)"
+DEST="$HOME/.claude"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+BACKUP="$DEST/.setup-backup-$STAMP"
+ASSUME_YES=0
+[ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ] && ASSUME_YES=1
+
+# --- output helpers --------------------------------------------------------
+if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'
+else B=''; G=''; Y=''; R=''; N=''; fi
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
+skip() { printf '  %s·%s %s\n' "$Y" "$N" "$*"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+die()  { printf '\n%sStopped:%s %s\n' "$R" "$N" "$*"; exit 1; }
+head2(){ printf '\n%s%s%s\n' "$B" "$*" "$N"; }
+
+# ask "question" "default(y/n)" -> returns 0 for yes
+ask() {
+  local q="$1" def="$2" reply
+  if [ "$ASSUME_YES" = "1" ]; then [ "$def" = "y" ]; return; fi
+  if [ ! -t 0 ]; then [ "$def" = "y" ]; return; fi
+  local hint="[y/N]"; [ "$def" = "y" ] && hint="[Y/n]"
+  printf '  %s %s ' "$q" "$hint"
+  read -r reply || reply=""
+  reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
+  [ -z "$reply" ] && reply="$def"
+  [ "$reply" = "y" ] || [ "$reply" = "yes" ]
+}
+
+# askval "question" "default" -> echoes the answer
+askval() {
+  local q="$1" def="${2:-}" reply
+  if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then printf '%s' "$def"; return; fi
+  if [ -n "$def" ]; then printf '  %s [%s] ' "$q" "$def" >&2
+  else printf '  %s ' "$q" >&2; fi
+  read -r reply || reply=""
+  [ -z "$reply" ] && reply="$def"
+  printf '%s' "$reply"
+}
+
+# Copy a file, backing up any existing different version first.
+backup_then_copy() {
+  local from="$1" to="$2" label="$3"
+  if [ -f "$to" ]; then
+    if cmp -s "$from" "$to"; then skip "$label — already current"; return; fi
+    mkdir -p "$(dirname "$BACKUP/${to#"$DEST/"}")"
+    cp -p "$to" "$BACKUP/${to#"$DEST/"}" || die "could not back up $to"
+    cp "$from" "$to" || die "could not write $to"
+    ok "$label — updated (old copy in ${BACKUP##*/}/)"
+  else
+    mkdir -p "$(dirname "$to")"
+    cp "$from" "$to" || die "could not write $to"
+    ok "$label — installed"
+  fi
+}
+
+# --- preflight -------------------------------------------------------------
+say ""
+say "${B}Claude Code setup${N}"
+say "Installing into $DEST"
+
+[ -f "$SRC/hooks/check-claude-md.sh" ] || die "run this from inside the repo folder (hooks/ not found)."
+
+JSONTOOL=""
+command -v node    >/dev/null 2>&1 && JSONTOOL="node"
+[ -z "$JSONTOOL" ] && command -v python3 >/dev/null 2>&1 && JSONTOOL="python3"
+
+mkdir -p "$DEST/hooks" "$DEST/skills" "$DEST/project-template" || die "cannot create $DEST"
+
+# --- 1. hooks --------------------------------------------------------------
+head2 "1. Hook scripts"
+backup_then_copy "$SRC/hooks/check-claude-md.sh" "$DEST/hooks/check-claude-md.sh" "check-claude-md.sh (SessionStart)"
+backup_then_copy "$SRC/hooks/auto-backup.sh"     "$DEST/hooks/auto-backup.sh"     "auto-backup.sh (Stop)"
+backup_then_copy "$SRC/hooks/interview.md"       "$DEST/hooks/interview.md"       "interview.md (new-project questions)"
+chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" 2>/dev/null
+
+# --- 2. rulebook -----------------------------------------------------------
+head2 "2. Your standing rulebook (~/.claude/CLAUDE.md)"
+if [ -f "$DEST/CLAUDE.md" ]; then
+  # Never clobber this either — a user merging rules across may have edited it.
+  [ -f "$DEST/CLAUDE-template-from-setup.md" ] \
+    || cp "$SRC/TEMPLATE-CLAUDE.md" "$DEST/CLAUDE-template-from-setup.md" 2>/dev/null
+  skip "You already have one — left untouched."
+  say  "     The blank template is at ~/.claude/CLAUDE-template-from-setup.md if you"
+  say  "     want to merge pieces in. Your rules stay yours."
+else
+  cp "$SRC/TEMPLATE-CLAUDE.md" "$DEST/CLAUDE.md" || die "could not write $DEST/CLAUDE.md"
+  ok "Installed the blank template — fill it in (it tells you what goes where)."
+fi
+
+# --- 3. project template + skills -----------------------------------------
+head2 "3. Project starter files and skills"
+tcount=0
+while IFS= read -r f; do
+  rel="${f#"$SRC/project-template/"}"
+  target="$DEST/project-template/$rel"
+  mkdir -p "$(dirname "$target")"
+  [ -f "$target" ] || { cp "$f" "$target" && tcount=$((tcount+1)); }
+done < <(find "$SRC/project-template" -type f 2>/dev/null)
+[ "$tcount" -gt 0 ] && ok "project-template/ — $tcount file(s) added" || skip "project-template/ — already present"
+
+scount=0; sskip=0
+while IFS= read -r d; do
+  name="$(basename "$d")"
+  if [ -e "$DEST/skills/$name" ]; then sskip=$((sskip+1)); continue; fi
+  cp -R "$d" "$DEST/skills/$name" && scount=$((scount+1))
+done < <(find "$SRC/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+# The skills are third-party MIT files; their notices travel with them.
+for lic in ATTRIBUTION.md LICENSE-mattpocock LICENSE-ponytail; do
+  [ -f "$SRC/skills/$lic" ] && [ ! -f "$DEST/skills/$lic" ] \
+    && cp "$SRC/skills/$lic" "$DEST/skills/$lic"
+done
+[ "$scount" -gt 0 ] && ok "skills/ — $scount installed (with their licences)"
+[ "$sskip" -gt 0 ] && skip "skills/ — $sskip already existed, left alone"
+
+# --- 4. project roots ------------------------------------------------------
+head2 "4. Where do you keep your projects?"
+say "  When a session starts in a folder under one of these paths and that project"
+say "  has no CLAUDE.md, Claude interviews you and writes one. Outside them it does"
+say "  nothing. Type - to switch this off."
+ROOTS_CONF="$DEST/hooks/project-roots.conf"
+if [ -f "$ROOTS_CONF" ]; then
+  skip "Already configured — keeping $(grep -cvE '^[[:space:]]*(#|$)' "$ROOTS_CONF" 2>/dev/null || true) path(s)."
+else
+  roots="$(askval "Projects folder (- to switch off):" "$HOME/projects")"
+  [ "$roots" = "-" ] && roots=""
+  {
+    printf '# One project-root folder per line. Blank lines and # comments ignored.\n'
+    printf '# The new-project interview only fires inside these folders.\n'
+    [ -n "$roots" ] && printf '%s\n' "$roots"
+  } > "$ROOTS_CONF"
+  if [ -n "$roots" ]; then
+    ok "Interview enabled for: $roots"
+    [ -d "$roots" ] || warn "that folder doesn't exist yet — fine, it'll work once it does"
+  else
+    ok "Interview switched off (edit $ROOTS_CONF to enable later)"
+  fi
+fi
+
+# --- 5. register the SessionStart hook -------------------------------------
+head2 "5. Turning the hooks on (~/.claude/settings.json)"
+# Back up an EXISTING settings.json before touching it. A file we are about
+# to create ourselves is not a replacement and must not be reported as one.
+SETTINGS_PREEXISTED=0
+if [ -f "$DEST/settings.json" ]; then
+  SETTINGS_PREEXISTED=1
+  if [ ! -f "$BACKUP/settings.json" ]; then
+    mkdir -p "$BACKUP" || die "could not create the backup folder"
+    # No 2>/dev/null here: if we cannot back it up we must not edit it.
+    cp -p "$DEST/settings.json" "$BACKUP/settings.json" \
+      || die "could not back up settings.json — refusing to modify it"
+  fi
+else
+  printf '{}\n' > "$DEST/settings.json"
+fi
+
+register_hook() {   # event  command  timeout  statusMessage
+  local ev="$1" cmd="$2" to="$3" sm="$4" out=""
+  case "$JSONTOOL" in
+    node)
+      out=$(node -e '
+        const fs=require("fs");
+        const [p,ev,cmd,to,sm]=process.argv.slice(1);
+        let s={}; const raw=fs.readFileSync(p,"utf8").trim();
+        try{ s=raw?JSON.parse(raw):{}; }catch(e){ console.log("PARSE_FAIL"); process.exit(0); }
+        if(s.hooks===undefined) s.hooks={};
+        if(s.hooks===null || typeof s.hooks!=="object" || Array.isArray(s.hooks)){
+          console.log("SHAPE_FAIL"); process.exit(0); }
+        if(s.hooks[ev]===undefined) s.hooks[ev]=[];
+        if(!Array.isArray(s.hooks[ev])){ console.log("SHAPE_FAIL"); process.exit(0); }
+        const dup = s.hooks[ev].some(g =>
+          (g && Array.isArray(g.hooks) ? g.hooks : []).some(h => h && h.command === cmd));
+        if(dup){ console.log("ALREADY"); process.exit(0); }
+        const h={type:"command",command:cmd};
+        if(to) h.timeout=Number(to);
+        if(sm) h.statusMessage=sm;
+        s.hooks[ev].push({hooks:[h]});
+        // Write to a temp file in the same directory and rename over the
+        // target, so a failed or partial write can never truncate the
+        // original settings.json.
+        const tmp=p+".setup-tmp";
+        fs.writeFileSync(tmp, JSON.stringify(s,null,2)+"\n");
+        fs.renameSync(tmp, p);
+        console.log("ADDED");
+      ' "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" 2>/dev/null) ;;
+    python3)
+      out=$(python3 - "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" <<'PYEOF' 2>/dev/null
+import json,os,sys
+p,ev,cmd,to,sm = sys.argv[1:6]
+try:
+    raw=open(p).read().strip()
+    s=json.loads(raw) if raw else {}
+except Exception:
+    print("PARSE_FAIL"); sys.exit(0)
+if "hooks" not in s: s["hooks"] = {}
+if not isinstance(s.get("hooks"), dict):
+    print("SHAPE_FAIL"); sys.exit(0)
+if ev not in s["hooks"]: s["hooks"][ev] = []
+if not isinstance(s["hooks"][ev], list):
+    print("SHAPE_FAIL"); sys.exit(0)
+dup = any(h.get("command") == cmd
+          for g in s["hooks"][ev] if isinstance(g, dict)
+          for h in g.get("hooks", []) if isinstance(h, dict))
+if dup:
+    print("ALREADY"); sys.exit(0)
+h={"type":"command","command":cmd}
+if to: h["timeout"]=int(to)
+if sm: h["statusMessage"]=sm
+s["hooks"][ev].append({"hooks":[h]})
+# Atomic: write beside the target, then rename over it.
+tmp = p + ".setup-tmp"
+with open(tmp,"w") as fh: fh.write(json.dumps(s,indent=2)+"\n")
+os.replace(tmp, p)
+print("ADDED")
+PYEOF
+) ;;
+    *) out="NOTOOL" ;;
+  esac
+  printf '%s' "$out"
+}
+
+SESSION_CMD='/bin/bash "$HOME/.claude/hooks/check-claude-md.sh"'
+res=$(register_hook "SessionStart" "$SESSION_CMD" "" "Checking for project CLAUDE.md...")
+report_hook_result() {   # $1 = result  $2 = human name of the hook
+  case "$1" in
+    ADDED)      ok "$2 registered" ;;
+    ALREADY)    skip "$2 was already registered" ;;
+    PARSE_FAIL) warn "settings.json isn't valid JSON — not touching it. Add $2 by hand (see INSTALL.md)." ;;
+    SHAPE_FAIL) warn "settings.json is valid JSON but its \"hooks\" block has an unexpected shape — not touching it. Add $2 by hand (see INSTALL.md)." ;;
+    NOTOOL)     warn "no node or python3 found — add $2 by hand (see INSTALL.md)." ;;
+    *)          warn "could not register $2 — add it by hand (see INSTALL.md)." ;;
+  esac
+}
+report_hook_result "$res" "the SessionStart hook"
+[ "$res" = "ADDED" ] && say "     Your rules now get re-asserted at the start of every session."
+# #9: a backup copy only earns its place if we actually changed the file.
+[ "$res" = "ADDED" ] || [ "$SETTINGS_PREEXISTED" = "0" ] || rm -f "$BACKUP/settings.json" 2>/dev/null
+
+# --- 6. the backup hook (opt-in) -------------------------------------------
+# The whole design rests on ~/.claude/.gitignore being a strict ALLOWLIST. A
+# printed "please check this yourself" is not a safeguard, so we prove it with
+# git instead: check-ignore applies exactly the rules `git add -A` will apply.
+# Every sensitive path must be ignored. If any is not, the hook is NOT armed.
+UNIGNORED=""
+allowlist_proves_safe() {
+  local t rc=0 pth
+  UNIGNORED=""
+  [ -f "$DEST/.gitignore" ] || return 1
+  t="$(mktemp -d 2>/dev/null)" || return 1
+  cp "$DEST/.gitignore" "$t/.gitignore" 2>/dev/null || { rm -rf "$t"; return 1; }
+  git -C "$t" init -q >/dev/null 2>&1 || { rm -rf "$t"; return 1; }
+  # The canary matters more than the named paths: only a file that ignores
+  # EVERYTHING by default can ignore a name it has never seen. A denylist that
+  # happens to name the paths below would otherwise pass this check while
+  # leaving .claude.json, settings.local.json, mcp.json and friends exposed.
+  for pth in zz-canary-never-seen-before.tmp \
+             .credentials.json history.jsonl .env .claude.json \
+             settings.local.json mcp.json statsig/x plugins/x \
+             projects/a-project/session.jsonl \
+             shell-snapshots/snapshot.sh sessions/s.json todos/t.json downloads/x; do
+    git -C "$t" check-ignore -q "$pth" 2>/dev/null || { rc=1; UNIGNORED="$UNIGNORED
+       - $pth"; }
+  done
+  rm -rf "$t"
+  return $rc
+}
+
+head2 "6. Auto-backup of your config (optional, OFF by default)"
+say "  This commits and PUSHES every change under ~/.claude to a git repo at the"
+say "  end of every turn, without showing you a diff. Useful, but it means your"
+say "  standing instructions live in a repo that must stay PRIVATE."
+say "  Skip it now and turn it on later any time — nothing else depends on it."
+if [ -f "$DEST/hooks/backup.conf" ]; then
+  skip "Already configured (edit ~/.claude/hooks/backup.conf to change)."
+elif ask "Set up the auto-backup hook?" "n"; then
+  if [ -f "$DEST/.gitignore" ]; then
+    skip "~/.claude/.gitignore already exists — not replacing it."
+  else
+    cp "$SRC/hooks/dot-claude.gitignore" "$DEST/.gitignore" \
+      && ok "Installed the allowlist ~/.claude/.gitignore"
+  fi
+
+  if ! allowlist_proves_safe; then
+    warn "NOT enabling the backup hook — your ~/.claude/.gitignore does not"
+    say  "     ignore these, so they would be committed and pushed:$UNIGNORED"
+    say  ""
+    say  "     That file needs to be an allowlist (ignore everything, then"
+    say  "     re-include named files). Merge hooks/dot-claude.gitignore from"
+    say  "     this repo into it and run this installer again."
+    say  "     Nothing has been changed — the hook stays off."
+  else
+    ok "Verified with git: it ignores everything by default, including a name"
+    say  "     it has never seen — so new files are safe too, not just known ones."
+    gname="$(askval "git name for the backup commits:" "$(git config --global user.name 2>/dev/null)")"
+    gmail="$(askval "git email for the backup commits:" "$(git config --global user.email 2>/dev/null)")"
+    say  "  A mirror folder gets readable copies of your rules AND settings.json."
+    say  "  Whatever repo it lives in must be PRIVATE too. Blank to skip it."
+    mirror="$(askval "optional folder for readable copies (blank = skip):" "")"
+    # Strip control bytes: these values land in a config file the hook reads.
+    strip_ctl() { printf '%s' "$1" | tr -d '\000-\037'; }
+    {
+      printf '# Written by install.sh — settings for the auto-backup Stop hook.\n'
+      printf '# Plain KEY=value. NOT a shell script: auto-backup.sh parses this\n'
+      printf '# file line by line and never sources it, so nothing here executes.\n'
+      printf 'AUTHOR=%s <%s>\n' "$(strip_ctl "$gname")" "$(strip_ctl "$gmail")"
+      printf 'MIRROR_DIR=%s\n' "$(strip_ctl "$mirror")"
+    } > "$DEST/hooks/backup.conf"
+    ok "Wrote ~/.claude/hooks/backup.conf"
+    res=$(register_hook "Stop" '/bin/bash "$HOME/.claude/hooks/auto-backup.sh"' "30" "Backing up config changes...")
+    report_hook_result "$res" "the Stop hook"
+    # Must be the ROOT of a repo, not merely inside one. If $HOME is a git
+    # repo (the dotfiles pattern), --is-inside-work-tree says "true" for
+    # ~/.claude and `git add -A` would stage the whole home directory —
+    # somewhere the ~/.claude/.gitignore allowlist cannot reach.
+    dest_top=$(git -C "$DEST" rev-parse --show-toplevel 2>/dev/null)
+    if [ -n "$dest_top" ] && [ "$(cd "$dest_top" && pwd -P)" != "$(cd "$DEST" && pwd -P)" ]; then
+      warn "~/.claude is inside a LARGER git repo ($dest_top), not its own."
+      say  "     The backup hook will refuse to run there, on purpose: committing"
+      say  "     from inside ~/.claude would stage that whole repository, and the"
+      say  "     allowlist cannot protect files outside ~/.claude (~/.ssh, ~/.aws)."
+      say  "     Make ~/.claude its own repo to use the backup hook."
+    elif [ -z "$dest_top" ]; then
+      warn "~/.claude is not a git repo yet. The hook stays quiet until it is."
+      say  "     When ready, and looking before you leap:"
+      say  "       cd ~/.claude && git init && git add -A && git status"
+      say  "     Read that list. Only if it holds nothing you would not publish:"
+      say  "       git commit -m init"
+      say  "     then add a PRIVATE remote and push once by hand."
+    fi
+  fi
+else
+  skip "Skipped. The Stop hook stays inert until ~/.claude/hooks/backup.conf exists."
+fi
+
+# --- done ------------------------------------------------------------------
+head2 "Done"
+if [ -d "$BACKUP" ] && [ -n "$(ls -A "$BACKUP" 2>/dev/null)" ]; then
+  say "  Files that were replaced are saved in ~/.claude/${BACKUP##*/}/"
+else
+  rmdir "$BACKUP" 2>/dev/null
+fi
+cat <<'NEXT'
+
+  Next, in this order:
+    1. Open ~/.claude/CLAUDE.md and fill it in. It is written as a
+       fill-in-the-blanks form and explains why each part helps.
+    2. Start a new Claude Code session (hooks load at session start, so an
+       already-open session will not see them yet).
+    3. Ask Claude: "what process rules are you working under?" — if it can
+       list them back, the setup is live.
+
+  Optional reading, in the repo you just ran this from:
+    README.md            what this is and why it is shaped this way
+    CLAUDE-global.md     a real, lived-in rulebook to borrow rules from
+    MULTI-CHAT-ROLES.md  running several Claude chats on one codebase
+NEXT
+say ""

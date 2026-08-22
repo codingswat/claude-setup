@@ -1,0 +1,25 @@
+# Secrets — never committed
+.env
+.env.*
+.env*.local
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log

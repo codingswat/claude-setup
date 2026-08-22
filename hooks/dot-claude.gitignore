@@ -1,0 +1,21 @@
+# Allowlist: ignore everything, then re-include only the files worth
+# backing up. Session logs, caches, and anything token-like stay OUT.
+*
+!.gitignore
+!CLAUDE.md
+!CHANGELOG.md
+!settings.json
+!hooks/
+!hooks/**
+!project-template/
+!project-template/**
+!skills/
+!skills/**
+# Memory notes (per-project facts Claude saves across sessions) — but not
+# the session transcripts that live next to them under projects/.
+!projects/
+projects/*
+!projects/*/
+projects/*/*
+!projects/*/memory/
+!projects/*/memory/**
