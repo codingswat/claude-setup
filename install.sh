@@ -104,7 +104,13 @@ if [ -f "$DEST/CLAUDE.md" ]; then
   say  "     want to merge pieces in. Your rules stay yours."
 else
   cp "$SRC/TEMPLATE-CLAUDE.md" "$DEST/CLAUDE.md" || die "could not write $DEST/CLAUDE.md"
-  ok "Installed the blank template — fill it in (it tells you what goes where)."
+  ok "Installed the starter rulebook — open it and fill in the marked sections."
+  warn "It is a form, but it is NOT empty: 15 starter rules are active from your"
+  say  "     next session. Rules 1 and 2 let Claude commit, push, merge to main"
+  say  "     and delete leftover branches on its own, in every project, without"
+  say  "     asking again. That is deliberate — it is what stops work getting"
+  say  "     lost — but read them now and edit them if you would rather approve"
+  say  "     each push yourself."
 fi
 
 # --- 3. project template + skills -----------------------------------------
@@ -179,7 +185,11 @@ register_hook() {   # event  command  timeout  statusMessage
     node)
       out=$(node -e '
         const fs=require("fs");
-        const [p,ev,cmd,to,sm]=process.argv.slice(1);
+        let [p,ev,cmd,to,sm]=process.argv.slice(1);
+        // Resolve first: a dotfiles setup symlinks settings.json into its own
+        // repo, and renaming onto the LINK would replace it with a regular
+        // file, silently detaching the real source of truth.
+        try { p = fs.realpathSync(p); } catch(e) { /* file may not exist yet */ }
         let s={}; const raw=fs.readFileSync(p,"utf8").trim();
         try{ s=raw?JSON.parse(raw):{}; }catch(e){ console.log("PARSE_FAIL"); process.exit(0); }
         if(s.hooks===undefined) s.hooks={};
@@ -206,6 +216,8 @@ register_hook() {   # event  command  timeout  statusMessage
       out=$(python3 - "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" <<'PYEOF' 2>/dev/null
 import json,os,sys
 p,ev,cmd,to,sm = sys.argv[1:6]
+# Resolve first — see the note in the node branch above.
+p = os.path.realpath(p)
 try:
     raw=open(p).read().strip()
     s=json.loads(raw) if raw else {}
@@ -284,6 +296,23 @@ allowlist_proves_safe() {
   return $rc
 }
 
+# The allowlist proof above runs in a throwaway repo, so by construction it
+# cannot see the user's real index — and a .gitignore has NO effect on a path
+# git is already tracking. Someone who ran `git init` in ~/.claude before
+# installing may already be tracking .credentials.json and their transcripts;
+# adding the allowlist does not untrack them, and every future commit keeps
+# pushing them. Ask git which tracked paths the ignore rules WOULD have
+# excluded: that set is the live leak.
+TRACKED_LEAKS=""
+tracked_leaks_found() {
+  TRACKED_LEAKS=""
+  git -C "$DEST" rev-parse --git-dir >/dev/null 2>&1 || return 1   # not a repo: nothing tracked
+  TRACKED_LEAKS=$(git -C "$DEST" ls-files -z 2>/dev/null \
+    | git -C "$DEST" check-ignore --no-index --stdin -z 2>/dev/null \
+    | tr '\000' '\n' | sed '/^$/d')
+  [ -n "$TRACKED_LEAKS" ]
+}
+
 head2 "6. Auto-backup of your config (optional, OFF by default)"
 say "  This commits and PUSHES every change under ~/.claude to a git repo at the"
 say "  end of every turn, without showing you a diff. Useful, but it means your"
@@ -307,44 +336,75 @@ elif ask "Set up the auto-backup hook?" "n"; then
     say  "     re-include named files). Merge hooks/dot-claude.gitignore from"
     say  "     this repo into it and run this installer again."
     say  "     Nothing has been changed — the hook stays off."
+  elif tracked_leaks_found; then
+    warn "NOT enabling the backup hook — ~/.claude is ALREADY a git repository"
+    say  "     and these files are already being tracked in it:"
+    printf '%s\n' "$TRACKED_LEAKS" | sed 's/^/       - /'
+    say  ""
+    say  "     A .gitignore does not apply to files git already tracks, so the"
+    say  "     allowlist cannot protect these. Untrack them first:"
+    say  ""
+    printf '       cd ~/.claude && git rm --cached -r %s\n' "$(printf '%s' "$TRACKED_LEAKS" | head -3 | tr '\n' ' ')"
+    say  ""
+    say  "     Then commit that removal and run this installer again."
+    say  ""
+    warn "If this repo has ALREADY been pushed anywhere, treat every credential"
+    say  "     in those files as exposed and rotate it. Removing a file from the"
+    say  "     latest commit does not remove it from the history."
   else
     ok "Verified with git: it ignores everything by default, including a name"
     say  "     it has never seen — so new files are safe too, not just known ones."
     gname="$(askval "git name for the backup commits:" "$(git config --global user.name 2>/dev/null)")"
     gmail="$(askval "git email for the backup commits:" "$(git config --global user.email 2>/dev/null)")"
-    say  "  A mirror folder gets readable copies of your rules AND settings.json."
-    say  "  Whatever repo it lives in must be PRIVATE too. Blank to skip it."
-    mirror="$(askval "optional folder for readable copies (blank = skip):" "")"
-    # Strip control bytes: these values land in a config file the hook reads.
-    strip_ctl() { printf '%s' "$1" | tr -d '\000-\037'; }
-    {
-      printf '# Written by install.sh — settings for the auto-backup Stop hook.\n'
-      printf '# Plain KEY=value. NOT a shell script: auto-backup.sh parses this\n'
-      printf '# file line by line and never sources it, so nothing here executes.\n'
-      printf 'AUTHOR=%s <%s>\n' "$(strip_ctl "$gname")" "$(strip_ctl "$gmail")"
-      printf 'MIRROR_DIR=%s\n' "$(strip_ctl "$mirror")"
-    } > "$DEST/hooks/backup.conf"
-    ok "Wrote ~/.claude/hooks/backup.conf"
-    res=$(register_hook "Stop" '/bin/bash "$HOME/.claude/hooks/auto-backup.sh"' "30" "Backing up config changes...")
-    report_hook_result "$res" "the Stop hook"
-    # Must be the ROOT of a repo, not merely inside one. If $HOME is a git
-    # repo (the dotfiles pattern), --is-inside-work-tree says "true" for
-    # ~/.claude and `git add -A` would stage the whole home directory —
-    # somewhere the ~/.claude/.gitignore allowlist cannot reach.
-    dest_top=$(git -C "$DEST" rev-parse --show-toplevel 2>/dev/null)
-    if [ -n "$dest_top" ] && [ "$(cd "$dest_top" && pwd -P)" != "$(cd "$DEST" && pwd -P)" ]; then
-      warn "~/.claude is inside a LARGER git repo ($dest_top), not its own."
-      say  "     The backup hook will refuse to run there, on purpose: committing"
-      say  "     from inside ~/.claude would stage that whole repository, and the"
-      say  "     allowlist cannot protect files outside ~/.claude (~/.ssh, ~/.aws)."
-      say  "     Make ~/.claude its own repo to use the backup hook."
-    elif [ -z "$dest_top" ]; then
-      warn "~/.claude is not a git repo yet. The hook stays quiet until it is."
-      say  "     When ready, and looking before you leap:"
-      say  "       cd ~/.claude && git init && git add -A && git status"
-      say  "     Read that list. Only if it holds nothing you would not publish:"
-      say  "       git commit -m init"
-      say  "     then add a PRIVATE remote and push once by hand."
+    # With no global git identity set, both defaults are empty and Enter twice
+    # produces "AUTHOR= <>". That is non-empty, so it passes the hook's guard,
+    # and then every single commit fails with "empty ident name" while the
+    # installer has already reported success.
+    if [ -z "$gname" ] || [ -z "$gmail" ]; then
+      warn "NOT enabling the backup hook — a name and an email are both required,"
+      say  "     and git has no global identity set on this machine to fall back on."
+      say  "     Set one, then run this installer again:"
+      say  ""
+      say  "       git config --global user.name  \"your-handle\""
+      say  "       git config --global user.email \"you@example.com\""
+      gname=""; gmail=""
+    fi
+    if [ -n "$gname" ] && [ -n "$gmail" ]; then
+      say  "  A mirror folder gets readable copies of your rules AND settings.json."
+      say  "  Whatever repo it lives in must be PRIVATE too. Blank to skip it."
+      mirror="$(askval "optional folder for readable copies (blank = skip):" "")"
+      # Strip control bytes: these values land in a config file the hook reads.
+      strip_ctl() { printf '%s' "$1" | tr -d '\000-\037'; }
+      {
+        printf '# Written by install.sh — settings for the auto-backup Stop hook.\n'
+        printf '# Plain KEY=value. NOT a shell script: auto-backup.sh parses this\n'
+        printf '# file line by line and never sources it, so nothing here executes.\n'
+        printf 'AUTHOR=%s <%s>\n' "$(strip_ctl "$gname")" "$(strip_ctl "$gmail")"
+        printf 'MIRROR_DIR=%s\n' "$(strip_ctl "$mirror")"
+      } > "$DEST/hooks/backup.conf"
+      ok "Wrote ~/.claude/hooks/backup.conf"
+      res=$(register_hook "Stop" '/bin/bash "$HOME/.claude/hooks/auto-backup.sh"' "30" "Backing up config changes...")
+      report_hook_result "$res" "the Stop hook"
+
+      # Must be the ROOT of a repo, not merely inside one. If $HOME is a git
+      # repo (the dotfiles pattern), --is-inside-work-tree says "true" for
+      # ~/.claude and `git add -A` would stage the whole home directory —
+      # somewhere the ~/.claude/.gitignore allowlist cannot reach.
+      dest_top=$(git -C "$DEST" rev-parse --show-toplevel 2>/dev/null)
+      if [ -n "$dest_top" ] && [ "$(cd "$dest_top" && pwd -P)" != "$(cd "$DEST" && pwd -P)" ]; then
+        warn "~/.claude is inside a LARGER git repo ($dest_top), not its own."
+        say  "     The backup hook will refuse to run there, on purpose: committing"
+        say  "     from inside ~/.claude would stage that whole repository, and the"
+        say  "     allowlist cannot protect files outside ~/.claude (~/.ssh, ~/.aws)."
+        say  "     Make ~/.claude its own repo to use the backup hook."
+      elif [ -z "$dest_top" ]; then
+        warn "~/.claude is not a git repo yet. The hook stays quiet until it is."
+        say  "     When ready, and looking before you leap:"
+        say  "       cd ~/.claude && git init && git add -A && git status"
+        say  "     Read that list. Only if it holds nothing you would not publish:"
+        say  "       git commit -m init"
+        say  "     then add a PRIVATE remote and push once by hand."
+      fi
     fi
   fi
 else

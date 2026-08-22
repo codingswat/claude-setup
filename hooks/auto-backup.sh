@@ -110,11 +110,18 @@ if is_repo_root "$CLAUDE_DIR"; then
   cd "$CLAUDE_DIR" || exit 0
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     files=$(changed_files)
-    git add -A
-    if git commit -q -m "auto-backup: ${files:-config changed}" --author="$AUTHOR"; then
+    # Two sessions can end at the same instant and race for .git/index.lock.
+    # The loser must not dump raw git stderr into the transcript or claim the
+    # backup is broken: the winner commits everything, including this turn's
+    # changes, so the correct report is "it is being handled".
+    err=$(git add -A 2>&1) && err=$(git commit -q -m "auto-backup: ${files:-config changed}" --author="$AUTHOR" 2>&1)
+    rc=$?
+    if [ "$rc" = "0" ]; then
       push_with_heal "config backup repo"
+    elif printf '%s' "$err" | grep -q 'index.lock'; then
+      warn "another session is backing up right now; this turn's changes go into that commit — nothing to do"
     else
-      warn "commit in ~/.claude failed — back up manually per rule 11"
+      warn "the commit in ~/.claude failed and the config is NOT backed up. git said: $(printf '%s' "$err" | head -2 | tr '\n' ' '). Tell the user plainly."
     fi
   fi
 elif git -C "$CLAUDE_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then

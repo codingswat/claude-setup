@@ -116,9 +116,8 @@ guidance. Only the new-project interview is limited to my configured project fol
 20. **Security review before anything goes live.** Before a deploy, before a repo goes
     public, and before an app is shared with anyone beyond my own machine, run a security
     review on the code and fix what it finds (high-risk findings are non-negotiable; tell me
-    plainly what was found and fixed). AI-written apps ship with security holes at very high
-    rates — studies in 2026 put it at 45–65% of them — and AI optimizes for making the app
-    run, not for making it safe. This is the checkpoint that catches it.
+    plainly what was found and fixed). AI-written apps ship with security holes at a high rate,
+    and AI optimizes for making the app run, not for making it safe. This is the checkpoint that catches it.
 21. **Fresh eyes before anything permanent.** Before any irreversible step — a repo going
     public, a real deploy, work sent to an outside party — one extra reviewer looks at it
     cold: a separate session or agent given only the thing itself and the question "how

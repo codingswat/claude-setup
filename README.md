@@ -25,7 +25,8 @@ The repo carries its own `CLAUDE.md`, so Claude knows what to install and will t
 through filling in your rulebook — which is the part that actually matters.
 
 Nothing is deleted, anything overwritten is backed up first, and the sharp-edged auto-backup
-hook is off unless you ask for it. Full detail, including how to do it all by hand:
+hook is off unless you ask for it. The rulebook it installs is a form, but not an empty one —
+its starter rules take effect immediately, so read them before your next session. Full detail, including how to do it all by hand:
 [INSTALL.md](INSTALL.md).
 
 ---
@@ -80,7 +81,7 @@ Read them in this order if you're reading rather than installing.
 
 | File | What it is |
 |---|---|
-| **[TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md)** | **Start here.** The rulebook as a fill-in-the-blanks form. Every blank says what to write and what changes when you write it. This is what the installer puts at `~/.claude/CLAUDE.md`. |
+| **[TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md)** | **Start here.** The rulebook as a form: sections to fill in, each saying what to write and what changes when you do — plus 15 starter rules that are **live from your next session**, including two that let Claude commit and push on its own. Read those before you keep them. This is what the installer puts at `~/.claude/CLAUDE.md`. |
 | [CLAUDE-global.md](CLAUDE-global.md) | A real, lived-in rulebook — 25 numbered rules in the order they were earned. Borrow from it; don't adopt it wholesale. |
 | [MULTI-CHAT-ROLES.md](MULTI-CHAT-ROLES.md) | Running several Claude chats on one codebase: five roles, which model each gets, and the coordination rules that stop them overwriting each other. |
 | [hooks/check-claude-md.sh](hooks/check-claude-md.sh) | The SessionStart hook. Re-asserts the rules every session, and interviews you for a new project's `CLAUDE.md` when one is missing. |

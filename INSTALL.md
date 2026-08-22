@@ -22,7 +22,7 @@ through filling in your rulebook afterwards — which is the part that actually 
 | Path | What happens |
 |---|---|
 | `~/.claude/hooks/` | The two hook scripts and `interview.md` are copied in; their two config files are written fresh from your answers (they are not in this repo) |
-| `~/.claude/CLAUDE.md` | The blank template is installed **only if you don't already have one** |
+| `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 15 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | The four skills; any skill folder of the same name is left alone |
 | `~/.claude/settings.json` | Hook registrations are **merged in**; everything else is preserved |
