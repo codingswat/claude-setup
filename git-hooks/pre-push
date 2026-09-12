@@ -1,0 +1,41 @@
+#!/bin/bash
+# Fires on every `git push` from a machine that has this registered (global
+# core.hooksPath). When the repo root's package.json has a "typecheck" script, every
+# commit being pushed (the local sha of each ref on stdin; deletions skipped) is exported
+# CLEAN into a temp folder (`git archive`) — given a node_modules linked in via
+# ~/.claude/hooks/link-node-modules.sh if that helper exists — and type-checked THERE.
+# The working folder is never read: an in-progress edit, someone else's half-done change
+# in a shared folder, or an uncommitted fix can neither block nor pass a push — only what
+# is committed counts.
+# Repos with no "typecheck" script, or no package.json at all, are untouched — this hook
+# exits immediately and does nothing.
+# Gap (stated plainly): `git push --no-verify` skips every pre-push hook, including this
+# one — that is git's own escape hatch, not a flaw in this script.
+# Tests: hooks/test-hooks.sh.
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -f "$root/package.json" ] || exit 0
+jq -e '.scripts.typecheck' "$root/package.json" >/dev/null 2>&1 || exit 0
+helper="${HOOKS_DIR:-$HOME/.claude/hooks}/link-node-modules.sh"
+shas="$(awk '$2 != "" && $2 !~ /^0+$/ {print $2}' | sort -u)"   # the local sha of every ref on stdin; deletions (all-zero) skipped
+[ -z "$shas" ] && exit 0
+for sha in $shas; do
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/push-check.XXXXXX")" || exit 1
+  echo "pre-push hook: type-checking commit ${sha:0:7} in a clean export (never the working folder) …" >&2
+  if ! git archive "$sha" | tar -x -C "$tmp"; then
+    echo "pre-push hook: REFUSED — could not export commit ${sha:0:7}." >&2; rm -rf "$tmp"; exit 1
+  fi
+  if [ -d "$root/node_modules" ] && [ -f "$helper" ]; then
+    if ! bash "$helper" "$root" "$tmp" >/dev/null 2>&1; then
+      echo "pre-push hook: REFUSED — could not link node_modules into the export ($helper)." >&2; rm -rf "$tmp"; exit 1
+    fi
+  fi
+  if (cd "$tmp" && npm run typecheck --silent >"$tmp.log" 2>&1); then
+    rm -rf "$tmp" "$tmp.log"; continue
+  fi
+  echo "pre-push hook: REFUSED — npm run typecheck failed on commit ${sha:0:7} (the commit, not your folder). Last lines:" >&2
+  tail -n 30 "$tmp.log" >&2
+  rm -rf "$tmp" "$tmp.log"
+  echo "Fix the types, commit, push again. (gap: --no-verify skips this hook; do not use it.)" >&2
+  exit 1
+done
+exit 0

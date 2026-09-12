@@ -1,0 +1,10 @@
+# Copy to hooks/heavy-suite.conf (next to heavy-suite-guard.sh) and edit for your own
+# project's heavy test commands. Two lines, both optional — anything not set here falls
+# back to the guard's built-in default shown below.
+#
+# PATTERN is an extended regex (grep -E), matched against the shell command AFTER commit
+# messages and heredoc bodies have been stripped out. MAX_LOAD is the 1-minute load
+# average (from `uptime`) at or above which the guard assumes a heavy suite is already
+# running elsewhere and refuses to start another one.
+PATTERN='(^|[;&| ])(npm +test|npm +run +(test|e2e)|npx +vitest +run|npx +playwright +test)([ ;&|]|$)'
+MAX_LOAD=10

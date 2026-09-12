@@ -1,0 +1,12 @@
+#!/bin/bash
+# Fires on every commit on this machine, regardless of which tool made it (an agent, a
+# subagent, a background job, or you typing at the terminal). Refuses a commit whose
+# message carries an AI-attribution trailer, so pushed history reads as your own work.
+msg_file="$1"
+if grep -qiE 'Co-Authored-By:.*(claude|anthropic)|noreply@anthropic\.com|Generated with .*Claude' "$msg_file"; then
+  echo "commit-msg hook: REFUSED — message carries Claude/Anthropic attribution." >&2
+  echo "Offending line(s):" >&2
+  grep -niE 'Co-Authored-By:.*(claude|anthropic)|noreply@anthropic\.com|Generated with .*Claude' "$msg_file" >&2
+  exit 1
+fi
+exit 0

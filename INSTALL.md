@@ -21,12 +21,14 @@ through filling in your rulebook afterwards — which is the part that actually 
 
 | Path | What happens |
 |---|---|
-| `~/.claude/hooks/` | The two hook scripts and `interview.md` are copied in; their two config files are written fresh from your answers (they are not in this repo) |
+| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh` and `test-hooks.sh` are copied in (backed up first if different). `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers |
+| `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 15 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | The four skills; any skill folder of the same name is left alone |
-| `~/.claude/settings.json` | Hook registrations are **merged in**; everything else is preserved |
+| `~/.claude/settings.json` | Hook registrations are **merged in** — `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader) and `PreToolUse` matched to the `Bash` tool (the three git-safety guards); everything else is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
+| git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
 
 **Nothing is deleted.** Anything that would be overwritten is copied to
 `~/.claude/.setup-backup-<timestamp>/` first. Re-running the script is safe.
@@ -50,12 +52,26 @@ first. If you already have a populated `~/.claude`, the script is the safer rout
 ### 1. Copy the files
 
 ```bash
-mkdir -p ~/.claude/hooks ~/.claude/skills ~/.claude/project-template
+mkdir -p ~/.claude/hooks ~/.claude/git-hooks ~/.claude/skills ~/.claude/project-template
 cp -a ~/.claude/hooks ~/.claude/hooks.backup-$(date +%s) 2>/dev/null
-cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md ~/.claude/hooks/
-chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh
+cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
+   hooks/clock-in-context.sh hooks/block-dangerous-git.sh \
+   hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/test-hooks.sh \
+   ~/.claude/hooks/
+chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
+         ~/.claude/hooks/clock-in-context.sh ~/.claude/hooks/block-dangerous-git.sh \
+         ~/.claude/hooks/commit-pathspec-guard.sh ~/.claude/hooks/heavy-suite-guard.sh \
+         ~/.claude/hooks/test-hooks.sh
 cp -Rn project-template/. ~/.claude/project-template/
 cp -Rn skills/. ~/.claude/skills/
+
+# Two files you personalise — copy only if you don't already have them:
+[ -f ~/.claude/hooks/owner-card.md ]    || cp hooks/owner-card.md ~/.claude/hooks/owner-card.md
+[ -f ~/.claude/hooks/heavy-suite.conf ] || cp hooks/heavy-suite.conf.example ~/.claude/hooks/heavy-suite.conf
+
+# The git hooks proper — copied in and made executable, but inert until step 7:
+cp git-hooks/commit-msg git-hooks/pre-commit git-hooks/pre-push ~/.claude/git-hooks/
+chmod +x ~/.claude/git-hooks/commit-msg ~/.claude/git-hooks/pre-commit ~/.claude/git-hooks/pre-push
 ```
 
 The hook scripts are the one thing you *do* want replaced with the current versions — hence
@@ -112,8 +128,10 @@ reads can be drifted away from over a long session; a hook fires every time.
 Read this section before enabling it.
 
 This hook commits and pushes everything under `~/.claude` at the end of **every turn**,
-without showing you a diff. It is convenient and it is sharp. Two things make it safe, and it
-is not safe without them:
+without showing you a diff. It is convenient and it is sharp. It also refuses to commit when a
+changed file holds a secret-looking string (an API key, a token, a private key) — one more
+reason a genuinely sensitive value should never sit under `~/.claude` in the first place. Two
+things make the rest of it safe, and it is not safe without them:
 
 **First, install the allowlist.** `~/.claude/.gitignore` must ignore everything and then
 re-include only named files. Without it, `git add -A` sweeps up your credentials file, shell
@@ -183,6 +201,59 @@ hooks and settings, so auto-merging would mean running whatever someone else pus
 next session. Your local commit stays safe either way; resolving it is a decision you make,
 not one the hook makes for you.
 
+### 6. Register the new safety hooks
+
+Same merge as step 4, three more events this time.
+
+`clock-in-context.sh` goes under `SessionStart` (a second entry, alongside
+`check-claude-md.sh`) and again under `UserPromptSubmit`:
+
+```json
+{ "hooks": [ {
+    "type": "command",
+    "command": "/bin/bash \"$HOME/.claude/hooks/clock-in-context.sh\"",
+    "statusMessage": "Loading the owner card..."
+} ] }
+```
+
+Then the three Bash-only guards go under `PreToolUse`. Each carries a `"matcher"` on the
+group — that's what restricts a hook to firing only before the `Bash` tool runs:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [
+          { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/block-dangerous-git.sh\"" } ] },
+      { "matcher": "Bash", "hooks": [
+          { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/commit-pathspec-guard.sh\"" } ] },
+      { "matcher": "Bash", "hooks": [
+          { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/heavy-suite-guard.sh\"" } ] }
+    ]
+  }
+}
+```
+
+Merge these arrays into whatever `hooks` block already exists — don't replace it.
+
+### 7. Optional: git hooks for every repo on this machine
+
+Read this before running it:
+
+```bash
+git config --global core.hooksPath ~/.claude/git-hooks
+```
+
+This makes `commit-msg`, `pre-commit` and `pre-push` (copied in step 1) run in **every
+repository on this machine** — and it **replaces any hooks that repo already has** in its own
+`.git/hooks/`, silently. That's the sharp edge: only do this if you want it everywhere.
+
+To undo:
+
+```bash
+git config --global --unset core.hooksPath
+```
+
 ---
 
 ## Checking it worked
@@ -195,9 +266,25 @@ If it lists them back, the hook is firing. If it says it can't see them, the sec
 in `~/.claude/CLAUDE.md` has probably been renamed — the hook looks for the exact text
 `## PROCESS RULES (enforced)`.
 
+Then run the hook self-test:
+
+```bash
+bash ~/.claude/hooks/test-hooks.sh
+```
+
+Expect its final line to say something like `... passed, 0 failed`. Any failed count above
+zero means one of the hooks above isn't wired the way this script expects — read its output,
+it names which one.
+
 ## Undoing it
 
 Everything replaced is in `~/.claude/.setup-backup-<timestamp>/`. To switch the setup off
 without deleting anything, remove the `hooks` entries you added from
 `~/.claude/settings.json`. To disable just the backup hook, delete
 `~/.claude/hooks/backup.conf` — the script exits immediately without it.
+
+To turn off the git hooks step: `git config --global --unset core.hooksPath` — the files stay
+at `~/.claude/git-hooks/`, just unwired from every repo. The new files themselves, if you want
+them gone entirely: `~/.claude/hooks/clock-in-context.sh`, `owner-card.md`,
+`block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,
+`heavy-suite.conf`, `test-hooks.sh`, and `~/.claude/git-hooks/{commit-msg,pre-commit,pre-push}`.

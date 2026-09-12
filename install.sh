@@ -3,7 +3,9 @@
 #
 # What it touches (and nothing else):
 #   ~/.claude/CLAUDE.md            your standing rulebook (only if you have none)
-#   ~/.claude/hooks/               the two hook scripts + their config files
+#   ~/.claude/hooks/               the hook scripts + their config files
+#   ~/.claude/git-hooks/           commit-msg, pre-commit, pre-push (opt-in to run
+#                                  them machine-wide — see the "git hooks" step)
 #   ~/.claude/project-template/    starter files for new projects
 #   ~/.claude/skills/              the cherry-picked skills (never overwrites)
 #   ~/.claude/settings.json        adds hook registrations, keeps everything else
@@ -84,14 +86,61 @@ JSONTOOL=""
 command -v node    >/dev/null 2>&1 && JSONTOOL="node"
 [ -z "$JSONTOOL" ] && command -v python3 >/dev/null 2>&1 && JSONTOOL="python3"
 
-mkdir -p "$DEST/hooks" "$DEST/skills" "$DEST/project-template" || die "cannot create $DEST"
+mkdir -p "$DEST/hooks" "$DEST/skills" "$DEST/project-template" "$DEST/git-hooks" || die "cannot create $DEST"
+
+# Copy a hook that may not exist in this checkout — warn and continue rather
+# than abort, since some hooks in this repo are written in parallel batches.
+copy_if_present() {
+  local from="$1" to="$2" label="$3"
+  if [ -f "$from" ]; then
+    backup_then_copy "$from" "$to" "$label"
+  else
+    warn "$label — not found in this checkout yet, skipped (${from#"$SRC/"})"
+  fi
+}
 
 # --- 1. hooks --------------------------------------------------------------
 head2 "1. Hook scripts"
 backup_then_copy "$SRC/hooks/check-claude-md.sh" "$DEST/hooks/check-claude-md.sh" "check-claude-md.sh (SessionStart)"
 backup_then_copy "$SRC/hooks/auto-backup.sh"     "$DEST/hooks/auto-backup.sh"     "auto-backup.sh (Stop)"
 backup_then_copy "$SRC/hooks/interview.md"       "$DEST/hooks/interview.md"       "interview.md (new-project questions)"
-chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" 2>/dev/null
+copy_if_present  "$SRC/hooks/clock-in-context.sh"      "$DEST/hooks/clock-in-context.sh"      "clock-in-context.sh (SessionStart + UserPromptSubmit)"
+copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)"
+copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)"
+copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)"
+copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.sh"            "test-hooks.sh (run it yourself to check the hooks)"
+chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/hooks/clock-in-context.sh" \
+         "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
+         "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/test-hooks.sh" 2>/dev/null
+
+# owner-card.md is a template you personalise — copied only if you don't have one.
+if [ -f "$DEST/hooks/owner-card.md" ]; then
+  skip "owner-card.md — already present, left untouched (it's yours to edit)"
+elif [ -f "$SRC/hooks/owner-card.md" ]; then
+  cp "$SRC/hooks/owner-card.md" "$DEST/hooks/owner-card.md" \
+    && ok "owner-card.md — installed (personalise it any time)" \
+    || warn "could not write owner-card.md"
+else
+  warn "owner-card.md — not found in this checkout yet, skipped"
+fi
+
+# heavy-suite.conf is a settings file you tune — same treatment: only if missing.
+if [ -f "$DEST/hooks/heavy-suite.conf" ]; then
+  skip "heavy-suite.conf — already present, left untouched"
+elif [ -f "$SRC/hooks/heavy-suite.conf.example" ]; then
+  cp "$SRC/hooks/heavy-suite.conf.example" "$DEST/hooks/heavy-suite.conf" \
+    && ok "heavy-suite.conf — installed from the example (edit it to tune the guard)" \
+    || warn "could not write heavy-suite.conf"
+else
+  warn "heavy-suite.conf.example — not found in this checkout yet, skipped"
+fi
+
+# The three git hooks (commit-msg, pre-commit, pre-push) — copied in always,
+# but they only run in every repo once you opt in at the "git hooks" step below.
+copy_if_present "$SRC/git-hooks/commit-msg" "$DEST/git-hooks/commit-msg" "commit-msg (git hook)"
+copy_if_present "$SRC/git-hooks/pre-commit" "$DEST/git-hooks/pre-commit" "pre-commit (git hook)"
+copy_if_present "$SRC/git-hooks/pre-push"   "$DEST/git-hooks/pre-push"   "pre-push (git hook)"
+chmod +x "$DEST/git-hooks/commit-msg" "$DEST/git-hooks/pre-commit" "$DEST/git-hooks/pre-push" 2>/dev/null
 
 # --- 2. rulebook -----------------------------------------------------------
 head2 "2. Your standing rulebook (~/.claude/CLAUDE.md)"
@@ -179,13 +228,13 @@ else
   printf '{}\n' > "$DEST/settings.json"
 fi
 
-register_hook() {   # event  command  timeout  statusMessage
-  local ev="$1" cmd="$2" to="$3" sm="$4" out=""
+register_hook() {   # event  command  timeout  statusMessage  [matcher]
+  local ev="$1" cmd="$2" to="$3" sm="$4" mt="${5:-}" out=""
   case "$JSONTOOL" in
     node)
       out=$(node -e '
         const fs=require("fs");
-        let [p,ev,cmd,to,sm]=process.argv.slice(1);
+        let [p,ev,cmd,to,sm,mt]=process.argv.slice(1);
         // Resolve first: a dotfiles setup symlinks settings.json into its own
         // repo, and renaming onto the LINK would replace it with a regular
         // file, silently detaching the real source of truth.
@@ -203,7 +252,9 @@ register_hook() {   # event  command  timeout  statusMessage
         const h={type:"command",command:cmd};
         if(to) h.timeout=Number(to);
         if(sm) h.statusMessage=sm;
-        s.hooks[ev].push({hooks:[h]});
+        const grp={hooks:[h]};
+        if(mt) grp.matcher=mt;
+        s.hooks[ev].push(grp);
         // Write to a temp file in the same directory and rename over the
         // target, so a failed or partial write can never truncate the
         // original settings.json.
@@ -211,11 +262,11 @@ register_hook() {   # event  command  timeout  statusMessage
         fs.writeFileSync(tmp, JSON.stringify(s,null,2)+"\n");
         fs.renameSync(tmp, p);
         console.log("ADDED");
-      ' "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" 2>/dev/null) ;;
+      ' "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" "$mt" 2>/dev/null) ;;
     python3)
-      out=$(python3 - "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" <<'PYEOF' 2>/dev/null
+      out=$(python3 - "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" "$mt" <<'PYEOF' 2>/dev/null
 import json,os,sys
-p,ev,cmd,to,sm = sys.argv[1:6]
+p,ev,cmd,to,sm,mt = sys.argv[1:7]
 # Resolve first — see the note in the node branch above.
 p = os.path.realpath(p)
 try:
@@ -237,7 +288,9 @@ if dup:
 h={"type":"command","command":cmd}
 if to: h["timeout"]=int(to)
 if sm: h["statusMessage"]=sm
-s["hooks"][ev].append({"hooks":[h]})
+grp={"hooks":[h]}
+if mt: grp["matcher"]=mt
+s["hooks"][ev].append(grp)
 # Atomic: write beside the target, then rename over it.
 tmp = p + ".setup-tmp"
 with open(tmp,"w") as fh: fh.write(json.dumps(s,indent=2)+"\n")
@@ -250,11 +303,10 @@ PYEOF
   printf '%s' "$out"
 }
 
-SESSION_CMD='/bin/bash "$HOME/.claude/hooks/check-claude-md.sh"'
-res=$(register_hook "SessionStart" "$SESSION_CMD" "" "Checking for project CLAUDE.md...")
+ANY_ADDED=0
 report_hook_result() {   # $1 = result  $2 = human name of the hook
   case "$1" in
-    ADDED)      ok "$2 registered" ;;
+    ADDED)      ok "$2 registered"; ANY_ADDED=1 ;;
     ALREADY)    skip "$2 was already registered" ;;
     PARSE_FAIL) warn "settings.json isn't valid JSON — not touching it. Add $2 by hand (see INSTALL.md)." ;;
     SHAPE_FAIL) warn "settings.json is valid JSON but its \"hooks\" block has an unexpected shape — not touching it. Add $2 by hand (see INSTALL.md)." ;;
@@ -262,10 +314,33 @@ report_hook_result() {   # $1 = result  $2 = human name of the hook
     *)          warn "could not register $2 — add it by hand (see INSTALL.md)." ;;
   esac
 }
-report_hook_result "$res" "the SessionStart hook"
+
+SESSION_CMD='/bin/bash "$HOME/.claude/hooks/check-claude-md.sh"'
+res=$(register_hook "SessionStart" "$SESSION_CMD" "" "Checking for project CLAUDE.md...")
+report_hook_result "$res" "the SessionStart hook (check-claude-md.sh)"
 [ "$res" = "ADDED" ] && say "     Your rules now get re-asserted at the start of every session."
+
+CLOCK_CMD='/bin/bash "$HOME/.claude/hooks/clock-in-context.sh"'
+res=$(register_hook "SessionStart" "$CLOCK_CMD" "" "Loading the owner card...")
+report_hook_result "$res" "the SessionStart hook (clock-in-context.sh)"
+
+res=$(register_hook "UserPromptSubmit" "$CLOCK_CMD" "" "")
+report_hook_result "$res" "the UserPromptSubmit hook (clock-in-context.sh)"
+
+BLOCK_GIT_CMD='/bin/bash "$HOME/.claude/hooks/block-dangerous-git.sh"'
+res=$(register_hook "PreToolUse" "$BLOCK_GIT_CMD" "" "" "Bash")
+report_hook_result "$res" "the PreToolUse hook (block-dangerous-git.sh)"
+
+PATHSPEC_CMD='/bin/bash "$HOME/.claude/hooks/commit-pathspec-guard.sh"'
+res=$(register_hook "PreToolUse" "$PATHSPEC_CMD" "" "" "Bash")
+report_hook_result "$res" "the PreToolUse hook (commit-pathspec-guard.sh)"
+
+HEAVY_CMD='/bin/bash "$HOME/.claude/hooks/heavy-suite-guard.sh"'
+res=$(register_hook "PreToolUse" "$HEAVY_CMD" "" "" "Bash")
+report_hook_result "$res" "the PreToolUse hook (heavy-suite-guard.sh)"
+
 # #9: a backup copy only earns its place if we actually changed the file.
-[ "$res" = "ADDED" ] || [ "$SETTINGS_PREEXISTED" = "0" ] || rm -f "$BACKUP/settings.json" 2>/dev/null
+[ "$ANY_ADDED" = "1" ] || [ "$SETTINGS_PREEXISTED" = "0" ] || rm -f "$BACKUP/settings.json" 2>/dev/null
 
 # --- 6. the backup hook (opt-in) -------------------------------------------
 # The whole design rests on ~/.claude/.gitignore being a strict ALLOWLIST. A
@@ -411,6 +486,24 @@ else
   skip "Skipped. The Stop hook stays inert until ~/.claude/hooks/backup.conf exists."
 fi
 
+# --- 7. git hooks, machine-wide (opt-in) ------------------------------------
+head2 "7. Git hooks for every repo on this machine (optional, OFF by default)"
+say "  This sets git's global hooksPath to ~/.claude/git-hooks, so commit-msg,"
+say "  pre-commit and pre-push (copied in step 1) run in EVERY repo on this machine."
+say "  The sharp edge: it REPLACES any hooks a repo already has in its own"
+say "  .git/hooks/ — those stop running the moment this is on."
+if ask "Set git's global core.hooksPath to ~/.claude/git-hooks?" "n"; then
+  if git config --global core.hooksPath "$DEST/git-hooks"; then
+    ok "Set — git now runs ~/.claude/git-hooks/* in every repository."
+    say  "     To undo: git config --global --unset core.hooksPath"
+  else
+    warn "Could not set it — run by hand:"
+    say  "       git config --global core.hooksPath ~/.claude/git-hooks"
+  fi
+else
+  skip "Skipped — any hooks a repo already has keep running, untouched."
+fi
+
 # --- done ------------------------------------------------------------------
 head2 "Done"
 if [ -d "$BACKUP" ] && [ -n "$(ls -A "$BACKUP" 2>/dev/null)" ]; then
@@ -430,7 +523,8 @@ cat <<'NEXT'
 
   Optional reading, in the repo you just ran this from:
     README.md            what this is and why it is shaped this way
-    CLAUDE-global.md     a real, lived-in rulebook to borrow rules from
+    HOW-I-WORK.md        the daily way of working the rules serve
+    LESSONS.md           the rules as lessons, each with the incident that taught it
     MULTI-CHAT-ROLES.md  running several Claude chats on one codebase
 NEXT
 say ""

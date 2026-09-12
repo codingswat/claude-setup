@@ -16,7 +16,8 @@ Greet them briefly and offer the install. Say plainly what it will touch:
 
 > This will add hook scripts, a project template and some skills under `~/.claude`, and
 > register one hook in `~/.claude/settings.json`. Anything it would overwrite gets backed up
-> first, and nothing is deleted. The auto-backup hook is off unless you ask for it.
+> first, and nothing is deleted. The two sharp pieces — the auto-backup hook and the
+> machine-wide git hooks — are off unless you ask for them.
 
 Then, with their go-ahead, run it and show them the output:
 
@@ -45,18 +46,23 @@ so this is the part that actually matters:
    then get explanations pitched over their head forever.
 3. **Do not invent rules for them.** A rule they did not ask for is a guess, and guesses get
    ignored. If they want more than the starter set, point them at
-   [CLAUDE-global.md](CLAUDE-global.md) — a real lived-in rulebook — and let them pick.
+   [LESSONS.md](LESSONS.md) — the rules as lessons, each with the incident behind it — and let
+   them pick.
 4. **Privacy check before you finish.** If this file will be backed up or shared, remind them:
    write what changes Claude's behaviour, not who they are. Legal name, address, employer,
    hostname and exact folder layout change nothing about the code, and cannot be taken back
    once published.
 
-## Then tell them the two things that are easy to miss
+## Then tell them the three things that are easy to miss
 
 - **Hooks load at session start.** The current session will not see them. They need to open a
   new one before anything is live.
 - **A way to check it worked:** in a fresh session, ask *"what process rules are you working
-  under?"* If it can list them back, the setup is live.
+  under?"* If it can list them back, the setup is live. For the guards, run
+  `bash ~/.claude/hooks/test-hooks.sh` and expect its last line to say `0 failed`.
+- **The card is theirs to rewrite.** `~/.claude/hooks/owner-card.md` is the reply shape every
+  chat will use, injected on every prompt; it ships in a neutral voice and should end up in
+  theirs. Offer to reword it with them once the rulebook is done.
 
 ## Also worth mentioning, briefly
 

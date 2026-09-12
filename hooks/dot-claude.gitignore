@@ -7,6 +7,8 @@
 !settings.json
 !hooks/
 !hooks/**
+!git-hooks/
+!git-hooks/**
 !project-template/
 !project-template/**
 !skills/

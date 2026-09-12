@@ -90,6 +90,23 @@ changed_files() {
   git status --porcelain 2>/dev/null | awk '{printf "%s ", $NF}' | cut -c1-120
 }
 
+# Secret scan: refuse to commit or push while a changed file contains something that
+# looks like a live secret (an API key, a token, a private key). Fails closed — the
+# backup simply does not run until the secret is gone; nothing here is committed until
+# this check passes, so the next turn retries automatically once it's removed.
+SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY'
+secret_scan() {
+  local hits
+  hits=$(git status --porcelain 2>/dev/null | awk '{print $NF}' | while IFS= read -r f; do
+    [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" 2>/dev/null
+  done)
+  if [ -n "$hits" ]; then
+    warn "$1: possible secret in: $hits — NOT committed, NOT pushed. Remove it; the next turn backs up normally once it's gone."
+    return 1
+  fi
+  return 0
+}
+
 # Is $1 the ROOT of a git repo — not merely inside one?
 #
 # This distinction is the whole safety boundary. `rev-parse
@@ -109,6 +126,7 @@ is_repo_root() {
 if is_repo_root "$CLAUDE_DIR"; then
   cd "$CLAUDE_DIR" || exit 0
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    secret_scan "config backup repo" || exit 0   # also skips the mirror copies below
     files=$(changed_files)
     # Two sessions can end at the same instant and race for .git/index.lock.
     # The loser must not dump raw git stderr into the transcript or claim the

@@ -53,8 +53,9 @@ them.
 
 1. **Commit and push per working feature.** One feature = one commit, pushed straight away.
    Work that only exists on your laptop is work you can lose.
-2. **Land finished work on `main`.** Merge finished, tested work and push. No work parked on
-   side branches; delete leftovers.
+2. **Land finished work on `main` — on my own solo repos.** Merge finished, tested work and
+   push; delete leftovers. In any repo with a team, branch protection, or required reviews,
+   follow that repo's own workflow — never bypass it.
 3. **Verify with evidence, don't assert.** Run the tests and paste the real output. "It's
    done" proves nothing. If a check cannot actually fail, it isn't a check — prove it once by
    deliberately breaking the code and watching the test go red.
@@ -71,9 +72,11 @@ them.
    plain language before touching code again.
 10. **Secrets never go in code.** API keys and passwords live in `.env`, gitignored — and
     remind me they must be set separately on the hosting service at deploy time.
-11. **Keep a decision log.** Every project gets a `DECISIONS.md`. Significant choice =
-    three lines: what was decided, why, and what it rules out. Check it before proposing
-    changes so settled decisions aren't re-argued.
+11. **Keep a decision log and a mistakes ledger.** Every project gets a `DECISIONS.md`:
+    significant choice = three lines, what was decided, why, and what it rules out; check it
+    before proposing changes so settled decisions aren't re-argued. And a `MISTAKES.md`: one
+    line per mistake (what, root cause, cost, status), filed by whoever catches it; a
+    lesson becomes a rule the second time it happens.
 12. **No feature is done without a test that can fail.** Anything visual also gets checked in
     a real window — headless tests have passed while the actual screen was broken.
 13. **Don't act unless it's clear I want an action started.** A question ("thoughts?",
@@ -86,6 +89,15 @@ them.
     before an app is shared beyond my own machine: run a security review and fix what it
     finds. AI writes working code faster than it writes safe code; this is the checkpoint
     that catches the difference.
+16. **Irreversible or outward-facing actions: name it, then get my yes.** Before anything that
+    can't be undone or that faces the outside world — `rm -rf`, `git reset --hard`, a
+    force-push, deleting branches or data, dropping a database, a hosting or DNS change,
+    publishing a package, making a repo public — state the target, the scope, and the
+    consequence, and wait for my confirmation.
+17. **Fresh eyes before anything permanent.** Before going public, a real deploy, or work sent
+    outside: one blind reviewer sees only the thing itself plus "how can this be bad for me,
+    and what are the gaps?" — run from an empty folder outside any project, so none of these
+    files or any memory auto-load into it. Fix what it finds first.
 
 <!-- FILL THIS IN (over time)
 Add your own rules here as you earn them. The format that works: the rule in bold, then
