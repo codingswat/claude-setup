@@ -39,6 +39,8 @@
 CLAUDE_DIR="$HOME/.claude"
 CONF="$CLAUDE_DIR/hooks/backup.conf"
 
+warn() { printf 'auto-backup hook: %s\n' "$1"; }
+
 [ -f "$CONF" ] || exit 0
 AUTHOR=""; MIRROR_DIR=""
 while IFS= read -r line || [ -n "$line" ]; do
@@ -61,8 +63,6 @@ case "$MIRROR_DIR" in
   '~/'*)     MIRROR_DIR="$HOME/${MIRROR_DIR#\~/}" ;;
   '$HOME/'*) MIRROR_DIR="$HOME/${MIRROR_DIR#\$HOME/}" ;;
 esac
-
-warn() { printf 'auto-backup hook: %s\n' "$1"; }
 
 # Push. On failure, report — never merge the remote's version in.
 # $1 = human label for the repo, used in messages.
@@ -94,7 +94,7 @@ changed_files() {
 # looks like a live secret (an API key, a token, a private key). Fails closed — the
 # backup simply does not run until the secret is gone; nothing here is committed until
 # this check passes, so the next turn retries automatically once it's removed.
-SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY'
+SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|Bearer [A-Za-z0-9._-]{20,}|_TOKEN=[^ ]{16,}|_KEY=[^ ]{16,}|_SECRET=[^ ]{16,}|://[^/ :]+:[^@ ]+@|-----BEGIN [A-Z ]*PRIVATE KEY'
 # Scans a fixed list of file paths (used for the mirror copies, which are never inside
 # `git status`). Returns matching paths, one per line.
 files_have_secret() {

@@ -10,7 +10,18 @@
 # `npm test`, `npm run test`, `npm run e2e`, `vitest run`, `playwright test`, MAX_LOAD=10.
 # Deliberate override: start the command (or the segment after ; && |) with `SUITE_OK=1 `.
 # Test seam: HEAVY_SUITE_LOAD_OVERRIDE=<load> stands in for the real `uptime` reading.
+# Both jq and python3 parse the command below; if either is missing this guard cannot
+# read what it's being asked to run, so it refuses rather than silently letting an
+# unparsed (and therefore unmatched) heavy suite through. Fail closed, like
+# git-hooks/pre-commit.
 # Tests: hooks/test-hooks.sh.
+missing=""
+command -v jq >/dev/null 2>&1 || missing="jq"
+command -v python3 >/dev/null 2>&1 || missing="${missing:+$missing and }python3"
+if [ -n "$missing" ]; then
+  echo "heavy-suite-guard: REFUSED — $missing not found, so this guard cannot parse the command (fail closed, not open)." >&2
+  exit 2
+fi
 input="$(cat)"
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
 [ -z "$cmd" ] && exit 0
@@ -40,7 +51,19 @@ s=re.sub(r"(-m|--message)(=|\s+)(\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27)", r"
 sys.stdout.write(s)')"
 printf '%s' "$cmd" | grep -qE "$PATTERN" || exit 0
 
-load="${HEAVY_SUITE_LOAD_OVERRIDE:-$(uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/')}"
+# Portable 1-minute load: macOS has no /proc/loadavg, Linux has no `sysctl vm.loadavg`;
+# `uptime`'s wording (macOS "load averages:" vs Linux "load average:") is the last resort.
+read_load() {
+  local out
+  if out="$(sysctl -n vm.loadavg 2>/dev/null)" && [ -n "$out" ]; then
+    printf '%s' "$out" | sed -E 's/^\{? *([0-9.]+).*/\1/'; return
+  fi
+  if [ -r /proc/loadavg ]; then
+    awk '{print $1}' /proc/loadavg; return
+  fi
+  uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/'
+}
+load="${HEAVY_SUITE_LOAD_OVERRIDE:-$(read_load)}"
 if awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN{exit !(l+0>=m+0)}'; then
   echo "heavy-suite-guard: REFUSED — 1-minute load is $load (limit $MAX_LOAD): another heavy suite looks like it is already running. Wait and retry; single-file/targeted runs are exempt. Deliberate override: SUITE_OK=1 <command>" >&2
   exit 2

@@ -21,6 +21,8 @@ cd claude-setup
 Then open a **new** Claude Code session and ask it *"what process rules are you working
 under?"* — if it lists them back, you're live.
 
+Tested on macOS; Linux should work but is unverified.
+
 **Or let Claude do it:** open a session in the cloned folder and say *"set this up for me"*.
 The repo carries its own `CLAUDE.md`, so Claude knows what to install and will then walk you
 through filling in your rulebook — which is the part that actually matters.

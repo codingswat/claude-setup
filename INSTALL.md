@@ -23,20 +23,26 @@ through filling in your rulebook afterwards — which is the part that actually 
 |---|---|
 | `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh` and `test-hooks.sh` are copied in (backed up first if different). `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers |
 | `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
-| `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 15 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
+| `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | The four skills; any skill folder of the same name is left alone |
 | `~/.claude/settings.json` | Hook registrations are **merged in** — `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader) and `PreToolUse` matched to the `Bash` tool (the three git-safety guards); everything else is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
 | git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
 
-**Nothing is deleted.** Anything that would be overwritten is copied to
+**Nothing of yours is ever deleted** (the installer removes only its own empty backup
+folder). Anything that would be overwritten is copied to
 `~/.claude/.setup-backup-<timestamp>/` first. Re-running the script is safe.
 
 **The auto-backup hook is off by default** and the script asks before setting it up.
 
 Requires `bash`, and either `node` or `python3` for the settings merge. Claude Code already
 brings Node, so this is almost always satisfied.
+
+The three `PreToolUse` guards (`block-dangerous-git.sh`, `commit-pathspec-guard.sh`,
+`heavy-suite-guard.sh`) additionally need `jq` **or** `python3` on `PATH` — they fail
+CLOSED (refuse everything) without one, so the installer checks for both first and skips
+registering those three if neither is present, with a warning naming what to install.
 
 ---
 

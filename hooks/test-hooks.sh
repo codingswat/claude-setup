@@ -254,5 +254,108 @@ expect refuse 2 "no jq/python3 on PATH: must fail CLOSED even on a benign comman
 INPUT="$(json_bash 'GITGUARD=1 git clean -fd')"
 expect pass 0 "jq/python3 present: a legitimate override still passes after the anchor fix" bash "$HOOKS_DIR/block-dangerous-git.sh"
 
+echo "11 git-hooks/pre-push: the pushed repo's OWN node_modules is linked into the export"
+mkrepo tclinked "mytool"
+mkdir -p "$T/tclinked/node_modules/.bin"
+printf '#!/bin/bash\nexit 0\n' > "$T/tclinked/node_modules/.bin/mytool"; chmod +x "$T/tclinked/node_modules/.bin/mytool"
+if git -C "$T/tclinked" push -q origin main 2>/dev/null; then ok; else bad "own node_modules linked, local binary exits 0: push must succeed"; fi
+pass_n=$((pass_n+1))
+mkrepo tclinkedbad "mytool"
+mkdir -p "$T/tclinkedbad/node_modules/.bin"
+printf '#!/bin/bash\nexit 1\n' > "$T/tclinkedbad/node_modules/.bin/mytool"; chmod +x "$T/tclinkedbad/node_modules/.bin/mytool"
+if git -C "$T/tclinkedbad" push -q origin main 2>/dev/null; then bad "own node_modules linked, local binary exits 1: push must be refused"; else ok; fi
+refuse_n=$((refuse_n+1))
+
+echo "12 git-hooks/pre-commit privacy: ADDED lines only, with the placeholder allowlist"
+pr2="$T/privrepo2"; mkdir -p "$pr2"; git -C "$pr2" init -q -b main; git -C "$pr2" config core.hooksPath "$GIT_HOOKS_DIR"
+p2try() { git -C "$pr2" add -A; env HOME="$FAKE_HOME" "${ID[@]}" git -C "$pr2" commit -q -m "t" >/dev/null 2>&1; }
+U2="/User""s"
+printf 'see %s/alice/x.txt\nfirst line\n' "$U2" > "$pr2/a.txt"
+git -C "$pr2" add -A; env HOME="$FAKE_HOME" PRIVACY_OK=1 "${ID[@]}" git -C "$pr2" commit -q -m seed >/dev/null 2>&1
+printf 'see %s/alice/x.txt\nfirst line\nsecond line\n' "$U2" > "$pr2/a.txt"
+if p2try; then ok; else bad "privacy: an old home-path line already committed must NOT be re-flagged just because the file is touched again"; fi
+pass_n=$((pass_n+1))
+echo "WORKDIR /home/node/app" > "$pr2/Dockerfile"
+if p2try; then ok; else bad "privacy: Dockerfile WORKDIR /home/node/app (a known placeholder name) must pass"; fi
+pass_n=$((pass_n+1))
+echo "see https://docs.example.com/home/faq" > "$pr2/docs.txt"
+if p2try; then ok; else bad "privacy: a docs URL containing /home/faq must pass"; fi
+pass_n=$((pass_n+1))
+
+echo "13 git-hooks/pre-commit identity: per-repo opt-out (hooks.identity=false)"
+idrepo="$T/idrepo"; mkdir -p "$idrepo"; git -C "$idrepo" init -q -b main; git -C "$idrepo" config core.hooksPath "$GIT_HOOKS_DIR"
+idtry() { git -C "$idrepo" add -A; env HOME="$FAKE_HOME" "${ID_OTHER[@]}" git -C "$idrepo" commit -q -m "t" >/dev/null 2>&1; }
+echo "x" > "$idrepo/x.txt"
+if idtry; then bad "identity: a non-matching author must still be refused with no opt-out set"; else ok; git -C "$idrepo" reset -q; fi
+refuse_n=$((refuse_n+1))
+git -C "$idrepo" config --local hooks.identity false
+if idtry; then ok; else bad "identity: with hooks.identity=false set, a non-matching author must be let through"; fi
+pass_n=$((pass_n+1))
+
+echo "14 hooks/check-claude-md.sh: PROCESS RULES heading present vs renamed"
+CCM_HOME="$T/fakehome-ccm"; mkdir -p "$CCM_HOME/.claude/hooks"
+cat > "$CCM_HOME/.claude/CLAUDE.md" <<'EOF'
+# Test rulebook
+
+## PROCESS RULES (enforced)
+1. **Rule one** does a thing.
+EOF
+ccm_out() { printf '{"cwd":"%s"}' "$T" | env HOME="$CCM_HOME" bash "$HOOKS_DIR/check-claude-md.sh" 2>/dev/null; }
+out="$(ccm_out)"
+if printf '%s' "$out" | grep -qF 'ENFORCED:' && printf '%s' "$out" | grep -qF 'PROCESS RULES (enforced)'; then ok; else bad "heading present: the rules must be injected as ENFORCED"; fi
+pass_n=$((pass_n+1))
+printf '# Test rulebook\n\n## OLD HEADING\n1. text\n' > "$CCM_HOME/.claude/CLAUDE.md"
+out2="$(ccm_out)"
+if printf '%s' "$out2" | grep -qF 'WARNING:' && printf '%s' "$out2" | grep -qF 'was not found'; then ok; else bad "heading renamed: must degrade LOUDLY with a WARNING"; fi
+refuse_n=$((refuse_n+1))
+
+echo "15 hooks/auto-backup.sh: warn() must be defined before its first possible use"
+WH="$T/fakehome-warn"; mkdir -p "$WH/.claude/hooks"
+git -C "$WH/.claude" init -q -b main
+git -C "$WH/.claude" config user.name Tester; git -C "$WH/.claude" config user.email tester@example.com
+printf 'MIRROR_DIR=\n' > "$WH/.claude/hooks/backup.conf"
+echo "hello" > "$WH/.claude/CLAUDE.md"
+# warn() writes to the hook's combined output (no >&2 redirection in warn itself); capture
+# both streams together so a "command not found" (a real shell error, always on stderr)
+# and the intended warning text (wherever warn actually sends it) are both visible.
+errout="$(env HOME="$WH" bash "$HOOKS_DIR/auto-backup.sh" 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$errout" | grep -qF 'AUTHOR' && ! printf '%s' "$errout" | grep -q 'command not found'; then ok; else bad "no AUTHOR line: must print the warning and exit 0, not 'warn: command not found' (rc=$rc): $errout"; fi
+refuse_n=$((refuse_n+1))
+WH2="$T/fakehome-warnok"; mkdir -p "$WH2/.claude/hooks"
+git -C "$WH2/.claude" init -q -b main
+git -C "$WH2/.claude" config user.name Tester; git -C "$WH2/.claude" config user.email tester@example.com
+printf 'AUTHOR=Tester <tester@example.com>\nMIRROR_DIR=\n' > "$WH2/.claude/hooks/backup.conf"
+echo "hello" > "$WH2/.claude/CLAUDE.md"
+errout2="$(env HOME="$WH2" bash "$HOOKS_DIR/auto-backup.sh" 2>&1)"; rc2=$?
+if [ "$rc2" = 0 ] && ! printf '%s' "$errout2" | grep -qF 'AUTHOR'; then ok; else bad "complete conf: must NOT print the missing-AUTHOR warning (rc=$rc2): $errout2"; fi
+pass_n=$((pass_n+1))
+
+echo "16 hooks/block-dangerous-git.sh: a leading + on a push refspec means --force"
+INPUT="$(json_bash 'git push origin +main')"; expect refuse 2 "must refuse: git push origin +main" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'git push origin +HEAD:main')"; expect refuse 2 "must refuse: git push origin +HEAD:main" bash "$HOOKS_DIR/block-dangerous-git.sh"
+
+echo "17 hooks/auto-backup.sh: expanded secret patterns"
+SH="$T/fakehome-secrets"; mkdir -p "$SH/.claude/hooks"
+git -C "$SH/.claude" init -q -b main
+git -C "$SH/.claude" config user.name Tester; git -C "$SH/.claude" config user.email tester@example.com
+cat > "$SH/.claude/hooks/backup.conf" <<'EOF'
+AUTHOR=Tester <tester@example.com>
+MIRROR_DIR=
+EOF
+echo "hello" > "$SH/.claude/CLAUDE.md"
+env HOME="$SH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+beforeS="$(git -C "$SH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+echo 'DATABASE_URL=postgres://u:p4ss@host/db' >> "$SH/.claude/CLAUDE.md"
+env HOME="$SH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+afterS="$(git -C "$SH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$afterS" = "$beforeS" ]; then ok; else bad "a password inside a URL (DATABASE_URL=postgres://u:p4ss@host/db) must NOT be committed"; fi
+refuse_n=$((refuse_n+1))
+sed -i.bak '/DATABASE_URL/d' "$SH/.claude/CLAUDE.md"; rm -f "$SH/.claude/CLAUDE.md.bak"
+echo 'API_KEY=' >> "$SH/.claude/CLAUDE.md"
+env HOME="$SH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+afterS2="$(git -C "$SH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$afterS2" -gt "$beforeS" ]; then ok; else bad "an empty API_KEY= (nothing after it) must be committed, not refused"; fi
+pass_n=$((pass_n+1))
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

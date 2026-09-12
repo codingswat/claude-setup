@@ -11,7 +11,8 @@
 #   ~/.claude/settings.json        adds hook registrations, keeps everything else
 #
 # Anything it would overwrite is copied to ~/.claude/.setup-backup-<timestamp>/
-# first. Nothing is ever deleted. Re-running it is safe.
+# first. Nothing of yours is ever deleted (the installer removes only its own empty
+# backup folder). Re-running it is safe.
 #
 # Usage:  ./install.sh          interactive (recommended)
 #         ./install.sh --yes    accept safe defaults, ask nothing
@@ -88,14 +89,19 @@ command -v node    >/dev/null 2>&1 && JSONTOOL="node"
 
 mkdir -p "$DEST/hooks" "$DEST/skills" "$DEST/project-template" "$DEST/git-hooks" || die "cannot create $DEST"
 
-# Copy a hook that may not exist in this checkout — warn and continue rather
-# than abort, since some hooks in this repo are written in parallel batches.
+# Copy a hook. $4 = "required" means this hook gets registered in settings.json below —
+# a checkout missing it would silently register a hook that can never fire, so refuse
+# instead of a warn-and-continue: this checkout is missing files a clean clone has,
+# meaning the clone itself is probably incomplete. Anything else (not registered, e.g.
+# test-hooks.sh) still just warns and continues.
 copy_if_present() {
-  local from="$1" to="$2" label="$3"
+  local from="$1" to="$2" label="$3" required="${4:-}"
   if [ -f "$from" ]; then
     backup_then_copy "$from" "$to" "$label"
+  elif [ "$required" = "required" ]; then
+    die "$label is missing from this checkout — your clone may be incomplete; re-clone before continuing (${from#"$SRC/"})"
   else
-    warn "$label — not found in this checkout yet, skipped (${from#"$SRC/"})"
+    warn "$label — missing from this checkout — your clone may be incomplete; re-clone before continuing (${from#"$SRC/"})"
   fi
 }
 
@@ -104,10 +110,10 @@ head2 "1. Hook scripts"
 backup_then_copy "$SRC/hooks/check-claude-md.sh" "$DEST/hooks/check-claude-md.sh" "check-claude-md.sh (SessionStart)"
 backup_then_copy "$SRC/hooks/auto-backup.sh"     "$DEST/hooks/auto-backup.sh"     "auto-backup.sh (Stop)"
 backup_then_copy "$SRC/hooks/interview.md"       "$DEST/hooks/interview.md"       "interview.md (new-project questions)"
-copy_if_present  "$SRC/hooks/clock-in-context.sh"      "$DEST/hooks/clock-in-context.sh"      "clock-in-context.sh (SessionStart + UserPromptSubmit)"
-copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)"
-copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)"
-copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)"
+copy_if_present  "$SRC/hooks/clock-in-context.sh"      "$DEST/hooks/clock-in-context.sh"      "clock-in-context.sh (SessionStart + UserPromptSubmit)" required
+copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)" required
+copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)" required
+copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.sh"            "test-hooks.sh (run it yourself to check the hooks)"
 chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/hooks/clock-in-context.sh" \
          "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
@@ -154,7 +160,7 @@ if [ -f "$DEST/CLAUDE.md" ]; then
 else
   cp "$SRC/TEMPLATE-CLAUDE.md" "$DEST/CLAUDE.md" || die "could not write $DEST/CLAUDE.md"
   ok "Installed the starter rulebook — open it and fill in the marked sections."
-  warn "It is a form, but it is NOT empty: 15 starter rules are active from your"
+  warn "It is a form, but it is NOT empty: 17 starter rules are active from your"
   say  "     next session. Rules 1 and 2 let Claude commit, push, merge to main"
   say  "     and delete leftover branches on its own, in every project, without"
   say  "     asking again. That is deliberate — it is what stops work getting"
@@ -172,6 +178,11 @@ while IFS= read -r f; do
   [ -f "$target" ] || { cp "$f" "$target" && tcount=$((tcount+1)); }
 done < <(find "$SRC/project-template" -type f 2>/dev/null)
 [ "$tcount" -gt 0 ] && ok "project-template/ — $tcount file(s) added" || skip "project-template/ — already present"
+
+# The per-project rulebook form: not part of project-template/ (it's a form you fill in,
+# not a starter file dropped as-is), so it gets its own copy — backed up like the hooks,
+# never silently skipped the way the starter files above are.
+backup_then_copy "$SRC/TEMPLATE-project-CLAUDE.md" "$DEST/project-template/CLAUDE-template.md" "CLAUDE-template.md (per-project rulebook form)"
 
 scount=0; sskip=0
 while IFS= read -r d; do
@@ -327,17 +338,28 @@ report_hook_result "$res" "the SessionStart hook (clock-in-context.sh)"
 res=$(register_hook "UserPromptSubmit" "$CLOCK_CMD" "" "")
 report_hook_result "$res" "the UserPromptSubmit hook (clock-in-context.sh)"
 
-BLOCK_GIT_CMD='/bin/bash "$HOME/.claude/hooks/block-dangerous-git.sh"'
-res=$(register_hook "PreToolUse" "$BLOCK_GIT_CMD" "" "" "Bash")
-report_hook_result "$res" "the PreToolUse hook (block-dangerous-git.sh)"
+# The three PreToolUse guards below all parse the tool-call JSON with jq or python3 and
+# fail CLOSED (refuse everything) when neither is on PATH — a silent no-op would be worse.
+# Registering them without either binary present would install three guards that refuse
+# every Bash call, so check first and skip the registration instead.
+if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+  BLOCK_GIT_CMD='/bin/bash "$HOME/.claude/hooks/block-dangerous-git.sh"'
+  res=$(register_hook "PreToolUse" "$BLOCK_GIT_CMD" "" "" "Bash")
+  report_hook_result "$res" "the PreToolUse hook (block-dangerous-git.sh)"
 
-PATHSPEC_CMD='/bin/bash "$HOME/.claude/hooks/commit-pathspec-guard.sh"'
-res=$(register_hook "PreToolUse" "$PATHSPEC_CMD" "" "" "Bash")
-report_hook_result "$res" "the PreToolUse hook (commit-pathspec-guard.sh)"
+  PATHSPEC_CMD='/bin/bash "$HOME/.claude/hooks/commit-pathspec-guard.sh"'
+  res=$(register_hook "PreToolUse" "$PATHSPEC_CMD" "" "" "Bash")
+  report_hook_result "$res" "the PreToolUse hook (commit-pathspec-guard.sh)"
 
-HEAVY_CMD='/bin/bash "$HOME/.claude/hooks/heavy-suite-guard.sh"'
-res=$(register_hook "PreToolUse" "$HEAVY_CMD" "" "" "Bash")
-report_hook_result "$res" "the PreToolUse hook (heavy-suite-guard.sh)"
+  HEAVY_CMD='/bin/bash "$HOME/.claude/hooks/heavy-suite-guard.sh"'
+  res=$(register_hook "PreToolUse" "$HEAVY_CMD" "" "" "Bash")
+  report_hook_result "$res" "the PreToolUse hook (heavy-suite-guard.sh)"
+else
+  warn "neither jq nor python3 found — skipping the three PreToolUse guards"
+  say  "     (block-dangerous-git.sh, commit-pathspec-guard.sh, heavy-suite-guard.sh)."
+  say  "     They fail closed without a parser, so leaving them registered here would"
+  say  "     refuse every Bash command. Install jq or python3, then run this again."
+fi
 
 # #9: a backup copy only earns its place if we actually changed the file.
 [ "$ANY_ADDED" = "1" ] || [ "$SETTINGS_PREEXISTED" = "0" ] || rm -f "$BACKUP/settings.json" 2>/dev/null
@@ -445,9 +467,25 @@ elif ask "Set up the auto-backup hook?" "n"; then
       gname=""; gmail=""
     fi
     if [ -n "$gname" ] && [ -n "$gmail" ]; then
-      say  "  A mirror folder gets readable copies of your rules AND settings.json."
-      say  "  Whatever repo it lives in must be PRIVATE too. Blank to skip it."
+      say  "  A mirror folder gets readable copies of your rules AND a copy of"
+      say  "  settings.json — which can hold live API keys in its env block. Whatever"
+      say  "  repo it lives in must be a PRIVATE repository. Blank to skip it."
       mirror="$(askval "optional folder for readable copies (blank = skip):" "")"
+      if [ -n "$mirror" ]; then
+        remote_url=""
+        if git -C "$mirror" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          remote_url="$(git -C "$mirror" remote get-url origin 2>/dev/null)"
+        fi
+        case "$remote_url" in
+          *github.com*)
+            confirm="$(askval "That folder's repo remote is on github.com. Type 'private' to confirm this specific repository is PRIVATE and continue (anything else skips the mirror):" "")"
+            if [ "$confirm" != "private" ]; then
+              warn "Mirror folder NOT set — its repo's remote is on github.com and wasn't confirmed private."
+              mirror=""
+            fi
+            ;;
+        esac
+      fi
       # Strip control bytes: these values land in a config file the hook reads.
       strip_ctl() { printf '%s' "$1" | tr -d '\000-\037'; }
       {

@@ -19,7 +19,19 @@ input=$(cat 2>/dev/null)
 printf 'Clock (this machine): %s\n' "$(date '+%Y-%m-%d %H:%M')"
 
 AWAY_MINUTES="${AWAY_MINUTES:-20}"
-to_epoch() { local e; e=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$1" "+%s" 2>/dev/null); case "$e" in ''|*[!0-9]*) printf '' ;; *) printf '%s' "$e" ;; esac; }
+# Portable ISO-8601-UTC ("YYYY-MM-DDTHH:MM:SS", no trailing Z) -> epoch seconds.
+# BSD `date -j -f` (macOS) first; GNU `date -d` (Linux, no -j/-f) as the fallback —
+# GNU needs the Z put back so it reads the string as UTC, same as BSD's `-u`.
+to_epoch() {
+  local raw="$1" e
+  e=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$raw" "+%s" 2>/dev/null)
+  case "$e" in ''|*[!0-9]*) e="" ;; esac
+  if [ -z "$e" ]; then
+    e=$(date -u -d "${raw}Z" "+%s" 2>/dev/null)
+    case "$e" in ''|*[!0-9]*) e="" ;; esac
+  fi
+  printf '%s' "$e"
+}
 tp=$(printf '%s' "$input" | /usr/bin/sed -n 's/.*"transcript_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 gap_min=""
 if [ -n "$tp" ] && [ -f "$tp" ]; then

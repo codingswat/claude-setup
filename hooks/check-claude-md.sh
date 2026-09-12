@@ -120,9 +120,14 @@ msg="$msg
 $RULE_CAPTURE"
 
 # Claude Code caps injected hook context at 10,000 characters and truncates
-# silently past that. Warn before rules start disappearing off the end.
+# silently past that. Warn before this stops fitting — but on the actual
+# injected text (this same $msg), never on the "## PROCESS RULES (enforced)"
+# section, which is NOT part of $msg (only a short enforcement reminder is;
+# see the comment at "1. Process rules" above). The one piece of $msg that
+# can genuinely grow is ~/.claude/hooks/interview.md, so that is what a
+# warning here should point at.
 if [ "${#msg}" -gt 9000 ]; then
-  msg="WARNING: the rules being injected are ${#msg} characters, close to Claude Code's 10,000-character cap on hook context — past that, rules are silently cut off. Tell the user at the start of your first reply to shorten the '## PROCESS RULES (enforced)' section.
+  msg="WARNING: the context this hook is injecting is ${#msg} characters, close to Claude Code's 10,000-character cap on hook context — past that, it is silently cut off. The '## PROCESS RULES (enforced)' section is NOT part of this text (only a short reminder is); the part that grows with your edits is ~/.claude/hooks/interview.md. Tell the user at the start of your first reply to shorten that file.
 
 $msg"
 fi

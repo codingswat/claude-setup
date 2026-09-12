@@ -3,7 +3,8 @@ the SessionStart hook injects this file. In that case, before doing anything els
 tell me it's missing, then ask a few short setup questions in plain English — what the
 project is for, who will use it, must-have features, which languages the interface needs to
 support, and anything else worth noting for future sessions. Then study the code and draft
-ONE `CLAUDE.md` combining my answers with what you found. Show it to me for review before
+ONE `CLAUDE.md` combining my answers with what you found, starting from the form at
+`~/.claude/project-template/CLAUDE-template.md`. Show it to me for review before
 saving. After the CLAUDE.md is approved, copy the starter files from
 `~/.claude/project-template/` into the project (gitignore, empty DECISIONS.md, docs/specs/
 folder, minimal README) — don't overwrite any file that already exists.

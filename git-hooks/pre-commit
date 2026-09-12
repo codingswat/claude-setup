@@ -2,36 +2,49 @@
 # Fires on every `git commit`, whatever made it (an agent, a script, or a person at the
 # terminal). Two independent checks:
 #   (1) author identity — enforced only if hooks/backup.conf sets AUTHOR=...; otherwise
-#       this repo hasn't opted in and the check is skipped silently.
-#   (2) privacy — refuses a commit whose STAGED content holds an absolute home path
-#       (macOS's `Users` folder or Linux's `/home/`, each followed by an account name) or
-#       a line from an optional personal list, ~/.claude/redaction-names.local (one name
-#       per line; no list just means only the path check runs).
+#       this repo hasn't opted in and the check is skipped silently. A repo can also opt
+#       OUT explicitly (a work repo with its own author, on a machine that also runs a
+#       personal backup.conf): `git config --local hooks.identity false` skips this check
+#       silently, same as having no AUTHOR at all.
+#   (2) privacy — refuses a commit whose ADDED lines (the staged diff, not the whole file —
+#       an old line already in history isn't re-introduced by touching the file again)
+#       hold an absolute home path (`/Users/<name>/` or `/home/<name>/`, macOS and Linux)
+#       whose <name> isn't a known placeholder (node, runner, user, app, USERNAME,
+#       username, you, yourname, example — Docker base images, CI runners and doc
+#       placeholders all use these), or a line from an optional personal list,
+#       ~/.claude/redaction-names.local (one name per line; no list just means only the
+#       path check runs). Deliberate override, one commit: `PRIVACY_OK=1 git commit ...`.
 # (The private version this came from has a third check, a cap on how many lines a shared
 # "running notes" file may gain in one commit — that belongs in a project's own hooks.)
 
 # ---- (1) author identity ----
-CONF="$HOME/.claude/hooks/backup.conf"
-AUTHOR=""
-if [ -f "$CONF" ]; then
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*) continue ;; esac
-    case "$line" in AUTHOR=*) AUTHOR="${line#AUTHOR=}" ;; esac
-  done < "$CONF"
-fi
-if [ -n "$AUTHOR" ]; then
-  ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null)"
-  case "$ident" in
-    "$AUTHOR"*) ;;
-    *)
-      echo "pre-commit hook: REFUSED — author identity does not match hooks/backup.conf." >&2
-      echo "  want: $AUTHOR" >&2
-      echo "  got:  ${ident%% >*} >" >&2
-      exit 1 ;;
-  esac
+if [ "$(git config --local --get hooks.identity 2>/dev/null)" = "false" ]; then
+  : # this repo opted out — skip silently
+else
+  CONF="$HOME/.claude/hooks/backup.conf"
+  AUTHOR=""
+  if [ -f "$CONF" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in ''|'#'*) continue ;; esac
+      case "$line" in AUTHOR=*) AUTHOR="${line#AUTHOR=}" ;; esac
+    done < "$CONF"
+  fi
+  if [ -n "$AUTHOR" ]; then
+    ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null)"
+    case "$ident" in
+      "$AUTHOR"*) ;;
+      *)
+        echo "pre-commit hook: REFUSED — author identity does not match hooks/backup.conf." >&2
+        echo "  want: $AUTHOR" >&2
+        echo "  got:  ${ident%% >*} >" >&2
+        echo "  Per-repo opt-out: git config --local hooks.identity false" >&2
+        exit 1 ;;
+    esac
+  fi
 fi
 
-# ---- (2) privacy: staged content vs an absolute home path or a listed name ----
+# ---- (2) privacy: ADDED lines of the staged diff vs a home path or a listed name ----
+[ "${PRIVACY_OK:-}" = "1" ] && exit 0
 python3 - <<'PY' || exit 1
 import re, subprocess, sys, os
 names_file = os.path.expanduser("~/.claude/redaction-names.local")
@@ -41,23 +54,37 @@ if os.path.isfile(names_file):
         s = ln.strip()
         if s and not s.startswith("#"):
             needles.append(s.lower())
-home_path = re.compile(rb"/(Users|home)/[A-Za-z0-9_]")
-staged = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
-                         capture_output=True).stdout
+EXCLUDED = {"node", "runner", "user", "app", "USERNAME", "username", "you", "yourname", "example"}
+home_path = re.compile(r"/(?:Users|home)/([A-Za-z0-9_.-]+)/")
+diff = subprocess.run(["git", "diff", "--cached", "-U0", "--no-color"], capture_output=True).stdout
+text = diff.decode("utf-8", "surrogateescape")
+cur_file = None
 offenders = {}
-for rel in [p for p in staged.decode("utf-8", "surrogateescape").split("\0") if p]:
-    blob = subprocess.run(["git", "show", f":{rel}"], capture_output=True).stdout
-    text = blob.decode("utf-8", "ignore").lower()
-    n = sum(1 for nd in needles if nd in text)
-    if home_path.search(blob):
-        n += 1
-    if n:
-        offenders[rel] = n
+for line in text.splitlines():
+    if line.startswith("+++ "):
+        p = line[4:]
+        cur_file = p[2:] if p.startswith(("a/", "b/")) else p
+        if cur_file == "/dev/null":
+            cur_file = None
+        continue
+    if not line.startswith("+") or line.startswith("+++"):
+        continue
+    added = line[1:]
+    n = 0
+    low = added.lower()
+    for nd in needles:
+        if nd in low:
+            n += 1
+    for m in home_path.finditer(added):
+        if m.group(1) not in EXCLUDED:
+            n += 1
+    if n and cur_file:
+        offenders[cur_file] = offenders.get(cur_file, 0) + n
 if offenders:
-    print("pre-commit hook: REFUSED — an absolute home path or a listed name is in the "
-          "staged content (file -> matches): " + ", ".join(f"{k} -> {v}" for k, v in offenders.items()),
+    print("pre-commit hook: REFUSED — an absolute home path or a listed name is in an ADDED "
+          "line of the staged diff (file -> matches): " + ", ".join(f"{k} -> {v}" for k, v in offenders.items()),
           file=sys.stderr)
-    print("  Remove it, re-stage, commit again.", file=sys.stderr)
+    print("  Remove it, re-stage, commit again. Deliberate override, one commit: PRIVACY_OK=1 git commit ...", file=sys.stderr)
     sys.exit(1)
 PY
 exit 0
