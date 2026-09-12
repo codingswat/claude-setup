@@ -11,8 +11,16 @@
 # exits immediately and does nothing.
 # Gap (stated plainly): `git push --no-verify` skips every pre-push hook, including this
 # one — that is git's own escape hatch, not a flaw in this script.
+# Per-repo opt-in: this hook is machine-wide once step 7 is on, so without an explicit
+# opt-in it would run whatever "typecheck" script a repo you merely cloned or forked
+# happens to define. It only runs after `git config --local hooks.typecheck true` in
+# THAT repo; otherwise it says so and does nothing.
 # Tests: hooks/test-hooks.sh.
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+if [ "$(git -C "$root" config --local --get hooks.typecheck 2>/dev/null)" != "true" ]; then
+  echo "pre-push: type-check skipped — opt in per repo with: git config hooks.typecheck true" >&2
+  exit 0
+fi
 [ -f "$root/package.json" ] || exit 0
 jq -e '.scripts.typecheck' "$root/package.json" >/dev/null 2>&1 || exit 0
 helper="${HOOKS_DIR:-$HOME/.claude/hooks}/link-node-modules.sh"

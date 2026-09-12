@@ -52,7 +52,7 @@ a starting set rather than a complete one.
 - **Merge conflict** — when two branches changed the same lines and git can't decide which version wins; a human (or careful AI) must pick line by line.
 - **Migration** — changing a database's table shapes while carefully preserving live data. Back up first, always.
 - **npm / pip** — app stores for code packages (JavaScript / Python).
-- **OCR** — software that reads text out of a picture or scan; the only way to get numbers off a drawing that is just a photo.
+- **OCR** — software that reads text out of a picture or scan; the only way to get words or numbers out of a page that is just an image, like text in a scanned page.
 - **Package** — ready-made code by other developers that my project pulls in instead of writing from scratch.
 - **Plugin (Claude Code)** — a bundle of skills and settings you install into Claude Code once and it works in every project; can auto-update itself.
 - **PostgreSQL / SQLite** — database brands; SQLite for small personal tools, PostgreSQL for real users.
@@ -68,7 +68,7 @@ a starting set rather than a complete one.
 - **SQL** — the language for asking databases questions ("get all orders over $50"); not a brand.
 - **Subagent** — a helper AI that a Claude chat hires for one task; it works in its own separate memory and reports back, keeping the main chat's memory free for judgement.
 - **TDD (test-driven development)** — write the failing test first, then write just enough code to make it pass; guarantees every feature has a test that can fail.
-- **Tunnel (cloudflared)** — a small program on your server that dials OUT to Cloudflare, so visitors reach the server through Cloudflare without any door (open port) into your home network; free, and the password gate stays on Cloudflare's side.
+- **Tunnel (cloudflared)** — a small program on a server that dials OUT to a tunnel provider, so visitors reach the server through that provider without opening any door (open port) into the network it runs on; free, and the password gate stays on the provider's side.
 - **Ultracode** — a keyword you type anywhere in a Claude Code message to allow workflow mode for that one message (typing `/effort ultracode` switches it on for the whole session); more thorough, burns usage much faster.
 - **Usage limit (session limit)** — the ceiling a Claude subscription puts on how much work fits in a time window; hit it and every request fails with "resets at <time>" until the window rolls over. Big multi-agent reviews eat it much faster than normal chat.
 - **Workflow (Claude Code)** — Claude hiring a temporary team of helper AIs and coordinating them with a fixed script: parallel work, cross-checking, verifying each other's findings. For jobs too big or too important for one chat; you have to switch it on (see Ultracode).

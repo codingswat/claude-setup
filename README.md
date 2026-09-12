@@ -25,10 +25,11 @@ under?"* — if it lists them back, you're live.
 The repo carries its own `CLAUDE.md`, so Claude knows what to install and will then walk you
 through filling in your rulebook — which is the part that actually matters.
 
-Nothing is deleted, anything overwritten is backed up first, and the two sharp-edged pieces
-(the auto-backup hook and the machine-wide git hooks) are off unless you say yes. The
-rulebook it installs is a form, but not an empty one — its starter rules take effect
-immediately, so read them before your next session. Full detail, including how to do it all
+Nothing is deleted, anything overwritten is backed up first, and two sharp-edged pieces
+(the auto-backup hook and the machine-wide git hooks) are off unless you say yes. A third is
+on by default: the rulebook's own first two starter rules grant standing permission to commit,
+push, and merge to `main`, live from your very next session — read them before that session
+starts ([TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md)). Full detail, including how to do it all
 by hand: [INSTALL.md](INSTALL.md).
 
 ---
@@ -92,8 +93,8 @@ Read them in this order if you're reading rather than installing.
 | [TEMPLATE-project-CLAUDE.md](TEMPLATE-project-CLAUDE.md) | The per-project rulebook, as a form. | 5 min |
 | [hooks/](hooks/) | The scripts that enforce the rules: the rules injector, the card injector, the dangerous-git blocker, the bare-commit guard, the heavy-test-suite guard, the auto-backup with a secret scan — and a test script that proves each one fires and each one stays quiet. | — |
 | [git-hooks/](git-hooks/) | Three git-side guards, opt-in: commits carry your name not the assistant's, no home-directory path or listed name gets committed, and a push is type-checked first. | — |
-| [skills/](skills/) | My own skills plus four cherry-picked from bigger packs — and a credited list of everything else I run. See [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md). | — |
-| [project-template/](project-template/) | Starter files every new project gets: a gitignore that keeps secrets out, an empty decision log, a specs folder, a minimal README. | — |
+| [skills/](skills/) | My own skills plus four cherry-picked from bigger packs — and a credited list of everything else I run. See [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md). Four of my own (`summarize`, `overnight`, `handing-off-live-work`, `handover`) come from a multi-chat way of working and are optional — `summarize` shapes every report you get, so delete its folder if you don't want that. | — |
+| [project-template/](project-template/) | Starter files every new project gets: a gitignore that keeps secrets out, an empty decision log, a specs folder, a minimal README. Note: the installed `domain-modeling` skill keeps its own decision log in ADR format (`docs/adr/`) — pick one decision-log convention per project. | — |
 | [DECISIONS.md](DECISIONS.md) | Three entries from this repo's own decision log, to show the format. | 2 min |
 
 ---

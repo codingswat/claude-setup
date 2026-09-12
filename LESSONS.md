@@ -234,9 +234,9 @@ words.
 
 **Lesson** — let your assistant keep working through a whole task without stopping to check in
 after every single step.
-**What happened** — in the owner's own words: "dont stop as long as the road is clear for
-you… if i dont respond and you can continue just continue and the next time you need my input
-just ask me the acumilated questions."
+**What happened** — in the owner's own words: "Don't stop as long as the road is clear for
+you... if I don't respond and you can continue, just continue, and the next time you need my
+input just ask me the accumulated questions."
 **The rule to copy** — tell your assistant to keep going through ordinary work without asking
 permission at each step, save up real questions, and raise them together, once, when it
 genuinely needs an answer.
@@ -246,7 +246,7 @@ genuinely needs an answer.
 
 **Lesson** — "what do you think?" is asking for an opinion, not permission to go build it.
 **What happened** — in the owner's own words, after a tool got installed when only a review had
-been asked for: "dont do unless it clear that i want you to start an action."
+been asked for: "Don't do unless it's clear that I want you to start an action."
 **The rule to copy** — treat "thoughts?", "review this," or "what would you do?" as a request
 for a recommendation only, and wait for an explicit go before anything gets built, installed,
 or changed.
@@ -268,10 +268,10 @@ deleting it.
 another app on your computer — and it must warn you, with the reason, before anything that
 would send a message, a code, or an email to you.
 **What happened** — in the owner's own words, after an assistant opened another program
-mid-task without mentioning it: "if you going to use the apps on the computer inform me
-please, dont stop just inform me." Separately, once, a helper triggered a login code to the
-owner's own inbox with no warning — an unexplained code with no idea who had asked for it reads
-exactly like an actual attack, not a normal step.
+mid-task without mentioning it: "If you're going to use the apps on the computer, inform me
+please, don't stop, just inform me." Separately, once, a helper triggered a login code to the
+owner's own inbox with no warning: a code that arrives with no warning and no way to tell who
+requested it is exactly what a phishing attempt looks like.
 **The rule to copy** — have it say "I just opened [app]" the moment it does, without stopping
 to ask — but require a heads-up with the reason BEFORE any step that would send you a message,
 a code, or an email, never after.
@@ -294,7 +294,7 @@ trap, what it broke, and the workaround; add to it the moment a new one is found
 
 **Lesson** — send simple, well-defined chores to a smaller, cheaper AI model — save the
 expensive one for real judgment calls.
-**What happened** — in the owner's own words: "try to conserve context and use agents; use the
+**What happened** — in the owner's own words: "Try to conserve context and use agents; use the
 lowest model possible." The test that decides it: if explaining the change to a helper would
 take more words than just making the change, do it yourself; if it's bigger than the
 instructions, hand it to the cheapest model that can actually do it.
@@ -319,7 +319,7 @@ around ten helpers at once.
 
 **Lesson** — when a task hits something bigger than expected — a big cost, a design reversal, a
 third attempt after two failures — stop and ask before spending more to push through it.
-**What happened** — in the owner's own words: "for any major hurdle ask me before spending
+**What happened** — in the owner's own words: "For any major hurdle, ask me before spending
 resources on it," said after a session had spent real time chasing a side question that turned
 out not to matter at all.
 **The rule to copy** — on a real hurdle (much bigger scope, a costly fix, a third attempt, a

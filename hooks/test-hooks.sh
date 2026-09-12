@@ -153,11 +153,12 @@ echo "zebulonquixote mentioned here" > "$pn/a.txt"; git -C "$pn" add -A
 if env HOME="$NOLIST_HOME" "${ID[@]}" git -C "$pn" commit -q -m t >/dev/null 2>&1; then ok; else bad "privacy: with no redaction-names.local, only the path check runs, so this must pass"; fi
 pass_n=$((pass_n+1))
 
-echo "7 git-hooks/pre-push (typecheck of the pushed COMMIT, never the folder)"
+echo "7 git-hooks/pre-push (typecheck of the pushed COMMIT, never the folder; opt-in gated)"
 export HOOKS_DIR
-mkrepo() { # $1 name, $2 typecheck script or "" for none
+mkrepo() { # $1 name, $2 typecheck script or "" for none, $3 opt-in value ("true" default, or "none" to leave hooks.typecheck unset)
   local r="$T/$1"; mkdir -p "$r"; git init -q --bare "$T/$1.git"; git -C "$r" init -q -b main
   git -C "$r" config core.hooksPath "$GIT_HOOKS_DIR"; git -C "$r" remote add origin "$T/$1.git"
+  case "${3:-true}" in none) ;; *) git -C "$r" config hooks.typecheck "${3:-true}" ;; esac
   if [ -n "$2" ]; then python3 -c 'import json,sys;print(json.dumps({"name":"x","scripts":{"typecheck":sys.argv[1]}}))' "$2" > "$r/package.json"; else printf '{"name":"x"}\n' > "$r/package.json"; fi
   echo a > "$r/a.txt"; git -C "$r" add -A; "${ID[@]}" git -C "$r" commit -q -m init
 }
@@ -167,6 +168,10 @@ mkrepo tcbad "exit 1"; if git -C "$T/tcbad" push -q origin main 2>/dev/null; the
 refuse_n=$((refuse_n+1))
 mkrepo tcnone ""; if git -C "$T/tcnone" push -q origin main 2>/dev/null; then ok; else bad "no typecheck script at all: push must succeed"; fi
 pass_n=$((pass_n+1))
+mkrepo tcnoopt "exit 1" none; if git -C "$T/tcnoopt" push -q origin main 2>/dev/null; then ok; else bad "not opted in (no hooks.typecheck config): push must succeed — the repo's own script must be skipped, never run"; fi
+pass_n=$((pass_n+1))
+mkrepo tcoptin "exit 1" true; if git -C "$T/tcoptin" push -q origin main 2>/dev/null; then bad "opted in (hooks.typecheck=true): a failing typecheck must still be refused"; else ok; fi
+refuse_n=$((refuse_n+1))
 
 echo "8 hooks/auto-backup.sh secret scan"
 FH="$T/fakehome-ab"; mkdir -p "$FH/.claude/hooks"
@@ -188,6 +193,66 @@ env HOME="$FH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
 after2="$(git -C "$FH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$after2" -gt "$before" ]; then ok; else bad "a clean change (secret removed) must be committed"; fi
 pass_n=$((pass_n+1))
+# a new, wholly untracked DIRECTORY: `git status --porcelain` (no -z/--untracked-files=all)
+# collapses this to one `?? newdir/` entry, so a secret inside it was never scanned even
+# though `git add -A` still staged the file underneath.
+mkdir -p "$FH/.claude/newdir"
+echo "sk-ant-""zzzzzzzzzz1234567890" > "$FH/.claude/newdir/note.md"
+env HOME="$FH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+afterDir="$(git -C "$FH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$afterDir" = "$after2" ]; then ok; else bad "a secret inside a brand-new untracked directory must NOT be committed"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$FH/.claude/newdir/note.md"
+# a clean file whose path contains a SPACE: plain `git status --porcelain` prints it quoted,
+# so the old `awk '{print $NF}'` scan turned it into a non-existent filename and skipped it.
+echo "clean note" > "$FH/.claude/hooks/my notes.md"
+env HOME="$FH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+afterSpace="$(git -C "$FH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$afterSpace" -gt "$afterDir" ]; then ok; else bad "a clean file whose path contains a space must still be committed"; fi
+pass_n=$((pass_n+1))
+
+echo "9 hooks/auto-backup.sh mirror secret scan"
+FH2="$T/fakehome-mirror"; mkdir -p "$FH2/.claude/hooks"
+git -C "$FH2/.claude" init -q -b main
+git -C "$FH2/.claude" config core.hooksPath /dev/null   # isolate from this MACHINE's own real git hooks
+git -C "$FH2/.claude" config user.name Tester; git -C "$FH2/.claude" config user.email tester@example.com
+MIR="$T/mirror-repo"; mkdir -p "$MIR"; git -C "$MIR" init -q -b main
+git -C "$MIR" config core.hooksPath /dev/null            # isolate from this MACHINE's own real git hooks
+git -C "$MIR" config user.name Tester; git -C "$MIR" config user.email tester@example.com
+cat > "$FH2/.claude/hooks/backup.conf" <<EOF
+AUTHOR=Tester <tester@example.com>
+MIRROR_DIR=$MIR
+EOF
+echo "hello" > "$FH2/.claude/CLAUDE.md"
+echo "#!/bin/bash" > "$FH2/.claude/hooks/check-claude-md.sh"
+echo "#!/bin/bash" > "$FH2/.claude/hooks/auto-backup.sh"
+printf '{"env":{"key":"%s"}}' "sk-ant-""zzzzzzzzzz1234567890" > "$FH2/.claude/settings.json"
+# committed BY HAND before this turn's hook run: the config repo then reports NO changes, so
+# part 1 never calls secret_scan at all — reproducing the real gap where only a mirror-side
+# scan (this fix) can still catch the secret in the copy.
+git -C "$FH2/.claude" add -A; git -C "$FH2/.claude" commit -q -m seed
+beforeMirror="$(git -C "$MIR" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+env HOME="$FH2" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+afterMirror="$(git -C "$MIR" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$afterMirror" = "$beforeMirror" ]; then ok; else bad "a secret already committed in settings.json (config repo reports no changes) must NOT reach the mirror copies"; fi
+refuse_n=$((refuse_n+1))
+printf '{"name":"clean"}' > "$FH2/.claude/settings.json"
+git -C "$FH2/.claude" add -A; git -C "$FH2/.claude" commit -q -m clean
+env HOME="$FH2" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+afterMirror2="$(git -C "$MIR" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$afterMirror2" -gt "$beforeMirror" ]; then ok; else bad "a clean settings.json must be refreshed into the mirror copies"; fi
+pass_n=$((pass_n+1))
+
+echo "10 hooks/block-dangerous-git.sh and commit-pathspec-guard.sh: fail closed with no jq/python3"
+NOPARSE="$T/noparse-bin"; mkdir -p "$NOPARSE"
+for b in cat grep bash; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOPARSE/$b"; done
+# Test seam: a PATH pointing at a directory holding only bash + coreutils (no jq, no
+# python3) — the harness's cleanest way to prove the missing-parser path without touching
+# the real system's toolchain.
+INPUT="$(json_bash 'git status')"
+expect refuse 2 "no jq/python3 on PATH: must fail CLOSED even on a benign command" env -i "PATH=$NOPARSE" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'GITGUARD=1 git clean -fd')"
+expect pass 0 "jq/python3 present: a legitimate override still passes after the anchor fix" bash "$HOOKS_DIR/block-dangerous-git.sh"
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

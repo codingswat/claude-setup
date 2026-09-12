@@ -1,8 +1,8 @@
 # This repo — instructions for the Claude Code session reading it
 
-**What this repo is:** a working Claude Code configuration — a rulebook, two hooks, a project
-template, a glossary and a few skills. Someone has just opened a session here because they
-want it set up on their machine.
+**What this repo is:** a working Claude Code configuration — a rulebook, 7 hook scripts and 3
+git hooks, a project template, a glossary and a few skills. Someone has just opened a session
+here because they want it set up on their machine.
 
 **Your job in this session is to install it and then help them personalise it.** Not to build
 anything. If they ask for something else entirely, do that instead — this is a starting
@@ -15,7 +15,7 @@ assumption, not a constraint.
 Greet them briefly and offer the install. Say plainly what it will touch:
 
 > This will add hook scripts, a project template and some skills under `~/.claude`, and
-> register one hook in `~/.claude/settings.json`. Anything it would overwrite gets backed up
+> register the hooks (six entries) in `~/.claude/settings.json`. Anything it would overwrite gets backed up
 > first, and nothing is deleted. The two sharp pieces — the auto-backup hook and the
 > machine-wide git hooks — are off unless you ask for them.
 
@@ -33,9 +33,10 @@ carefully, and a hand-rolled equivalent will get one of those wrong.
 
 ## After it runs
 
-The installer puts a **blank, fill-in-the-blanks rulebook** at `~/.claude/CLAUDE.md` (or
-leaves theirs alone if they already had one). That file is only useful once it is filled in,
-so this is the part that actually matters:
+The installer puts **a rulebook that is a form but not empty** at `~/.claude/CLAUDE.md` (or
+leaves theirs alone if they already had one): its starter rules, including standing permission
+to commit and push, are live from the next session — read them with the person. Filling in the
+rest of the form is still the part that actually matters:
 
 1. **Open `~/.claude/CLAUDE.md` and walk them through it section by section.** Ask the
    questions in it conversationally rather than telling them to go and write an essay. Write

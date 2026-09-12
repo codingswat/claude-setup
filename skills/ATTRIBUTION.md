@@ -1,5 +1,8 @@
 # Attribution
 
+All eight folders below (four of my own, four cherry-picked) are installed by `install.sh`;
+any one of them can be deleted without breaking the others.
+
 ## Own skills in this folder
 
 Written from scratch, no external pack or author behind them.

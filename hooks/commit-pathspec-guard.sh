@@ -12,7 +12,18 @@
 # merely MENTIONS "-a" or "." is not refused.
 # Deliberate whole-index commit: start the command (or the segment after ; && |) with
 # `SWEEP=1 ` — only that position counts.
+# Both jq and python3 parse the command below; if either is missing this guard cannot
+# read what it's being asked to run, so it refuses rather than silently letting an
+# unparsed (and therefore unmatched) command through. Fail closed, like
+# git-hooks/pre-commit.
 # Tests: hooks/test-hooks.sh.
+missing=""
+command -v jq >/dev/null 2>&1 || missing="jq"
+command -v python3 >/dev/null 2>&1 || missing="${missing:+$missing and }python3"
+if [ -n "$missing" ]; then
+  echo "commit-pathspec-guard: REFUSED — $missing not found, so this guard cannot parse the command (fail closed, not open)." >&2
+  exit 2
+fi
 input="$(cat)"
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
 [ -z "$cmd" ] && exit 0

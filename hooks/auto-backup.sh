@@ -95,11 +95,29 @@ changed_files() {
 # backup simply does not run until the secret is gone; nothing here is committed until
 # this check passes, so the next turn retries automatically once it's removed.
 SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY'
+# Scans a fixed list of file paths (used for the mirror copies, which are never inside
+# `git status`). Returns matching paths, one per line.
+files_have_secret() {
+  local hits="" f
+  for f in "$@"; do
+    if [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" >/dev/null 2>&1; then
+      hits="${hits:+$hits$'\n'}$f"
+    fi
+  done
+  printf '%s' "$hits"
+}
 secret_scan() {
-  local hits
-  hits=$(git status --porcelain 2>/dev/null | awk '{print $NF}' | while IFS= read -r f; do
-    [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" 2>/dev/null
-  done)
+  local hits="" f
+  # -z / --untracked-files=all: without them a new DIRECTORY collapses to one `?? dir/`
+  # entry (nothing inside it is ever scanned) and a path with a space is printed quoted
+  # (the quote becomes part of the filename) — both let a secret through untouched while
+  # `git add -A` below still stages the real file. NUL-split covers exactly that set.
+  while IFS= read -r -d '' f; do
+    f="${f:3}"   # strip the two-char status + one space that -z still prefixes
+    if [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" >/dev/null 2>&1; then
+      hits="${hits:+$hits$'\n'}$f"
+    fi
+  done < <(git status --porcelain --untracked-files=all -z 2>/dev/null)
   if [ -n "$hits" ]; then
     warn "$1: possible secret in: $hits — NOT committed, NOT pushed. Remove it; the next turn backs up normally once it's gone."
     return 1
@@ -159,6 +177,13 @@ elif git -C "$MIRROR_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   cp "$CLAUDE_DIR/hooks/check-claude-md.sh" "$MIRROR_DIR/hook-copy.sh"      2>/dev/null
   cp "$CLAUDE_DIR/settings.json"         "$MIRROR_DIR/settings-copy.json"   2>/dev/null
   cp "$CLAUDE_DIR/hooks/auto-backup.sh"  "$MIRROR_DIR/auto-backup-copy.sh"  2>/dev/null
+  # settings.json legitimately carries an `env` block, which is where a live API key would
+  # sit — scan the four copies too, same as the config repo above, before they are staged.
+  mirror_hits="$(files_have_secret "$MIRROR_DIR/global-copy.md" "$MIRROR_DIR/hook-copy.sh" "$MIRROR_DIR/settings-copy.json" "$MIRROR_DIR/auto-backup-copy.sh")"
+  if [ -n "$mirror_hits" ]; then
+    warn "mirror repo: possible secret in: $mirror_hits — NOT committed, NOT pushed. Remove it from the source; the next turn refreshes normally once it's gone."
+    exit 0
+  fi
   cd "$MIRROR_DIR" || exit 0
   if [ -n "$(git status --porcelain -- global-copy.md hook-copy.sh settings-copy.json auto-backup-copy.sh 2>/dev/null)" ]; then
     files=$(git status --porcelain -- global-copy.md hook-copy.sh settings-copy.json auto-backup-copy.sh | awk '{printf "%s ", $NF}')

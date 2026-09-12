@@ -74,7 +74,7 @@ has nothing real to say, it is omitted.
    X"). Never depend on files outside the repository — if an outside fact matters
    (a machine trap, an owner convention), state the fact itself. Label machine-specific
    details as such and give the portable way to check them (e.g. the command that
-   reveals the Tk version, not one machine's good interpreter path).
+   reveals a dependency's installed version, not one machine's known-good path).
 3. **Read the code, don't recall it.** Every claim comes from files opened while
    writing or commands actually run. Run the tests and record the real count and
    result. Quote key source verbatim where behaviour is subtle.

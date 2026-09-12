@@ -248,6 +248,14 @@ This makes `commit-msg`, `pre-commit` and `pre-push` (copied in step 1) run in *
 repository on this machine** — and it **replaces any hooks that repo already has** in its own
 `.git/hooks/`, silently. That's the sharp edge: only do this if you want it everywhere.
 
+`pre-push` will not type-check a repo unless that repo opts in: without it, a pushed repo's
+own `package.json` would otherwise run whatever its `scripts.typecheck` says on your machine,
+just because you cloned or forked it. Opt in per repo with:
+
+```bash
+git config --local hooks.typecheck true
+```
+
 To undo:
 
 ```bash
