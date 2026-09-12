@@ -97,7 +97,7 @@ Read them in this order if you're reading rather than installing.
 | [git-hooks/](git-hooks/) | Three git-side guards, opt-in: commits carry your name not the assistant's, no home-directory path or listed name gets committed, and a push is type-checked first. | — |
 | [skills/](skills/) | My own skills plus four cherry-picked from bigger packs — and a credited list of everything else I run. See [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md). Four of my own (`summarize`, `overnight`, `handing-off-live-work`, `handover`) come from a multi-chat way of working and are optional — `summarize` shapes every report you get, so delete its folder if you don't want that. | — |
 | [project-template/](project-template/) | Starter files every new project gets: a gitignore that keeps secrets out, an empty decision log, a specs folder, a minimal README. Note: the installed `domain-modeling` skill keeps its own decision log in ADR format (`docs/adr/`) — pick one decision-log convention per project. | — |
-| [DECISIONS.md](DECISIONS.md) | Three entries from this repo's own decision log, to show the format. | 2 min |
+| [DECISIONS.md](DECISIONS.md) | A few entries from this repo's own decision log, to show the format. | 2 min |
 
 ---
 
