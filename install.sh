@@ -114,10 +114,11 @@ copy_if_present  "$SRC/hooks/clock-in-context.sh"      "$DEST/hooks/clock-in-con
 copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)" required
+copy_if_present  "$SRC/hooks/helper-ledger.py"         "$DEST/hooks/helper-ledger.py"         "helper-ledger.py (Stop)" required
 copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.sh"            "test-hooks.sh (run it yourself to check the hooks)"
 chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/hooks/clock-in-context.sh" \
          "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
-         "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/test-hooks.sh" 2>/dev/null
+         "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/helper-ledger.py" "$DEST/hooks/test-hooks.sh" 2>/dev/null
 
 # owner-card.md is a template you personalise — copied only if you don't have one.
 if [ -f "$DEST/hooks/owner-card.md" ]; then
@@ -359,6 +360,17 @@ else
   say  "     (block-dangerous-git.sh, commit-pathspec-guard.sh, heavy-suite-guard.sh)."
   say  "     They fail closed without a parser, so leaving them registered here would"
   say  "     refuse every Bash command. Install jq or python3, then run this again."
+fi
+
+# The helper ledger only reads transcripts and appends TSV rows — never blocks the
+# session, and needs python3 (not jq) on PATH.
+if command -v python3 >/dev/null 2>&1; then
+  LEDGER_CMD='/usr/bin/env python3 "$HOME/.claude/hooks/helper-ledger.py"'
+  res=$(register_hook "Stop" "$LEDGER_CMD" "" "")
+  report_hook_result "$res" "the Stop hook (helper-ledger.py)"
+else
+  warn "python3 not found — skipping the Stop hook (helper-ledger.py). Install python3,"
+  say  "     then run this again, or add it by hand (see INSTALL.md)."
 fi
 
 # #9: a backup copy only earns its place if we actually changed the file.

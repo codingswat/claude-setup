@@ -21,7 +21,7 @@ through filling in your rulebook afterwards — which is the part that actually 
 
 | Path | What happens |
 |---|---|
-| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh` and `test-hooks.sh` are copied in (backed up first if different). `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers |
+| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `helper-ledger.py` and `test-hooks.sh` are copied in (backed up first if different). `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers |
 | `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
@@ -62,12 +62,13 @@ mkdir -p ~/.claude/hooks ~/.claude/git-hooks ~/.claude/skills ~/.claude/project-
 cp -a ~/.claude/hooks ~/.claude/hooks.backup-$(date +%s) 2>/dev/null
 cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
    hooks/clock-in-context.sh hooks/block-dangerous-git.sh \
-   hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/test-hooks.sh \
+   hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/helper-ledger.py \
+   hooks/test-hooks.sh \
    ~/.claude/hooks/
 chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
          ~/.claude/hooks/clock-in-context.sh ~/.claude/hooks/block-dangerous-git.sh \
          ~/.claude/hooks/commit-pathspec-guard.sh ~/.claude/hooks/heavy-suite-guard.sh \
-         ~/.claude/hooks/test-hooks.sh
+         ~/.claude/hooks/helper-ledger.py ~/.claude/hooks/test-hooks.sh
 cp -Rn project-template/. ~/.claude/project-template/
 cp -Rn skills/. ~/.claude/skills/
 
@@ -242,6 +243,25 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
 
 Merge these arrays into whatever `hooks` block already exists — don't replace it.
 
+Finally, `helper-ledger.py` goes under `"Stop"` (needs `python3`, not `jq`):
+
+```json
+{ "hooks": [ {
+    "type": "command",
+    "command": "/usr/bin/env python3 \"$HOME/.claude/hooks/helper-ledger.py\""
+} ] }
+```
+
+### The helper ledger
+
+`helper-ledger.py` is a `Stop` hook that scans finished subagent/workflow-agent transcripts
+and appends one row per helper to `~/.claude/ledgers/helpers.tsv` — model, steps, peak
+context, output tokens, minutes, and an estimated cost. Nothing is printed and nothing
+blocks; it is silent on every error path, same as every other hook here. The prices baked
+into it (`RATES` near the top of the file) are **illustrative list prices** — edit them to
+whatever your own provider actually charges before trusting the cost column. `--tail N`
+prints the last N rows plus a per-model summary.
+
 ### 7. Optional: git hooks for every repo on this machine
 
 Read this before running it:
@@ -261,6 +281,10 @@ just because you cloned or forked it. Opt in per repo with:
 ```bash
 git config --local hooks.typecheck true
 ```
+
+`pre-commit` also caps a root `CLAUDE.md` by word count (4000 words if the repo's top level
+is `$HOME/.claude`, 5750 otherwise; override with `RULES_CAP_OK=1 git commit ...`) — a
+rulebook that grows without limit stops being read.
 
 To undo:
 

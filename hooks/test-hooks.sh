@@ -27,20 +27,43 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 ID=(env GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com)
 
 echo "1 clock-in-context.sh"
-out="$(bash "$HOOKS_DIR/clock-in-context.sh" </dev/null)"
-if printf '%s' "$out" | grep -qE '^Clock \(this machine\): [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}$'; then ok; else bad "clock line format: '$out'"; fi
+mkjson() {   # hook_event_name [transcript_path]
+  local ev="$1" tp="${2:-}"
+  if [ -n "$tp" ]; then python3 -c 'import json,sys;print(json.dumps({"hook_event_name":sys.argv[1],"transcript_path":sys.argv[2]}))' "$ev" "$tp"
+  else python3 -c 'import json,sys;print(json.dumps({"hook_event_name":sys.argv[1]}))' "$ev"; fi
+}
+run_hook() { local json="$1"; shift; printf '%s' "$json" | env "$@" bash "$HOOKS_DIR/clock-in-context.sh" 2>/dev/null; }
+
+out="$(run_hook "$(mkjson SessionStart)")"
+if printf '%s' "$out" | grep -qE '^Clock \(this machine\): [0-9]{4}-[0-9]{2}-[0-9]{2} +[0-9]{1,2}:[0-9]{2} (AM|PM) \([0-9]{2}:[0-9]{2} for file entries\)$'; then ok; else bad "clock line format (12h + 24h): '$out'"; fi
 pass_n=$((pass_n+1))
-if printf '%s' "$out" | grep -q '^HOW TO TALK TO ME (enforced)'; then ok; else bad "the reply-format card must be injected on every turn"; fi
-pass_n=$((pass_n+1))
+if printf '%s' "$out" | grep -q '^HOW TO TALK TO ME (enforced)'; then ok; else bad "SessionStart must inject the FULL card"; fi
+refuse_n=$((refuse_n+1))
 for sec in 'Problem' 'Story' 'Result' 'Needs my input'; do
-  if printf '%s' "$out" | grep -q "\*\*$sec\*\*"; then ok; else bad "card section missing: $sec"; fi
+  if printf '%s' "$out" | grep -q "\*\*$sec\*\*"; then ok; else bad "card section missing on SessionStart: $sec"; fi
   pass_n=$((pass_n+1))
 done
-out="$(CARD_FILE="$T/no-card.md" bash "$HOOKS_DIR/clock-in-context.sh" </dev/null)"
-if printf '%s' "$out" | grep -q '^WARNING: .*could not be injected' && printf '%s' "$out" | grep -q '^Clock (this machine): '; then ok; else bad "missing card file: loud WARNING and the clock kept"; fi
+
+out2="$(run_hook "$(mkjson UserPromptSubmit)")"
+if printf '%s' "$out2" | grep -q '^Card: a quick reply'; then ok; else bad "an ordinary prompt must get the one-line reminder"; fi
 pass_n=$((pass_n+1))
-if printf '%s' "$out" | grep -q 'YOU ARE RETURNING'; then bad "no transcript: away notice must NOT fire"; else ok; fi
+if printf '%s' "$out2" | grep -q '^HOW TO TALK TO ME'; then bad "an ordinary prompt must NOT get the full card"; else ok; fi
 pass_n=$((pass_n+1))
+if printf '%s' "$out2" | grep -q 'YOU ARE RETURNING'; then bad "no transcript: away notice must NOT fire"; else ok; fi
+pass_n=$((pass_n+1))
+
+out3="$(CARD_FILE="$T/no-card.md" run_hook "$(mkjson SessionStart)")"
+if printf '%s' "$out3" | grep -q '^WARNING: .*could not be injected' && printf '%s' "$out3" | grep -q '^Clock (this machine): '; then ok; else bad "missing card file on SessionStart: loud WARNING and the clock kept"; fi
+refuse_n=$((refuse_n+1))
+
+CTXTR="$T/ctx-transcript.jsonl"
+printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"id":"m1","model":"x","usage":{"input_tokens":1000,"cache_creation_input_tokens":2000,"cache_read_input_tokens":3000,"output_tokens":10}}}\n' > "$CTXTR"
+out_ctx="$(run_hook "$(mkjson UserPromptSubmit "$CTXTR")")"
+if printf '%s' "$out_ctx" | grep -qE '^Context used: [0-9]+k tokens'; then ok; else bad "context line must appear with a usage-bearing transcript: '$out_ctx'"; fi
+pass_n=$((pass_n+1))
+if printf '%s' "$out2" | grep -q '^Context used:'; then bad "context line must be silent with no transcript"; else ok; fi
+pass_n=$((pass_n+1))
+
 # Away detector: fake transcripts. human:N = your own message N minutes ago, tool:N = a
 # tool result (also a "user" line, must not count), assistant:N = a model reply.
 mk_tr() { python3 - "$@" <<'PY2'
@@ -56,12 +79,14 @@ for spec in sys.argv[2:]:
 open(path, 'w').write('\n'.join(lines) + '\n')
 PY2
 }
-away_out() { printf '{"session_id":"t","transcript_path":%s,"cwd":"/tmp"}' "$(jstr "$1")" | env "${@:2}" bash "$HOOKS_DIR/clock-in-context.sh" 2>/dev/null; }
+away_out() { printf '{"session_id":"t","hook_event_name":"UserPromptSubmit","transcript_path":%s,"cwd":"/tmp"}' "$(jstr "$1")" | env "${@:2}" bash "$HOOKS_DIR/clock-in-context.sh" 2>/dev/null; }
 fires() { printf '%s' "$1" | grep -qE "^YOU ARE RETURNING after ($2) minutes"; }
 quiet() { ! printf '%s' "$1" | grep -q 'YOU ARE RETURNING'; }
 TR="$T/transcript.jsonl"
 mk_tr "$TR" human:30 assistant:29 tool:29 assistant:28; out="$(away_out "$TR")"
 if fires "$out" '29|30|31'; then ok; else bad "away 30 min ago, model done 28 min ago: MUST fire: '$out'"; fi
+refuse_n=$((refuse_n+1))
+if printf '%s' "$out" | grep -q '^HOW TO TALK TO ME (enforced)'; then ok; else bad "a returning turn must inject the FULL card"; fi
 refuse_n=$((refuse_n+1))
 mk_tr "$TR" human:2 assistant:1; out="$(away_out "$TR")"
 if quiet "$out"; then ok; else bad "away 2 min ago: must NOT fire"; fi
@@ -355,6 +380,65 @@ echo 'API_KEY=' >> "$SH/.claude/CLAUDE.md"
 env HOME="$SH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
 afterS2="$(git -C "$SH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$afterS2" -gt "$beforeS" ]; then ok; else bad "an empty API_KEY= (nothing after it) must be committed, not refused"; fi
+pass_n=$((pass_n+1))
+
+echo "18 hooks/helper-ledger.py: a stable helper transcript yields one costed row, a transcript with no assistant records yields none"
+LHOME="$T/fakehome-ledger"; mkdir -p "$LHOME"
+LPROJ="$T/ledger-projects"; mkdir -p "$LPROJ/proj1/sess-aaa/subagents"
+LEDGER="$LHOME/.claude/ledgers/helpers.tsv"
+back5min() { python3 -c "import os,time,sys; t=time.time()-300; os.utime(sys.argv[1], (t,t))" "$1"; }
+CASE_OK="$LPROJ/proj1/sess-aaa/subagents/agent-caseok.jsonl"
+cat > "$CASE_OK" <<'EOF'
+{"type":"assistant","timestamp":"2026-09-01T10:00:00.000Z","message":{"id":"msgA","model":"claude-sonnet-5","usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+EOF
+back5min "$CASE_OK"
+CASE_EMPTY="$LPROJ/proj1/sess-aaa/subagents/agent-caseempty.jsonl"
+echo '{"type":"user","message":{"content":"not an assistant record"}}' > "$CASE_EMPTY"
+back5min "$CASE_EMPTY"
+env HOME="$LHOME" CLAUDE_PROJECTS_DIR="$LPROJ" python3 "$HOOKS_DIR/helper-ledger.py" >/dev/null 2>&1
+n_ledger_lines() { tail -n +2 "$LEDGER" 2>/dev/null | grep -c . ; }
+lc="$(n_ledger_lines)"
+if [ "$lc" = "1" ]; then ok; else bad "a helper with assistant usage must yield exactly one ledger row, got $lc"; fi
+pass_n=$((pass_n+1))
+grep -q $'\tcaseempty\t' "$LEDGER" 2>/dev/null && bad "a transcript with no assistant records must NOT yield a row" || ok
+refuse_n=$((refuse_n+1))
+line="$(tail -n +2 "$LEDGER" 2>/dev/null | grep caseok)"
+expect_cost="$(printf '%s' "$line" | awk -F'\t' '{print $NF}')"
+if [ "$expect_cost" = "0.00" ]; then ok; else bad "cost for a 2-input/10-output sonnet step should round to 0.00, got $expect_cost"; fi
+pass_n=$((pass_n+1))
+
+echo "19 git-hooks/pre-commit: root CLAUDE.md word cap"
+mkwords() { python3 -c "import sys; print(' '.join(['w']*int(sys.argv[1])))" "$1"; }
+capd="$T/caprepo"; mkdir -p "$capd"; git -C "$capd" init -q -b main; git -C "$capd" config core.hooksPath "$GIT_HOOKS_DIR"
+cap_try() { git -C "$capd" add -A >/dev/null 2>&1; CAP_ERR="$(env "$@" "${ID[@]}" git -C "$capd" commit -q -m test 2>&1 1>/dev/null)"; CAP_RC=$?; git -C "$capd" reset -q >/dev/null 2>&1; }
+mkwords 5751 > "$capd/CLAUDE.md"
+cap_try
+if [ "$CAP_RC" != 0 ] && printf '%s' "$CAP_ERR" | grep -q 'capped at 5750'; then ok; else bad "a 5751-word project CLAUDE.md must be REFUSED; RC=$CAP_RC ERR='$CAP_ERR'"; fi
+refuse_n=$((refuse_n+1))
+mkwords 5750 > "$capd/CLAUDE.md"
+cap_try
+if [ "$CAP_RC" = 0 ]; then ok; else bad "a 5750-word project CLAUDE.md must pass; RC=$CAP_RC ERR='$CAP_ERR'"; fi
+pass_n=$((pass_n+1))
+mkdir -p "$capd/sub"; mkwords 6000 > "$capd/sub/CLAUDE.md"
+cap_try
+if [ "$CAP_RC" = 0 ]; then ok; else bad "a 6000-word sub/CLAUDE.md must pass (only the repo-root file is capped); RC=$CAP_RC ERR='$CAP_ERR'"; fi
+pass_n=$((pass_n+1))
+rm -f "$capd/sub/CLAUDE.md"; cap_try
+mkwords 5751 > "$capd/CLAUDE.md"
+cap_try RULES_CAP_OK=1
+if [ "$CAP_RC" = 0 ]; then ok; else bad "RULES_CAP_OK=1 with 5751 words must pass; RC=$CAP_RC ERR='$CAP_ERR'"; fi
+pass_n=$((pass_n+1))
+mkwords 5750 > "$capd/CLAUDE.md"; cap_try
+FAKE_HOME_CAP="$T/fakehome-cap"; mkdir -p "$FAKE_HOME_CAP"; FAKE_HOME_CAP="$(cd "$FAKE_HOME_CAP" && pwd -P)"
+capg="$FAKE_HOME_CAP/.claude"; mkdir -p "$capg"; git -C "$capg" init -q -b main; git -C "$capg" config core.hooksPath "$GIT_HOOKS_DIR"
+cap_try_global() { git -C "$capg" add -A >/dev/null 2>&1; CAP_ERR="$(env HOME="$FAKE_HOME_CAP" "${ID[@]}" git -C "$capg" commit -q -m test 2>&1 1>/dev/null)"; CAP_RC=$?; git -C "$capg" reset -q >/dev/null 2>&1; }
+mkwords 4001 > "$capg/CLAUDE.md"
+cap_try_global
+if [ "$CAP_RC" != 0 ] && printf '%s' "$CAP_ERR" | grep -q 'capped at 4000'; then ok; else bad "a 4001-word global CLAUDE.md (toplevel == \$HOME/.claude) must be REFUSED; RC=$CAP_RC ERR='$CAP_ERR'"; fi
+refuse_n=$((refuse_n+1))
+mkwords 4000 > "$capg/CLAUDE.md"
+cap_try_global
+if [ "$CAP_RC" = 0 ]; then ok; else bad "a 4000-word global CLAUDE.md must pass; RC=$CAP_RC ERR='$CAP_ERR'"; fi
 pass_n=$((pass_n+1))
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"

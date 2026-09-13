@@ -311,9 +311,11 @@ the answer is even worth what it will cost.
 through a whole week's usage limit in one sitting, and roughly half of what it found turned out
 to be noise, paid for twice.
 **The rule to copy** — state the expected cost and the expected payoff in one line before any
-big or multi-helper job, and get an explicit yes before anything that would spin up more than
-around ten helpers at once.
-**Enforced by** — habit.
+big or multi-helper job, and get an explicit yes before any run projected above a fixed price
+(mine is ten dollars at list price, about five mid-size helpers or two of the best) — a price,
+not a headcount, because two big helpers can cost more than ten small ones.
+**Enforced by** — a Stop hook that writes one line per finished helper to a ledger with what it
+cost, so the spend is visible after the fact; the yes before the run is habit.
 
 ### A real hurdle stops and asks, it doesn't just push through
 

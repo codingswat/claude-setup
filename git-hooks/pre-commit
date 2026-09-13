@@ -14,7 +14,12 @@
 #       placeholders all use these), or a line from an optional personal list,
 #       ~/.claude/redaction-names.local (one name per line; no list just means only the
 #       path check runs). Deliberate override, one commit: `PRIVACY_OK=1 git commit ...`.
-# (The private version this came from has a third check, a cap on how many lines a shared
+#   (3) a root rules file (`CLAUDE.md`, path exactly at the repo top level, never
+#       `*/CLAUDE.md` in a subfolder) is capped by word count on the STAGED blob: 4000
+#       words if the repo's top level is `$HOME/.claude` (your global rulebook), 5750
+#       otherwise (a project rulebook). A rulebook that grows without limit stops being
+#       read. Override, one commit: `RULES_CAP_OK=1 git commit ...`.
+# (The private version this came from also has a check for how many lines a shared
 # "running notes" file may gain in one commit — that belongs in a project's own hooks.)
 
 # ---- (1) author identity ----
@@ -41,6 +46,24 @@ else
         exit 1 ;;
     esac
   fi
+fi
+
+# ---- (3) root CLAUDE.md word cap ----
+# Path exactly "CLAUDE.md" at a repo's top level, never a subfolder's "*/CLAUDE.md". The
+# global rulebook ($HOME/.claude, e.g. a config-backup repo whose toplevel IS $HOME/.claude)
+# gets the tighter cap; a project rulebook gets the looser one. RULES_CAP_OK=1 skips this
+# check only.
+if [ "${RULES_CAP_OK:-0}" != "1" ]; then
+  while IFS= read -r path; do
+    [ "$path" = "CLAUDE.md" ] || continue
+    toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"
+    if [ "$toplevel" = "$HOME/.claude" ]; then cap=4000; else cap=5750; fi
+    words="$(git show ":$path" | wc -w | tr -d ' ')"
+    if [ "$words" -gt "$cap" ]; then
+      echo "pre-commit hook: REFUSED — $path is $words words; the rules file is capped at $cap. Trim it, or, deliberately: RULES_CAP_OK=1 git commit ..." >&2
+      exit 1
+    fi
+  done < <(git diff --cached --name-only --diff-filter=AM)
 fi
 
 # ---- (2) privacy: ADDED lines of the staged diff vs a home path or a listed name ----

@@ -45,7 +45,9 @@ Two reasons this exists: I read only the chat, never a file — a thing filed aw
 never said to me hasn't been said. And I'm a visual reader — a heading and a short list
 land; a paragraph doesn't. One rule inside the card worth naming: **each fact is said
 once** — the problem names it, the story dates it, the result states where it landed —
-so I never have to reread the same sentence three times to find the new part.
+so I never have to reread the same sentence three times to find the new part. And the full
+card only when it matters — a task closing, a decision, or me coming back after a break; an
+ordinary turn gets one line and "needs my input".
 
 ## The five control words
 
@@ -107,6 +109,8 @@ as file contents:
 - **New terms go to the glossary at the moment they're used** — one plain line, added
   without being asked, right when the word first comes up. Not "see the glossary" —
   the explanation happens in the chat itself, and the glossary just keeps a copy.
+- **Times are 12-hour with AM/PM** in the chat (2:30 PM, not 14:30); the files that other
+  chats read keep the 24-hour clock beside it.
 - **Simplify the language, not the substance.** The real answer, trade-offs and numbers
   included, downsides stated up front — just said in words I actually understand,
   as I once put it myself: *"just simplify it for me to understand as a non fully
@@ -130,5 +134,8 @@ as file contents:
   saved at the end of the session as an afterthought, and not paraphrased, but written
   back in roughly my own words, with the situation that caused it attached, so a rule
   without a reason behind it doesn't quietly get ignored later.
+- **The rules file holds rules; their history lives next door.** Dates, quotes, and the story
+  behind each rule moved to a changelog, so the file every chat reads stays short enough to be
+  read — and a hook refuses a commit that lets it grow past a word cap.
 - **A chat proposes; it doesn't just write.** Nothing goes into the standing rules
   without my yes first — a proposal in the chat, then a save, never the reverse.
