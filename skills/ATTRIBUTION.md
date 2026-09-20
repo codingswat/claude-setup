@@ -1,7 +1,7 @@
 # Attribution
 
-All eight folders below (four of my own, four cherry-picked) are installed by `install.sh`;
-any one of them can be deleted without breaking the others.
+All fifteen folders below (eleven of my own, four cherry-picked) are installed by
+`install.sh`; any one of them can be deleted without breaking the others.
 
 ## Own skills in this folder
 
@@ -18,6 +18,27 @@ Written from scratch, no external pack or author behind them.
   prompt — in that order.
 - **handover/** — writes a single self-contained `HANDOVER.md` for a developer who has never seen
   the project, complete enough to rebuild its behaviour from the document alone.
+- **briefing-subagents/** — the five slots every brief to a helper agent needs (where its output
+  lands, its git boundary, its model and effort, a load check, and a verification line with the
+  measured numbers), so the helper isn't left to invent what the brief left out.
+- **walkthrough/** — before building a screen or interaction, draws a storyboard from the person's
+  first sight to done; before calling it finished, rehearses it in a real running browser and
+  answers four questions (know, see, connect, notice) from the pictures alone, driven by a helper
+  who never saw the change.
+- **testing-web-ui-two-sided/** — a web-UI test earns trust only when a must-fire and a
+  must-not-fire input are both run, the render is pinned against a false pass, and the thing is
+  proven wired into the app's real routes, not just a disconnected stub.
+- **writing-ui-copy/** — the honesty test for interface text: a sentence survives only where the
+  user can't reach it by guessing, numbers keep their caveats, and marketing language is cut on
+  sight.
+- **shared-tree-commit/** — the recipe for committing safely when several sessions share one git
+  history: read the diff before staging, commit by path, and what each common guard refusal means
+  and how to answer it.
+- **rally/** — the declared state a multi-session, unattended run needs before it can run overnight:
+  who's in it, one seat active at a time, and why a wake message is never itself the authorization
+  to act.
+- **context-floors/** — closing an agent session in good order before its working memory runs out,
+  instead of scrambling once it's nearly gone.
 
 ## Cherry-picked into this folder
 
