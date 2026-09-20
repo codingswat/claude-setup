@@ -281,9 +281,7 @@ check.
 
 **Lesson** — a tester's or a customer's email address, name, or phone number stays in the one
 store built for it, never in a note, log, or plan that git tracks.
-**What happened** — a relay of tester feedback carried a tester's email into the shared notes
-file, which was pushed. Pushed history is not rewritten over it, so the address is there for
-good; the fix was a rule, a letter per tester in every tracked file, and a scan for the next one.
+**What happened** — a relay of tester feedback carried a tester's email address into a shared notes file that git tracks. The fix was a rule, a letter per tester in every tracked file, and a scan for the next one.
 **The rule to copy** — people are named in tracked files by a letter or a note id; their
 addresses live only in the feedback store; a relay carrying one is a review finding.
 **Enforced by** — the pre-commit privacy check, for anything on its list; otherwise habit.

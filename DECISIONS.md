@@ -43,3 +43,7 @@ transfers. Two chats retiring mid-task each wrote a four-thousand-word handover,
 memory the retirement was meant to save — the plan file already held what they wrote.
 **Rules out:** Lessons copied from the rulebook without their incident; a public handover skill
 that produces a long document at retirement.
+
+**Decided:** The 20 September documents-only refresh landed after a blind review run by a helper inside the landing session, briefed with only the branch and the two questions, not by a separate session in an empty folder.
+**Why:** The change touched documents and one skill, no scripts; the helper checked every count and every added line for private names, paths and product details, and its four findings were fixed before the landing.
+**Rules out:** Nothing for next time; the empty-folder review stays the standard for anything that ships a script.

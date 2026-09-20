@@ -26,7 +26,7 @@ through filling in your rulebook afterwards — which is the part that actually 
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | The four skills; any skill folder of the same name is left alone |
-| `~/.claude/settings.json` | Hook registrations are **merged in** — `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader) and `PreToolUse` matched to the `Bash` tool (the three git-safety guards); everything else is preserved |
+| `~/.claude/settings.json` | Hook registrations are **merged in** — `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to the `Bash` tool (the three git-safety guards) and `Stop` (the helper cost ledger): up to seven entries, fewer when `python3` or `jq` is missing; everything else is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
 | git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
 

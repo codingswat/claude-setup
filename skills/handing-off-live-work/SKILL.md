@@ -5,6 +5,8 @@ description: Use when a work session is ending mid-task and another session will
 
 # Handing off live work
 
+Three files are named below. The **plan file** (or order file) is the shared list of tasks with each one's state. The **boot digest** is the one short file a role reads when it starts, saying who it is and what binds it. The **state file** is one short note per role saying where its last holder stopped. A project that lacks one of them uses the nearest thing it has.
+
 Four acts, in this order: **let everything finish, tidy up, write down what you are standing on,
 then commit it and hand the next session its opening prompt.** The order IS the skill. A state
 written while anything is still running describes a machine that no longer exists by the time it
@@ -13,9 +15,9 @@ is read.
 **What gets written is short.** The plan file (or order file) already holds what landed and what
 is open, because it was kept current during the work; the closing session marks it and rewrites
 **one state file under two hundred words**. It does not write a handover document. Two sessions
-once retired at their memory floors mid-task and each wrote a four-thousand-word handover —
+once retired at their memory floors mid-task and each wrote a four-thousand-word handover document —
 spending, on the way out, exactly the memory the retirement was meant to protect, and restating
-what the plan file already held. The plan file and the role's boot file are the handover; the
+what the plan file already held. The plan file and the role's boot file already carry it; the
 state file is the note left on the desk.
 
 **Pause is not stop.** Pausing means: start nothing new, let what is already running land, then
@@ -37,7 +39,7 @@ easy to over-serve. In testing, two of three drafts that reported machine state 
 the single most consequential fact being handed over** — a data leak the last task had found and
 fixed — because no slot asked for it. Substance first, then bookkeeping.
 
-## Write while you work — the handover starts on the first task
+## Write while you work — the plan file starts on the first task
 
 A handover is cheap only when the plan file already holds what the transcript holds. During
 the work, not at its end:
@@ -52,11 +54,11 @@ the work, not at its end:
 - **The self-sufficiency drill:** from the plan alone, answer "what am I building, and why
   not the obvious alternative?" A plan that cannot answer is unfinished — name what it
   assumes its reader already knows, and write that down.
-- **The handover is written before the context floor**, never at it.
+- **The state file is written before the context floor**, never at it.
 
 ## Step 0 — Let every subagent and workflow FINISH. Do not interrupt anything.
 
-**You do not write a word of the handover while anything you started is still running — and you
+**You do not write a word of the state file while anything you started is still running — and you
 do not shorten the wait by cutting anything off.** Let it land.
 
 Wait for every subagent and every workflow to report. All of them. Then write.
@@ -65,9 +67,9 @@ Wait for every subagent and every workflow to report. All of them. Then write.
 - **Never interrupt, cancel or kill a running agent to get to the handover sooner.** Its work is
   real and unreported; ending it early destroys exactly what you are trying to hand over. Waiting
   costs minutes; the work costs hours.
-- **Do not write the handover "while they finish".** Anything that reports after you write is
+- **Do not write the state file "while they finish".** Anything that reports after you write is
   invisible to the state file — commits it made, findings it had, files it changed. The next session
-  inherits work the handover does not know exists, and cannot tell it from debris.
+  inherits work the state file does not know exists, and cannot tell it from debris.
 - **Do not substitute "record where it stopped" for waiting.** That is the exit for work you
   *cannot* wait on (a scheduled job, another person's session) — never for an agent of yours that
   is simply still going.
@@ -123,6 +125,11 @@ work FOUND that outlives the task — a bug, a behaviour change, a leak fixed in
 work — goes on the task's line in the plan, not in your head: in testing, drafts that reported
 machine state perfectly lost the single most consequential fact because no slot asked for it.
 
+**Every gate command you ran goes on the task's plan line with its exit code and the count it
+printed**: the command as typed, `exit 0` or `exit 1`, and "142 tests / 2 files" or "no count
+printed". A gate that never ran says "not run". The exit code alone is not the pass; the count
+is, because a green run may have run nothing.
+
 **The role's state file** — one per role, a fixed path the next session boots from, rewritten
 (not appended) at every task boundary and now:
 
@@ -166,7 +173,7 @@ file sends the next session to a path that does not exist.
 
 ## Step 4 — Write the next session's opening prompt
 
-**The handover is for the reader; the prompt is what actually starts them.** In practice the owner
+**The state file is for the reader; the prompt is what actually starts them.** In practice the owner
 pastes a prompt into a fresh session — so the last thing you produce is that prompt, written by the
 session that knows the most and will not be there to answer questions.
 

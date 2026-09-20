@@ -49,7 +49,7 @@ tiers, always called by these names:
 Every seat's stated model is a **default, not a rule** — whoever runs the project can put a
 different model in a given seat's chair; the seat says out loud which model it is running.
 
-### Planner — *default model: the strongest available (the tier above opus, where one exists)*
+### Planner — *default model: the strongest model you have*
 
 **Owns:** the specs, the overall plan, the agreed shapes that let parts of the system talk to
 each other (**contracts** — an agreed data shape, frozen so nobody quietly changes it out from
@@ -77,7 +77,7 @@ prose.
 ### Advisor — *default model: opus*
 
 **Owns:** challenging the thinking *before* a decision gets made — research, measured
-comparisons, auditing decisions already taken. Its findings become a handoff document the
+comparisons, auditing decisions already taken. Its findings become a briefing note the
 Planner plans from. **Writes no product code, and no plans.** Every other role helps build
 the thing; this one finds out whether it's right first.
 
@@ -286,7 +286,7 @@ Two seats once retired at their floors mid-order and each wrote a four-thousand-
 restating what the order file already held. The order file and the boot digest are the
 handover; the state file is the note on the desk.
 
-**The doorman.** The floor can be enforced rather than hoped for: a hook that runs when a
+**The doorman** (not in this repo). The floor can be enforced rather than hoped for: a hook that runs when a
 turn ends reads the chat's context use and, at or over the role's floor, writes a "retired"
 marker that makes every later message to that chat bounce to the next holder's inbox. The
 same hook refuses to let a turn end with changed tracked files unless the state file is among
