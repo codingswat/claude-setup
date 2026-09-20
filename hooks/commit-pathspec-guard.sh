@@ -5,7 +5,12 @@
 # Refuses:
 #   - `git commit` with no path arguments while the index already holds staged files
 #   - `git commit -a` / `--all` (stages and commits every tracked change, staged or not)
-#   - whole-tree pathspecs: `git commit .` / `./` / `:/`
+#   - whole-tree pathspecs: `git commit .` / `./` / `:/` / `*` / `..` / `/`, and the repo
+#     root named by its own path — every one of them is the same sweep as `-a` wearing a
+#     different hat
+#   - a commit whose `git` is produced by substitution — `` `echo git` commit ``,
+#     `$(which git) commit`: no pattern can see a binary that does not exist until the
+#     shell runs it, so the command is refused and a plain `git commit <paths>` asked for
 #   - (2) a named pathspec commit that WOULD carry a shared channel file — see
 #     hooks/provenance.py — holding a change this session did not make
 # Passes: any commit that names its own paths (and whose channel files, if any, are all
@@ -16,14 +21,19 @@
 # other worktree, so nothing staged there can belong to another session — the whole
 # concern both checks exist for cannot arise. Judged per command segment, on the repo
 # that segment actually runs in (cwd, `cd`, or `git -C`).
-# Commit messages and heredoc bodies are stripped out before matching, so a message that
-# merely MENTIONS "-a" or "." is not refused.
+# HOW THE COMMAND IS READ (hooks/guard-lib.sh, shared with the other Bash guards): commit
+# messages and heredoc bodies are dropped, so a message that merely MENTIONS "-a" or "."
+# is not refused; `bash|sh|zsh -c "…"` and `eval "…"` are unwrapped first, so
+# `sh -c "git commit -a -m sweep"` is judged as the sweep it is rather than as an
+# unreadable string; tabs, escaped newlines and stray backslashes become plain spaces.
 # Deliberate whole-index or reconciled commit: start the command (or the segment after
-# ; && |) with `SWEEP=1 ` — only that position counts. Every use is logged by
-# hooks/override-ledger.sh, if present (a missing ledger script never blocks this guard).
-# Both jq and python3 parse the command below; if either is missing this guard cannot
-# read what it's being asked to run, so it refuses rather than silently letting an
-# unparsed (and therefore unmatched) command through. Fail closed, like
+# ; && |) with `SWEEP=1 ` — only that position counts, judged on text with quoted strings
+# removed. Every use is written to hooks/override-ledger.sh with the refusal it bypassed;
+# if that line CANNOT be written (no ledger script, unwritable path) the override is
+# REFUSED, not honoured.
+# jq, python3 and hooks/guard-lib.sh all parse the command below; if any is missing this
+# guard cannot read what it's being asked to run, so it refuses rather than silently
+# letting an unparsed (and therefore unmatched) command through. Fail closed, like
 # git-hooks/pre-commit.
 # Tests: hooks/test-hooks.sh.
 missing=""
@@ -33,36 +43,64 @@ if [ -n "$missing" ]; then
   echo "commit-pathspec-guard: REFUSED — $missing not found, so this guard cannot parse the command (fail closed, not open)." >&2
   exit 2
 fi
+GUARD_LIB="$(dirname "$0")/guard-lib.sh"
+if [ ! -r "$GUARD_LIB" ]; then
+  echo "commit-pathspec-guard: REFUSED — hooks/guard-lib.sh is missing next to this hook, so the command cannot be normalised before matching (fail closed, not open). Reinstall the hooks (install.sh copies hooks/*.sh)." >&2
+  exit 2
+fi
+. "$GUARD_LIB"
 input="$(cat)"
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
 [ -z "$cmd" ] && exit 0
 cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"; [ -z "$cwd" ] && cwd="$PWD"
 sid="$(printf '%s' "$input" | jq -r '.session_id // empty')"; [ -z "$sid" ] && sid="nosession"
-verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" python3 -c '
-import re,sys,os,subprocess,shlex
-raw=sys.stdin.read()
-s=re.sub(r"<<-?\s*[\x27\"]?(\w+)[\x27\"]?[^\n]*\n.*?\n\1(?=\n|$)", " HEREDOC ", raw, flags=re.S)
-s=re.sub(r"(-m|--message)(=|\s+)(\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27)", r"\1 MSG", s, flags=re.S)
+verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" python3 -c "$GUARD_PY_COMMON"'
+import subprocess, shlex
+raw = sys.stdin.read()
+s = clean(raw)
 # override: only at the start of a command segment, judged on text with every quoted string removed
-unq=re.sub(r"\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27", " Q ", s)
-if re.search(r"(^|[;&|\n] *)SWEEP=1 ", unq, flags=re.M):
-    ledger=os.path.join(os.environ.get("HOOKDIR",""), "override-ledger.sh")
-    if os.path.isfile(ledger):
-        try: subprocess.run(["bash", ledger, "SWEEP", raw], timeout=5)
-        except Exception: pass
-    print("OK"); sys.exit(0)
+unq = blank_quoted(s)
+sweep = re.search(r"(^|[;&|\n] *)SWEEP=1 ", unq, flags=re.M) is not None
+def log_override(reason):
+    ledger = os.path.join(os.environ.get("HOOKDIR", ""), "override-ledger.sh")
+    if not os.path.isfile(ledger):
+        return 1
+    try:
+        return subprocess.run(["bash", ledger, "SWEEP", raw, reason], timeout=5).returncode
+    except Exception:
+        return 1
+def finish(v):
+    # With SWEEP=1 the refusal is waived — but only once the ledger line is on disk.
+    if sweep:
+        if log_override(v) != 0:
+            print("REFUSE_LEDGER")
+        else:
+            print("OK")
+        sys.exit(0)
+    print(v); sys.exit(0)
 VALFLAGS={"-m","--message","-F","--file","--author","--date","-C","-c","--reuse-message","--reedit-message","--fixup","--squash","--trailer","--cleanup","-t","--template","--pathspec-from-file"}
+WHOLE_TREE={".", "./", ":/", ":(top)", "*", "..", "../", "/"}
 repo=os.environ.get("CWD") or os.getcwd()
 def toks_of(seg):
     try: return shlex.split(seg, posix=True)
     except ValueError: return seg.split()
+def git_out(r, *args):
+    try:
+        return subprocess.run(["git","-C",r]+list(args),capture_output=True,text=True,timeout=5).stdout
+    except Exception:
+        return ""
 def linked(r):
     # A linked worktree has its own git-dir under <main>/.git/worktrees/<name>; the
     # main checkout (or a plain, non-worktree repo) has git-dir == common-dir.
-    try:
-        o=subprocess.run(["git","-C",r,"rev-parse","--path-format=absolute","--git-dir","--git-common-dir"],capture_output=True,text=True,timeout=5).stdout.splitlines()
-        return len(o)>=2 and o[0].strip()!="" and os.path.realpath(o[0].strip())!=os.path.realpath(o[1].strip())
-    except Exception: return False
+    o=git_out(r,"rev-parse","--path-format=absolute","--git-dir","--git-common-dir").splitlines()
+    return len(o)>=2 and o[0].strip()!="" and os.path.realpath(o[0].strip())!=os.path.realpath(o[1].strip())
+def toplevel(r):
+    t=git_out(r,"rev-parse","--show-toplevel").strip()
+    return os.path.realpath(t) if t else None
+# A git binary produced by substitution cannot be matched by any pattern, so it is not
+# read as a commit it can hide behind: refuse and ask for a plain `git`.
+if has_substituted_git(unq) and not linked(repo):
+    finish("REFUSE_SUBST")
 out=[]
 for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
     seg=seg.strip().lstrip("(").strip()
@@ -81,7 +119,7 @@ for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
     args=rest[i+1:]
     if linked(seg_repo): continue   # own linked worktree: nothing else can be staged here
     if any(a in ("-a","--all") or (a.startswith("-") and not a.startswith("--") and "a" in a[1:] and a not in VALFLAGS) for a in args):
-        print("REFUSE_ALL"); sys.exit(0)
+        finish("REFUSE_ALL")
     paths=[]; j=0; after_dd=False
     while j<len(args):
         a=args[j]
@@ -90,29 +128,34 @@ for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
         if a in VALFLAGS: j+=2; continue
         if a.startswith("-"): j+=1; continue
         paths.append(a); j+=1
-    if any(p in (".", "./", ":/", ":(top)") for p in paths):
-        print("REFUSE_DOT"); sys.exit(0)
+    if any(p in WHOLE_TREE for p in paths):
+        finish("REFUSE_DOT")
     if paths:
-        try:
-            r1=subprocess.run(["git","-C",seg_repo,"diff","HEAD","--name-only","--"]+paths,capture_output=True,text=True,timeout=5).stdout.split("\n")
-            r2=subprocess.run(["git","-C",seg_repo,"diff","--cached","--name-only","--"]+paths,capture_output=True,text=True,timeout=5).stdout.split("\n")
-            files=sorted({f for f in r1+r2 if f.strip()})
-        except Exception: files=[]
+        tl=toplevel(seg_repo)
+        if tl and any(os.path.realpath(p if os.path.isabs(p) else os.path.join(seg_repo,p))==tl for p in paths):
+            finish("REFUSE_DOT")
+        r1=git_out(seg_repo,"diff","HEAD","--name-only","--",*paths).split("\n")
+        r2=git_out(seg_repo,"diff","--cached","--name-only","--",*paths).split("\n")
+        files=sorted({f for f in r1+r2 if f.strip()})
         # a path git resolves to nothing (a typo) is still passed through, so the
         # provenance check below can name it.
         out.append("CHECK\t"+seg_repo+"\t"+"\t".join(files if files else paths)); continue
-    try:
-        st=subprocess.run(["git","-C",seg_repo,"diff","--cached","--name-only"],capture_output=True,text=True,timeout=5).stdout.strip()
-    except Exception: st=""
+    st=git_out(seg_repo,"diff","--cached","--name-only").strip()
     if st:
-        print("REFUSE_INDEX:"+st.replace("\n",", ")); sys.exit(0)
+        finish("REFUSE_INDEX:"+st.replace("\n",", "))
+if sweep:
+    finish("nothing refused, the whole index carried deliberately")
 print("\n".join(out) if out else "OK")')"
 case "$verdict" in
   OK) exit 0 ;;
+  REFUSE_LEDGER)
+    guard_refuse_unrecorded "commit-pathspec-guard" "SWEEP=1"; exit 2 ;;
   REFUSE_ALL)
     echo "commit-pathspec-guard: REFUSED — \`git commit -a\` commits every modified tracked file, which can sweep in work that was not meant to go in. Name your paths: git commit <paths> -m …" >&2; exit 2 ;;
   REFUSE_DOT)
-    echo "commit-pathspec-guard: REFUSED — \`git commit .\` (or :/) commits every change under the folder — the same sweep as -a. Name your files: git commit <paths> -m …" >&2; exit 2 ;;
+    echo "commit-pathspec-guard: REFUSED — a whole-tree pathspec (\`.\`, \`*\`, \`..\`, \`/\`, \`:/\`, or the repo root itself) commits every change under it — the same sweep as -a. Name your files: git commit <paths> -m …" >&2; exit 2 ;;
+  REFUSE_SUBST)
+    echo "commit-pathspec-guard: REFUSED — the git binary in this commit comes from a substitution (\`\$(…)\` or backticks), so what it will actually commit cannot be read before it runs. Write it as a plain: git commit <paths> -m …" >&2; exit 2 ;;
   REFUSE_INDEX:*)
     echo "commit-pathspec-guard: REFUSED — \`git commit\` with no paths while the index already holds: ${verdict#REFUSE_INDEX:}. That may not all belong in this commit. Use: git commit <your paths> -m …   Deliberate whole-index commit: SWEEP=1 <command>" >&2; exit 2 ;;
 esac

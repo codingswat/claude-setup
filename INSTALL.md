@@ -21,7 +21,7 @@ through filling in your rulebook afterwards — which is the part that actually 
 
 | Path | What happens |
 |---|---|
-| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Five more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
+| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Five more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
 | `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/.redaction-names.local` | Created **only if missing**, empty, with a comment explaining its two sections (`[guard]`, `[redact-only]`) — `git-hooks/pre-commit`'s privacy check fails CLOSED (refuses every commit) with no file there at all, so a fresh machine needs at least this to unblock ordinary commits. The installer's closing summary tells you to open it and fill it in |
@@ -45,9 +45,16 @@ Four `PreToolUse` guards (`block-dangerous-git.sh`, `commit-pathspec-guard.sh`,
 `PATH` — they fail CLOSED (refuse everything) without one, so the installer checks for both
 first and skips registering those four if neither is present, with a warning naming what to
 install. A fifth, `gate-guard.sh`, is different: it degrades safely with no `jq` (a cruder
-text match instead of a refusal), but calls `python3` unconditionally for its real check, so
-the installer gates it on `python3` alone — with `jq` present and `python3` missing, leaving
-it registered would refuse every Bash command, not just the gates it's meant to catch.
+text match instead of a refusal), and with no `python3` it passes every command with a
+one-line warning — it is the one guard allowed to fail OPEN, because it protects no data and
+only enforces a habit about exit codes. The installer still gates it on `python3`, now for
+cost rather than safety: without `python3` it could never say no, so registering it would
+only add a subprocess to every Bash call.
+
+All four Bash guards also need `hooks/guard-lib.sh` beside them — the shared file that reads
+a command the way a shell would (quotes, tabs, escapes, `sh -c`/`eval` wrappers). It is not a
+hook and is registered nowhere, but a guard that cannot find it REFUSES, so it must be copied
+with them.
 
 The opt-in multi-chat coordination group (below) needs `python3` for its provenance pair
 only; `doorman.sh` and `stop-state-check.sh` in that same group don't, and stay registered
@@ -70,7 +77,7 @@ first. If you already have a populated `~/.claude`, the script is the safer rout
 mkdir -p ~/.claude/hooks ~/.claude/git-hooks ~/.claude/skills ~/.claude/project-template
 cp -a ~/.claude/hooks ~/.claude/hooks.backup-$(date +%s) 2>/dev/null
 cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
-   hooks/clock-in-context.sh hooks/block-dangerous-git.sh \
+   hooks/clock-in-context.sh hooks/guard-lib.sh hooks/block-dangerous-git.sh \
    hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/override-ledger.sh \
    hooks/gate-guard.sh hooks/channel-size-guard.sh hooks/helper-ledger.py \
    hooks/channel-provenance-pre.sh hooks/channel-provenance-post.sh hooks/provenance.py \
@@ -78,7 +85,8 @@ cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
    hooks/test-hooks.sh hooks/test-helper-ledger.sh hooks/test-rules-cap.sh \
    ~/.claude/hooks/
 chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
-         ~/.claude/hooks/clock-in-context.sh ~/.claude/hooks/block-dangerous-git.sh \
+         ~/.claude/hooks/clock-in-context.sh ~/.claude/hooks/guard-lib.sh \
+         ~/.claude/hooks/block-dangerous-git.sh \
          ~/.claude/hooks/commit-pathspec-guard.sh ~/.claude/hooks/heavy-suite-guard.sh \
          ~/.claude/hooks/override-ledger.sh ~/.claude/hooks/gate-guard.sh \
          ~/.claude/hooks/channel-size-guard.sh ~/.claude/hooks/helper-ledger.py \
@@ -293,9 +301,9 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
 }
 ```
 
-`gate-guard.sh` needs `python3` unconditionally (it degrades safely with no `jq`, but not
-with no `python3` — see the note above the "Requires" paragraph): only register it if
-`python3` is on `PATH`. `channel-size-guard.sh` needs `jq`, but degrades safely (does
+`gate-guard.sh` is gated on `python3` (see the note above the "Requires" paragraph): with
+no `python3` it passes everything with a warning, so registering it would cost a subprocess
+per Bash call and catch nothing. Only register it if `python3` is on `PATH`. `channel-size-guard.sh` needs `jq`, but degrades safely (does
 nothing) with neither `jq` nor `python3`, so it can ride along with the other three.
 `override-ledger.sh` (copied in step 1, called by the guards above and by `pre-commit`) is
 not itself registered anywhere — it has no event of its own.
@@ -435,7 +443,7 @@ all four stay inert without it).
 To turn off the git hooks step: `git config --global --unset core.hooksPath` — the files stay
 at `~/.claude/git-hooks/`, just unwired from every repo. The new files themselves, if you want
 them gone entirely: `~/.claude/hooks/clock-in-context.sh`, `owner-card.md`,
-`block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,
+`guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,
 `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-provenance-pre.sh`,
 `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`,
 `heavy-suite.conf`, `test-hooks.sh`, `test-helper-ledger.sh`, `test-rules-cap.sh`,

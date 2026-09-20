@@ -132,7 +132,7 @@ git -C "$SB" init -q -b main; git -C "$SB" remote add origin https://github.com/
 jbs() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$1" "$2"; }
 expect_s() { local kind="$1" want="$2" label="$3" c="$4" cwd="$5" bin="${6:-$HOOKS_DIR/block-dangerous-git.sh}"; jbs "$c" "$cwd" | bash "$bin" >/dev/null 2>&1; local got=$?; if [ "$got" = "$want" ]; then ok; else bad "$label (wanted $want, got $got)"; fi; if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
 expect_s pass 0 "no block-dangerous-git.conf at all: bare stash passes (safe default)" 'git stash' "$SA"
-CONFDIR="$T/confdir-bdg"; mkdir -p "$CONFDIR"; cp "$HOOKS_DIR/block-dangerous-git.sh" "$CONFDIR/"
+CONFDIR="$T/confdir-bdg"; mkdir -p "$CONFDIR"; cp "$HOOKS_DIR/block-dangerous-git.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$CONFDIR/"
 printf 'testowner/shared-repo\n' > "$CONFDIR/block-dangerous-git.conf"
 expect_s refuse 2 "listed repo cwd: bare stash refused"            'git stash' "$SA" "$CONFDIR/block-dangerous-git.sh"
 expect_s refuse 2 "listed repo cwd: stash push -m refused"         'git stash push -m "wip"' "$SA" "$CONFDIR/block-dangerous-git.sh"
@@ -191,14 +191,14 @@ git -C "$r" reset -q
 echo "4 heavy-suite-guard.sh"
 for c in 'npm test' 'npm run test' 'npm run e2e' 'npx vitest run' 'npx playwright test -c apps/web/playwright.config.ts' 'npx vitest' 'vitest run' 'playwright test'; do
   INPUT="$(json_bash "$c")"; expect refuse 2 "load 12 must refuse: $c" env HEAVY_SUITE_LOAD_OVERRIDE=12 bash "$HOOKS_DIR/heavy-suite-guard.sh"; done
-# NOTE: PATTERN's own vitest clause matches "npx vitest run" as soon as "run" appears,
-# regardless of a trailing filename — only a bare "vitest"/"npx vitest" with NO "run" is
-# exempted by naming a specific test file (see the extra check below PATTERN).
+# NOTE: a command that names a *.test.* / *.spec.* file, carries -t/--testNamePattern, or
+# asks --version/--list/--help is a TARGETED run and is exempt in that segment, whether or
+# not PATTERN matches it (section 28 covers the pairs).
 for c in 'npm run typecheck' 'ls' 'SUITE_OK=1 npm test' 'git commit -m "ran npm test and it passed"' 'npx vitest src/foo.test.ts'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "load 12 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=12 bash "$HOOKS_DIR/heavy-suite-guard.sh"; done
 INPUT="$(json_bash 'npm test')"; expect pass 0 "load 2 must allow: npm test" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
 # custom conf: a command outside the default pattern, and a lower MAX_LOAD
-CDIR="$T/confhook"; mkdir -p "$CDIR"; cp "$HOOKS_DIR/heavy-suite-guard.sh" "$CDIR/"
+CDIR="$T/confhook"; mkdir -p "$CDIR"; cp "$HOOKS_DIR/heavy-suite-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$CDIR/"
 printf "PATTERN='(^|[;&| ])make +heavytest([ ;&|]|\$)'\nMAX_LOAD=3\n" > "$CDIR/heavy-suite.conf"
 INPUT="$(json_bash 'make heavytest')"; expect refuse 2 "custom conf, load 5 (>=3): must refuse make heavytest" env HEAVY_SUITE_LOAD_OVERRIDE=5 bash "$CDIR/heavy-suite-guard.sh"
 INPUT="$(json_bash 'make heavytest')"; expect pass 0 "custom conf, load 2 (<3): must allow make heavytest" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$CDIR/heavy-suite-guard.sh"
@@ -662,7 +662,7 @@ OLL="$T/override-ledger.tsv"
 r20="$T/ovl-repo"; mkdir -p "$r20/sub"; git -C "$r20" init -q -b main
 rm -f "$OLL"
 (cd "$r20/sub" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "some command")
-folder20="$(tail -1 "$OLL" 2>/dev/null | cut -f2)"; name20="$(tail -1 "$OLL" 2>/dev/null | cut -f3)"; cmd20="$(tail -1 "$OLL" 2>/dev/null | cut -f4)"
+folder20="$(tail -1 "$OLL" 2>/dev/null | cut -f2)"; name20="$(tail -1 "$OLL" 2>/dev/null | cut -f3)"; cmd20="$(tail -1 "$OLL" 2>/dev/null | cut -f5)"
 if [ "$folder20" = "ovl-repo" ] && [ "$name20" = "TESTWORD" ] && [ "$cmd20" = "some command" ]; then ok; else bad "inside a repo (even from a subdir): folder must be the git TOPLEVEL basename; got folder='$folder20' name='$name20' cmd='$cmd20'"; fi
 refuse_n=$((refuse_n+1))
 OUT20="$T/ovl-outside"; mkdir -p "$OUT20"; base20="$(basename "$OUT20")"
@@ -671,21 +671,33 @@ rm -f "$OLL"
 folder20b="$(tail -1 "$OLL" 2>/dev/null | cut -f2)"
 if [ "$folder20b" = "$base20" ]; then ok; else bad "outside any repo: folder must fall back to \$PWD's own basename; got '$folder20b' want '$base20'"; fi
 pass_n=$((pass_n+1))
+# A long command is logged head AND tail (120 + 120), never a flat first-200 cut: the
+# dangerous part of a padded command sits at the END (see section 28, finding 13).
 LONGCMD="$(python3 -c "print('x'*250)")"
 rm -f "$OLL"
-(cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "$LONGCMD")
-gotfield_full="$(tail -1 "$OLL" 2>/dev/null | cut -f4)"; gotlen=${#gotfield_full}
-if [ "$gotlen" = 200 ]; then ok; else bad "the command column must be truncated to 200 chars, got $gotlen"; fi
+(cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "${LONGCMD}TAILMARKER")
+gotfield_full="$(tail -1 "$OLL" 2>/dev/null | cut -f5)"
+if printf '%s' "$gotfield_full" | grep -q 'TAILMARKER'; then ok; else bad "a long command must still log its own tail; got '$gotfield_full'"; fi
+refuse_n=$((refuse_n+1))
+if printf '%s' "$gotfield_full" | grep -qF ' ... '; then ok; else bad "a long command must be logged as head ... tail"; fi
+pass_n=$((pass_n+1))
+rm -f "$OLL"
+(cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "a short one" "the pattern")
+if [ "$(tail -1 "$OLL" 2>/dev/null | cut -f4)" = "the pattern" ]; then ok; else bad "the pattern the override bypassed must be its own column"; fi
+pass_n=$((pass_n+1))
+if [ "$(tail -1 "$OLL" 2>/dev/null | cut -f5)" = "a short one" ]; then ok; else bad "a short command must be logged whole, with no ellipsis"; fi
 pass_n=$((pass_n+1))
 rm -f "$OLL"
 NLCMD="$(printf 'line one\tline two\nline three')"
 (cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "$NLCMD")
-gotfield="$(tail -1 "$OLL" 2>/dev/null | cut -f4)"
+gotfield="$(tail -1 "$OLL" 2>/dev/null | cut -f5)"
 if [ "$gotfield" = "line one line two line three" ]; then ok; else bad "newlines/tabs in the command must be flattened to single spaces, got '$gotfield'"; fi
 pass_n=$((pass_n+1))
+# An unwritable ledger must REPORT that (exit non-zero) so the calling hook can refuse the
+# override instead of honouring an act nobody can see.
 rc20=$(env OVERRIDE_LEDGER="/nonexistent-$$/deep/path/overrides.tsv" bash "$HOOKS_DIR/override-ledger.sh" X "y" >/dev/null 2>&1; echo $?)
-if [ "$rc20" = 0 ]; then ok; else bad "override-ledger.sh must exit 0 even when its ledger path cannot be created"; fi
-pass_n=$((pass_n+1))
+if [ "$rc20" != 0 ]; then ok; else bad "override-ledger.sh must exit non-zero when its ledger path cannot be created"; fi
+refuse_n=$((refuse_n+1))
 
 echo "21 hooks/gate-guard.sh"
 for c in 'npm test | tee out.log' 'npm run typecheck | grep -q PASS' 'vitest run | tail -20' 'npx playwright test; git commit -am "x"' 'while ! grep -q READY build.log; do sleep 2; done' 'until tail -1 build.log | grep -q DONE; do sleep 1; done'; do
@@ -694,7 +706,7 @@ NLGATE=$'npm test\ngit push'
 INPUT="$(json_bash "$NLGATE")"; expect refuse 2 "a bare newline joining a gate to a push must refuse" bash "$HOOKS_DIR/gate-guard.sh"
 for c in 'npm test && git commit -am "x"' 'npm test && git push' 'ls -la' 'GATE_OK=1 npm test | tee out.log' 'git commit -m "ran npm test and it passed"' 'while ! curl -sf localhost:3000/health; do sleep 2; done' 'npx vitest run src/foo.test.ts && echo done'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "must allow: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
-GGCONF="$T/gg-conf"; mkdir -p "$GGCONF"; cp "$HOOKS_DIR/gate-guard.sh" "$HOOKS_DIR/override-ledger.sh" "$GGCONF/"
+GGCONF="$T/gg-conf"; mkdir -p "$GGCONF"; cp "$HOOKS_DIR/gate-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$GGCONF/"
 printf 'pytest\ngo test\n' > "$GGCONF/gate-guard.conf"
 INPUT="$(json_bash 'pytest | tee out.log')"; expect refuse 2 "conf-added gate 'pytest' piped must refuse" bash "$GGCONF/gate-guard.sh"
 INPUT="$(json_bash 'go test | tee out.log')"; expect refuse 2 "conf-added gate 'go test' piped must refuse" bash "$GGCONF/gate-guard.sh"
@@ -739,7 +751,7 @@ INPUT="$(jb2 'echo hi' "$cszd3")"; expect pass 0 "a Bash command naming no watch
 
 echo "23 hooks/provenance.py + commit-pathspec-guard.sh: session provenance for shared channel files"
 PROVCONF="$T/prov-conf"; mkdir -p "$PROVCONF"
-cp "$HOOKS_DIR/commit-pathspec-guard.sh" "$HOOKS_DIR/provenance.py" "$HOOKS_DIR/override-ledger.sh" "$PROVCONF/"
+cp "$HOOKS_DIR/commit-pathspec-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/provenance.py" "$HOOKS_DIR/override-ledger.sh" "$PROVCONF/"
 printf 'NOTES.md\n' > "$PROVCONF/channel-ceiling.conf"
 PROVSTATE="$T/prov-state"; mkdir -p "$PROVSTATE"
 provd="$T/provrepo"; mkdir -p "$provd"; git -C "$provd" init -q -b main; git -C "$provd" config core.hooksPath /dev/null
@@ -896,6 +908,150 @@ dj "$dm" sidDM-E hello "" | bash "$DCD2/doorman.sh" >/dev/null 2>&1
 rcE=$?
 if [ "$rcE" = 0 ]; then ok; else bad "doorman.sh: no conf file must be INERT (always pass), got $rcE"; fi
 pass_n=$((pass_n+1))
+
+echo "28 blind-attacker findings (parts 1-15): the five Bash guards hardened"
+# Each guard gets its own copy of the hooks folder so a conf file (or a deliberately
+# missing file) can be set per case without touching the tested checkout.
+mk28() { local d="$1"; mkdir -p "$d"; cp "$HOOKS_DIR"/*.sh "$d/" 2>/dev/null; }
+G28="$T/h28-gate";  mk28 "$G28";  printf 'pytest\ngo test\n' > "$G28/gate-guard.conf"
+HS28="$T/h28-heavy"; mk28 "$HS28"
+HSC28="$T/h28-heavy-crlf"; mk28 "$HSC28"
+printf "PATTERN='(^|[;&| ])make +heavytest([ ;&|]|\$)'\r\nMAX_LOAD=3\r\n" > "$HSC28/heavy-suite.conf"
+NOLIB28="$T/h28-nolib"; mk28 "$NOLIB28"; rm -f "$NOLIB28/guard-lib.sh"
+NOLED28="$T/h28-noledger"; mk28 "$NOLED28"; rm -f "$NOLED28/override-ledger.sh"
+OL28="$T/h28-ovl.tsv"
+
+# --- 1 gate-guard: a conf file must ADD gates, never make every gate word a refusal ----
+INPUT="$(json_bash 'npm test && git commit -m x f.ts')"; expect pass 0 "F1 conf present: a gate joined with && must pass" bash "$G28/gate-guard.sh"
+INPUT="$(json_bash 'npx tsc --noEmit')"; expect pass 0 "F1 conf present: npx tsc --noEmit alone must pass" bash "$G28/gate-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log')"; expect refuse 2 "F1 pair: conf present, a built-in gate piped must still refuse" bash "$G28/gate-guard.sh"
+INPUT="$(json_bash 'pytest | tee out.log')"; expect refuse 2 "F1 pair: conf present, a conf-added gate piped must still refuse" bash "$G28/gate-guard.sh"
+
+# --- 2,3,6 block-dangerous-git: trailing characters, quotes, tabs, wrappers, --force ----
+for c in 'git -C /some/path reset --hard;' '(git reset --hard)' "sh -c 'git reset --hard'" 'git reset "--hard"' 'git clean --force -d' 'git clean --force' '"git" reset --hard' $'git\treset\t--hard' 'gi\t reset --hard' $'git push origin \\\n--force' 'bash -c "git push --force origin main"' 'git reset --hard>log' 'git reset --hard&&echo done'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "F2/3/6 must refuse: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+for c in 'git status; ls' 'echo "git reset --hardly"' 'git clean -n' 'git clean --dry-run' 'git restore file.ts' "sh -c 'git status'" 'git commit -m "we never run git reset --hard here"' 'git push origin main; echo pushed'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "F2/3/6 pair, must allow: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+
+# --- 4,7 commit-pathspec-guard: wrappers, substituted git, whole-tree pathspecs ---------
+r28="$T/h28-commit"; mkdir -p "$r28"; git -C "$r28" init -q -b main; git -C "$r28" config core.hooksPath /dev/null
+echo a > "$r28/a.txt"; git -C "$r28" add -A; "${ID[@]}" git -C "$r28" commit -q -m init
+echo b > "$r28/b.txt"; git -C "$r28" add b.txt   # another session's staged file, ready to be swept
+jb28() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$1" "$2"; }
+ex28() { local kind="$1" want="$2" label="$3" c="$4" bin="${5:-$HOOKS_DIR/commit-pathspec-guard.sh}"
+  jb28 "$c" "$r28" | bash "$bin" >/dev/null 2>&1; local got=$?
+  if [ "$got" = "$want" ]; then ok; else bad "$label (wanted exit $want, got $got)"; fi
+  if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+ex28 refuse 2 "F4 sh -c hiding a commit -a must be refused"      "sh -c 'git add -A && git commit -a -m sweep'"
+ex28 refuse 2 "F4 eval hiding a bare commit must be refused"     'eval "git commit"'
+ex28 refuse 2 "F4 a backticked git binary must be refused"       '`echo git` commit -m x'
+ex28 refuse 2 "F4 a substituted git binary must be refused"      '$(which git) commit -m x'
+ex28 pass 0 "F4 pair: sh -c around a read-only git command passes" "sh -c 'git status'"
+ex28 pass 0 "F4 pair: bash -c around a pathspec commit passes"     'bash -c "git commit b.txt -m x"'
+ex28 pass 0 "F4 pair: a substituted git that does not commit passes" '$(which git) status'
+ex28 refuse 2 "F7 a * pathspec is a whole-tree sweep"   "git commit '*' -m x"
+ex28 refuse 2 "F7 a .. pathspec is a whole-tree sweep"  'git commit .. -m x'
+ex28 refuse 2 "F7 a / pathspec is a whole-tree sweep"   'git commit / -m x'
+ex28 refuse 2 "F7 the repo root as a pathspec is a whole-tree sweep" "git commit $r28 -m x"
+ex28 pass 0 "F7 pair: a glob naming real files passes"  'git commit src/*.ts -m x'
+ex28 pass 0 "F7 pair: a path that merely starts with .. passes" 'git commit ../h28-commit/b.txt -m x'
+ex28 pass 0 "F7 pair: a named file still passes"        'git commit b.txt -m x'
+
+# --- 5 the override grep runs on quoted text: a message must not disarm a guard ---------
+rm -f "$OL28"; INPUT="$(json_bash "git commit -m 'x; SUITE_OK=1 y' && npm test")"
+expect refuse 2 "F5 SUITE_OK inside a commit message must NOT disarm the load guard" env OVERRIDE_LEDGER="$OL28" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"
+if [ -f "$OL28" ]; then bad "F5 a faked SUITE_OK must not write a ledger line"; else ok; fi; refuse_n=$((refuse_n+1))
+rm -f "$OL28"; INPUT="$(json_bash 'SUITE_OK=1 npm test')"
+expect pass 0 "F5 pair: a real SUITE_OK at the start still passes" env OVERRIDE_LEDGER="$OL28" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"
+if [ -f "$OL28" ]; then ok; else bad "F5 pair: a real SUITE_OK must write its ledger line"; fi; pass_n=$((pass_n+1))
+rm -f "$OL28"; INPUT="$(json_bash "git commit -m 'x; GATE_OK=1 y' && npm test | tee out.log")"
+expect refuse 2 "F5 GATE_OK inside a commit message must NOT disarm gate-guard" env OVERRIDE_LEDGER="$OL28" bash "$HS28/gate-guard.sh"
+if [ -f "$OL28" ]; then bad "F5 a faked GATE_OK must not write a ledger line"; else ok; fi; refuse_n=$((refuse_n+1))
+
+# --- 8 heavy-suite-guard: config-path exemption, CRLF conf, >, yarn/pnpm, test:* --------
+for c in 'vitest run --config vitest.config.ts' 'npm test>log' 'yarn test' 'pnpm test' 'npm run test:all' 'bash -c "npm test"'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "F8 load 25 must refuse: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"; done
+for c in 'npm run typecheck' 'npm run testdata' 'yarn lint' 'ls'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "F8 pair, load 25 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"; done
+INPUT="$(json_bash 'make heavytest')"; expect refuse 2 "F8 a CRLF-saved conf must still bind PATTERN" env HEAVY_SUITE_LOAD_OVERRIDE=5 bash "$HSC28/heavy-suite-guard.sh"
+INPUT="$(json_bash 'make lighttest')"; expect pass 0 "F8 pair: CRLF conf, an unmatched command still passes" env HEAVY_SUITE_LOAD_OVERRIDE=5 bash "$HSC28/heavy-suite-guard.sh"
+
+# --- 9 heavy-suite-guard: targeted runs, version/list queries, quoted prose -------------
+for c in 'npm test -- src/a.test.ts' "vitest run -t 'renders the card'" 'npx vitest --version' 'npx playwright test --list' 'echo "run npm test later" >> DEBT.md'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "F9 load 25 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"; done
+for c in 'npm test' 'npx playwright test --headed' 'vitest run'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "F9 pair, load 25 must refuse: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"; done
+
+# --- 10 gate-guard: the gate word must be at command position ---------------------------
+for c in 'ls node_modules/.bin | grep vitest | head' 'npx tsc --version | head -1' 'grep -rn "npm test" docs | head'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "F10 must allow: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
+for c in 'npx tsc --noEmit | head -1' 'vitest run | head -3'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "F10 pair, must refuse: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
+
+# --- 11 gate-guard with jq but no python3: inert and loud, never a blanket refusal ------
+NOPY28="$T/h28-nopy-bin"; mkdir -p "$NOPY28"
+for b in bash cat grep jq dirname sed env tr cut date mkdir awk; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOPY28/$b"; done
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "F11 jq present, python3 missing: an unrelated command must pass" env -i "PATH=$NOPY28" bash "$HOOKS_DIR/gate-guard.sh"
+err28="$(printf '%s' "$INPUT" | env -i "PATH=$NOPY28" bash "$HOOKS_DIR/gate-guard.sh" 2>&1 1>/dev/null)"
+if printf '%s' "$err28" | grep -q 'python3'; then ok; else bad "F11 the python3-missing pass must say so on stderr (got: '$err28')"; fi; pass_n=$((pass_n+1))
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "F11 pair: with python3 present an unrelated command still passes" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log')"; expect refuse 2 "F11 pair: with python3 present a piped gate is still refused" bash "$HOOKS_DIR/gate-guard.sh"
+
+# --- 12 gate-guard: the log-poll waiter across lines, and for-loops ---------------------
+INPUT="$(json_bash "$(printf 'while ! grep -q READY /tmp/log; do\n  sleep 2\ndone\n')")"
+expect refuse 2 "F12 a multi-line log-poll loop must refuse" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'for i in $(seq 60); do grep -q READY /tmp/log && break; sleep 2; done')"
+expect refuse 2 "F12 a for-loop log poll must refuse" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash "$(printf 'until tail -1 /tmp/log | grep -q DONE; do\n  sleep 1\ndone\n')")"
+expect refuse 2 "F12 a multi-line until/tail poll must refuse" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash "$(printf 'while ! curl -sf localhost:3000/health; do\n  sleep 2\ndone\n')")"
+expect pass 0 "F12 pair: a multi-line loop waiting on the server must pass" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'for f in *.md; do wc -w "$f"; done')"
+expect pass 0 "F12 pair: an ordinary for loop must pass" bash "$HOOKS_DIR/gate-guard.sh"
+
+# --- 13 override-ledger: the line must show the act, not 200 characters of padding ------
+rm -f "$OL28"; LONG28="$(python3 -c "print('x'*210)")"
+(cd "$T" && OVERRIDE_LEDGER="$OL28" bash "$HOOKS_DIR/override-ledger.sh" GITGUARD "GITGUARD=1 echo $LONG28 && git push --force origin main" "git push --force") >/dev/null 2>&1
+line28="$(tail -1 "$OL28" 2>/dev/null)"
+if printf '%s' "$line28" | grep -q -- '--force'; then ok; else bad "F13 a padded command must still log its dangerous tail (--force)"; fi; refuse_n=$((refuse_n+1))
+if [ "$(printf '%s' "$line28" | cut -f4)" = "git push --force" ]; then ok; else bad "F13 the matched pattern must be its own column (got '$(printf '%s' "$line28" | cut -f4)')"; fi; refuse_n=$((refuse_n+1))
+rm -f "$OL28"
+(cd "$T" && OVERRIDE_LEDGER="$OL28" bash "$HOOKS_DIR/override-ledger.sh" SWEEP "git commit a.md -m x" "bare commit") >/dev/null 2>&1
+if [ "$(tail -1 "$OL28" 2>/dev/null | cut -f5)" = "git commit a.md -m x" ]; then ok; else bad "F13 pair: a short command must be logged whole and unchanged"; fi; pass_n=$((pass_n+1))
+
+# --- 14 an override that cannot be recorded is not honoured -----------------------------
+BADL28="$T/h28-badledger"; printf 'a file where a folder must be\n' > "$BADL28"
+rc28="$(OVERRIDE_LEDGER="$BADL28/overrides.tsv" bash "$HOOKS_DIR/override-ledger.sh" X "y" "p" >/dev/null 2>&1; echo $?)"
+if [ "$rc28" != 0 ]; then ok; else bad "F14 an unwritable ledger must report failure (exit non-zero)"; fi; refuse_n=$((refuse_n+1))
+errl28="$(OVERRIDE_LEDGER="$BADL28/overrides.tsv" bash "$HOOKS_DIR/override-ledger.sh" X "y" "p" 2>&1 1>/dev/null)"
+if [ -z "$errl28" ]; then ok; else bad "F14 an unwritable ledger must stay quiet (got: '$errl28')"; fi; pass_n=$((pass_n+1))
+INPUT="$(json_bash 'GITGUARD=1 git reset --hard')"
+expect refuse 2 "F14 an unrecordable GITGUARD override must be REFUSED" env OVERRIDE_LEDGER="$BADL28/overrides.tsv" bash "$HOOKS_DIR/block-dangerous-git.sh"
+rm -f "$OL28"; INPUT="$(json_bash 'GITGUARD=1 git reset --hard')"
+expect pass 0 "F14 pair: with a writable ledger the same override passes" env OVERRIDE_LEDGER="$OL28" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'SUITE_OK=1 npm test')"
+expect refuse 2 "F14 no override-ledger.sh beside the guard: SUITE_OK must be REFUSED" env OVERRIDE_LEDGER="$OL28" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$NOLED28/heavy-suite-guard.sh"
+
+# --- 15 block-dangerous-git: unparseable input fails CLOSED -----------------------------
+INPUT='{"tool_name":"Bash","tool_input":{"command":'
+expect refuse 2 "F15 truncated JSON must fail CLOSED" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT='not json at all'
+expect refuse 2 "F15 garbage input must fail CLOSED" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT=''
+expect refuse 2 "F15 empty input must fail CLOSED" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT='{"tool_name":"Write","tool_input":{"file_path":"/x/NOTES.md","content":"git reset --hard"}}'
+expect pass 0 "F15 pair: a non-Bash tool call passes untouched" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'git status')"
+expect pass 0 "F15 pair: well-formed Bash input with a safe command passes" bash "$HOOKS_DIR/block-dangerous-git.sh"
+
+# --- the shared helper file: missing => every guard fails CLOSED, never open ------------
+INPUT="$(json_bash 'git status')"; expect refuse 2 "missing guard-lib.sh: block-dangerous-git fails CLOSED" bash "$NOLIB28/block-dangerous-git.sh"
+INPUT="$(json_bash 'ls -la')"; expect refuse 2 "missing guard-lib.sh: gate-guard fails CLOSED too" bash "$NOLIB28/gate-guard.sh"
+INPUT="$(json_bash 'ls')"; expect refuse 2 "missing guard-lib.sh: heavy-suite-guard fails CLOSED" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$NOLIB28/heavy-suite-guard.sh"
+jb28 'git status' "$r28" > "$T/h28-nolib-in.json"
+if bash "$NOLIB28/commit-pathspec-guard.sh" < "$T/h28-nolib-in.json" >/dev/null 2>&1; then bad "missing guard-lib.sh: commit-pathspec-guard must fail CLOSED"; else ok; fi; refuse_n=$((refuse_n+1))
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "pair: with guard-lib.sh present the same command passes" bash "$HOOKS_DIR/gate-guard.sh"
+
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?

@@ -113,6 +113,7 @@ backup_then_copy "$SRC/hooks/check-claude-md.sh" "$DEST/hooks/check-claude-md.sh
 backup_then_copy "$SRC/hooks/auto-backup.sh"     "$DEST/hooks/auto-backup.sh"     "auto-backup.sh (Stop)"
 backup_then_copy "$SRC/hooks/interview.md"       "$DEST/hooks/interview.md"       "interview.md (new-project questions)"
 copy_if_present  "$SRC/hooks/clock-in-context.sh"      "$DEST/hooks/clock-in-context.sh"      "clock-in-context.sh (SessionStart + UserPromptSubmit)" required
+copy_if_present  "$SRC/hooks/guard-lib.sh"             "$DEST/hooks/guard-lib.sh"             "guard-lib.sh (shared command-reading helpers; the four Bash guards REFUSE without it)" required
 copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)" required
@@ -133,6 +134,7 @@ copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.s
 copy_if_present  "$SRC/hooks/test-helper-ledger.sh"    "$DEST/hooks/test-helper-ledger.sh"    "test-helper-ledger.sh (run by test-hooks.sh)"
 copy_if_present  "$SRC/hooks/test-rules-cap.sh"        "$DEST/hooks/test-rules-cap.sh"        "test-rules-cap.sh (run by test-hooks.sh)"
 chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/hooks/clock-in-context.sh" \
+         "$DEST/hooks/guard-lib.sh" \
          "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
          "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/override-ledger.sh" "$DEST/hooks/gate-guard.sh" \
          "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/helper-ledger.py" \
@@ -432,19 +434,21 @@ else
 fi
 
 # gate-guard.sh is different: unlike the four above, it degrades safely with NO jq (it
-# falls back to a cruder text match instead of refusing everything), but it calls python3
-# unconditionally for its real check — with jq present and python3 missing, it would
-# refuse every single Bash command, not just gates. So it needs python3 specifically, not
-# "jq or python3".
+# falls back to a cruder text match instead of refusing everything), and with no python3 it
+# now passes every command with a one-line warning instead of refusing them — it is the one
+# guard that may fail OPEN, because it protects no data and only enforces a habit about
+# exit codes. Registering it without python3 would therefore be harmless but useless: a
+# subprocess per Bash call that can never say no. So it is still gated on python3, now for
+# cost rather than for safety.
 if command -v python3 >/dev/null 2>&1; then
   GATE_CMD='/bin/bash "$HOME/.claude/hooks/gate-guard.sh"'
   res=$(register_hook "PreToolUse" "$GATE_CMD" "" "" "Bash")
   report_hook_result "$res" "the PreToolUse hook (gate-guard.sh)"
 else
   warn "python3 not found — skipping the PreToolUse hook (gate-guard.sh). It needs"
-  say  "     python3 for its real check; without it, leaving it registered would refuse"
-  say  "     every Bash command, not just the gates it's meant to catch. Install python3,"
-  say  "     then run this again."
+  say  "     python3 for its real check; without it it would pass every command with a"
+  say  "     warning, so registering it now would only cost a subprocess per Bash call."
+  say  "     Install python3, then run this again."
 fi
 
 # The helper ledger only reads transcripts and appends TSV rows — never blocks the
