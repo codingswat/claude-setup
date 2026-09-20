@@ -16,6 +16,14 @@ A session looks the same almost every time:
    I have to go open.
 6. I only ever have to answer the "needs my input" part. Everything else, I skim.
 
+**Anything I'll actually see on a screen gets drawn before it gets built.** For a screen, an
+animation, or an interaction, a chat sketches every step first — a storyboard, in words or
+pictures — so we agree on the path before any of it exists as code. Once it's built, a second
+chat that never saw the change rehearses it in a real browser, at real phone width, and answers
+a short fixed set of questions about it. A finished-looking screen has shipped with real defects
+on the same day its own tests passed — the rehearsal is what a test suite can't do, because it
+never actually looks at the thing.
+
 ## The card
 
 Every chat reports back in the same shape, so my eye always knows where to look:
@@ -115,6 +123,11 @@ as file contents:
   included, downsides stated up front — just said in words I actually understand,
   as I once put it myself: *"just simplify it for me to understand as a non fully
   technical person."*
+- **A line of on-screen text earns its place only if I couldn't already guess it.** Anything a
+  reader could already infer gets cut; what stays is a real qualifier on a number I'm meant to
+  trust, or an actual consequence, never filler dressed up as information. Measured against
+  exactly that test, one project's own screens came back honest by this standard — a real score
+  to beat, not a formality.
 
 ## Money
 
@@ -125,6 +138,13 @@ as file contents:
 - **Use the lightest tool that can actually do the job.** A cheap, fast model for
   mechanical work; a stronger one only where real judgment is needed. Spending more
   than a task needs isn't caution, it's waste.
+- **A budget is a gauge to report, not a stop sign to quietly obey.** Once a job is under way,
+  going over an estimate means saying so and continuing — not trimming the work down to fit
+  without telling me. An earlier habit did the opposite: work quietly got smaller once an
+  estimate ran out, and I never found out it had been cut. Economizing happens by using cheaper
+  tools for what's left, never by delivering less than what was asked. This is about effort and
+  token budgets for helpers, never a money cap — a spending cap still stops the work; an
+  overrun of effort is reported and continued with cheaper helpers, never by delivering less.
 
 ## Keeping the rulebook alive
 

@@ -88,7 +88,7 @@ Read them in this order if you're reading rather than installing.
 | File | What it is | Read time |
 |---|---|---|
 | **[HOW-I-WORK.md](HOW-I-WORK.md)** | **Start here.** The daily loop: the card every chat answers in, the control words, what a "yes" covers, the paper trail habits. | 10 min |
-| [LESSONS.md](LESSONS.md) | The rules as lessons — 39 of them, each with the incident that taught it, the sentence to paste into your own rulebook, and what enforces it. | 20 min |
+| [LESSONS.md](LESSONS.md) | The rules as lessons — 54 of them, each with the incident that taught it, the sentence to paste into your own rulebook, and what enforces it. | 25 min |
 | [MULTI-CHAT-ROLES.md](MULTI-CHAT-ROLES.md) | Running several Claude chats on one codebase: five roles, one private folder each, the files they coordinate through, and the one commander. | 10 min |
 | [GLOSSARY.md](GLOSSARY.md) | Every technical term ever explained to me, one plain-English line each. My substitute for a CS degree. | as needed |
 | [TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md) | The rulebook as a form: sections to fill in, each saying what changes when you do, plus 17 starter rules that are live from your next session. This is what the installer puts at `~/.claude/CLAUDE.md`. | 10 min |

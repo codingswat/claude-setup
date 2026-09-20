@@ -167,6 +167,63 @@ landed. One of the deciding tests sweeps eight locations, and the output moved a
 is the one the judging tests sweep, not a convenient subset.
 **Enforced by** — habit.
 
+### A change's blast radius is whoever reads it
+
+**Lesson** — when something shared changes, test everywhere that change gets used, not just the
+place it was made.
+**What happened** — a change was tested only at the spot it was edited; something else that
+quietly depended on it broke elsewhere, once for about eighteen hours before anyone noticed.
+**The rule to copy** — after any change to something shared, test every place that reads or uses
+it, not only the files that were actually touched.
+**Enforced by** — habit.
+
+### "It doesn't exist" gets checked against the real thing
+
+**Lesson** — a claim that something is missing, that something can't happen, or a description of
+what a file contains only counts once it's been checked against the actual thing — never against
+memory or a quick search.
+**What happened** — more than once, "this doesn't exist" turned out to be wrong, coming from a
+stale memory or a search that hadn't looked in the right place. Separately, instructions handed
+to helpers have stated a file's contents from memory more than once, and the helpers built on a
+false premise because the description was wrong.
+**The rule to copy** — before accepting that something is missing or impossible, or before
+telling a helper what a file contains, check it against the real thing — never memory or a
+partial search.
+**Enforced by** — habit.
+
+### A decision-informing number is measured or labelled
+
+**Lesson** — any number that's actually going to influence a real decision either gets measured,
+with how it was measured stated alongside it, or it's clearly labelled a guess.
+**What happened** — five separate figures used in real decisions turned out to be guesses dressed
+up as measurements; one of them reached the project owner sitting inside what looked like an
+already-approved design.
+**The rule to copy** — a number feeding a decision is freshly measured, with the method that
+produced it named beside it, or it's labelled an estimate — never presented as fact when it's
+neither.
+**Enforced by** — habit.
+
+### A comment claiming protection is not protection
+
+**Lesson** — a code comment that says "this is safe because X is checked" is worthless unless
+something actually checks X — the comment itself isn't the safeguard.
+**What happened** — four separate comments, written in a single day, each claimed a safety
+property was being enforced when nothing in the code actually enforced it.
+**The rule to copy** — a comment claiming a guard exists names the actual test or check that
+enforces it, or it plainly says the guard isn't enforced yet.
+**Enforced by** — habit, checked at review: an unnamed guard claim is a finding.
+
+### A verification command is copied from what actually ran
+
+**Lesson** — when a set of instructions states the exact command that proves the work is done,
+that command is copied from the one that was actually run — never retyped from memory.
+**What happened** — a set of instructions once quoted an expected result from a search pattern
+that was different from the one that had actually produced it, so the number didn't match what
+running the real command gave.
+**The rule to copy** — a stated verification command is pasted straight from the one that was
+actually run, never retyped or reconstructed afterward.
+**Enforced by** — habit.
+
 ## Git and things you cannot undo
 
 ### One working feature, one commit, pushed now
@@ -299,6 +356,52 @@ in the same commit as the claim; a folder about to be deleted is checked for unt
 not only for uncommitted ones.
 **Enforced by** — habit.
 
+### Never gate a commit on a piped or semicolon-joined check
+
+**Lesson** — a check that's supposed to block a commit or push only blocks it if its pass/fail
+result is chained straight into the command with a real "and" — never piped through something
+else, never joined with a semicolon.
+**What happened** — a failing test suite still got pushed twice, because its result had been
+piped through a filter in one case, and separated from the push with a semicolon in the other —
+both let the push run whether the check passed or not.
+**The rule to copy** — a blocking check runs alone, its exit code is captured, and it's joined to
+the commit or push with a real "and" — never filtered, never semicolon-joined.
+**Enforced by** — the private setup has a hook for this, not yet published.
+
+### Log every use of a safety-bypass override
+
+**Lesson** — if a safety check can be bypassed with an override word or flag, every single use
+of that override gets logged — when, where, and what was run.
+**What happened** — checks that could be bypassed were being bypassed with no record left behind
+of when it happened or why.
+**The rule to copy** — every use of a safety-bypass override is logged — the time, the folder,
+and the exact command — to a separate file kept just for that.
+**Enforced by** — not logged by this repo's own shipped hooks today (this repo's override words
+are `PRIVACY_OK`, `GITGUARD`, `SWEEP`); the private setup has a ledger hook for it, not yet
+published.
+
+### A redaction scrub must catch every spelling of a name
+
+**Lesson** — a privacy filter that's supposed to catch an identifying name or path has to catch
+every way that name can be written, not just the one spelling it was tested against.
+**What happened** — a privacy filter matched a name written one way (with slashes) but missed
+the very same name written another way (with dashes) — twice.
+**The rule to copy** — an identifier-scrubbing filter is checked against every encoded form the
+identifier could take, not just its most common spelling.
+**Enforced by** — the shipped pre-commit privacy check, but only for the slash form of a home
+path; the dashed form and the percent-encoded form pass it today, so those are still habit.
+
+### A "clean" privacy scan proves nothing about untracked files
+
+**Lesson** — a privacy scan that only looks at files already tracked by git tells you nothing
+about a brand-new file that hasn't been added yet.
+**What happened** — a leak-checking scan repeatedly passed clean while checking only tracked
+files; a new file that actually leaked something kept slipping through because it was never
+staged when the scan ran.
+**The rule to copy** — run the privacy scan again after staging a change — a scan of only
+tracked files proves nothing about files that are new.
+**Enforced by** — habit.
+
 ## Talking to Claude
 
 ### Add alongside, don't quietly replace
@@ -391,6 +494,16 @@ trip is a round of the owner's attention for nothing.
 recorded on the task's file, and covers the review's follow-on work; nobody asks twice.
 **Enforced by** — habit.
 
+### Design picks are clicked, not typed
+
+**Lesson** — when there's more than one way something could look, the choice gets made by
+clicking an option on the actual rendered page, not by naming a letter back in chat.
+**What happened** — an owner kept typing back which mockup they'd picked from a description in
+chat; asking for a real button next to each option, on the page itself, ended the back-and-forth.
+**The rule to copy** — for anything visual, put the options on a real rendered page with a way to
+pick one there, and read the pick back from the page — never choose from a paragraph in chat.
+**Enforced by** — habit.
+
 ## Money and models
 
 ### Small chores go to the cheapest model that can do them
@@ -443,6 +556,37 @@ memory the file was meant to save.
 tool; review-only and fact-check types are briefed for a short answer in chat.
 **Enforced by** — habit; the brief template names the type next to the output path.
 
+### A waiter blocks on the process, not a line in a log
+
+**Lesson** — a script that's waiting for a helper to finish should watch for the actual job to
+end, never for a line of text the job might print — because it might never print it.
+**What happened** — a helper's shell once sat idle for over three hours, once for nine and a
+half, waiting for text a finished job had never actually printed.
+**The rule to copy** — a wait loop checks whether the job's process has exited, never whether
+some expected text has shown up in its log.
+**Enforced by** — the private setup has a hook for this, not yet published.
+
+### A waiter must not watch itself
+
+**Lesson** — a script that waits by matching a running command's name has to make sure it isn't
+matching its own command line.
+**What happened** — fixing the mistake above backfired once: the new wait loop searched for a
+command pattern that matched its own line, so it sat waiting for itself to finish.
+**The rule to copy** — a process-matching wait either excludes its own line or pins the exact
+process id captured when the job started — never a pattern generic enough to catch itself.
+**Enforced by** — habit.
+
+### A helper's results have to land before its turn ends
+
+**Lesson** — a helper chat has to write its finished results to a real, durable file before its
+turn ends — not to a temporary scratch spot that disappears with the session.
+**What happened** — three separate times, a helper's results died along with its own turn; once
+because they'd been written to a temporary folder that a reboot wiped clean.
+**The rule to copy** — before a helper's turn ends, its results are saved to a durable file the
+next session can actually open — never left in scratch space or only in its own memory of the
+conversation.
+**Enforced by** — habit.
+
 ## When one chat is not enough
 
 ### Write decisions and mistakes down, not just in the chat
@@ -480,6 +624,26 @@ file under two hundred words (current task, next step, open questions, what must
 repeated), and close; the plan and the role's boot file are the handover.
 **Enforced by** — habit here; the private setup has a Stop hook that refuses to end a turn with
 changed tracked files unless the state file is among them, not yet published.
+
+### One helper commits to a shared workspace at a time
+
+**Lesson** — if more than one helper is working in the same shared copy of a project, only one
+of them may save (commit) at a time — the rest stay read-only until it's their turn.
+**What happened** — two helpers once worked in the same shared copy at the same time; one
+helper's in-progress files got swept into the other's commit by mistake.
+**The rule to copy** — in any shared workspace, exactly one helper stages and commits at a time;
+every other helper working there in parallel stays read-only.
+**Enforced by** — habit.
+
+### Parallelize by shared data, not shared files
+
+**Lesson** — before splitting work across two helpers to run at once, check whether they touch
+the same underlying information, not just whether they touch different files.
+**What happened** — two tasks once ran in parallel on entirely separate files that happened to
+describe the same underlying data; one task's change silently broke the other's assumption.
+**The rule to copy** — before running two pieces of work in parallel, check for shared data
+behind them, not only separate file names.
+**Enforced by** — habit.
 
 ---
 

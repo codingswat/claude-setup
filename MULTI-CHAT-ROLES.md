@@ -279,6 +279,13 @@ which model is in the chair; the token count does not). Below a set floor it tak
 task; lower still, closing is the next action — so a chat running low is never tempted to
 squeeze in "just one more task" and lose track on the way out.
 
+**Files are memory; a chat's own context is a scratch buffer.** Anything a later chat must know
+has to be written down somewhere it can read — a chat's own recollection of its conversation
+doesn't survive past its closing, no matter how sharp it still feels while it's happening. The
+private setup enforces this with a hook that isn't in this repo (the doorman paragraph below
+describes it); here, without that hook, it's a habit: write the status file at every task
+boundary, treating your own memory, past the floor, as unreliable, not just slow to consult.
+
 **Closing means: land or push what is finished, mark the order file, rewrite the role's state
 file, close. No handover document.** This is a change from an earlier version of the method.
 Two seats once retired at their floors mid-order and each wrote a four-thousand-word handover
@@ -302,6 +309,17 @@ A message reaching a sleeping or paused seat is information, nothing more; it gr
 permission to act. The go-ahead always comes from the project owner, said directly in that
 seat's own chat. A seat woken by a message and finding no such go-ahead there holds where it
 is, rather than assuming the message was permission.
+
+**Running seats unattended overnight works the same way, just pre-arranged.** Before an
+overnight relay of several seats starts, the owner gives each seat's go-ahead in that seat's own
+chat in advance, and the arrangement itself is written down in the shared notes file so any seat
+can confirm the relay was actually declared, and which seats are in it — not assumed. The
+written declaration only proves the relay exists; it is never the go-ahead itself. A message
+that wakes a later seat in the relay is still only a notification — the go-ahead for that seat
+is the one the owner already gave, beforehand, in that seat's own chat, and if that isn't there,
+the seat holds rather than treating a peer's message as the missing permission. This came from a
+near miss: a stray message once woke a paused seat, and a loosely worded declaration nearly let
+a peer's message stand in for the owner's own yes.
 
 ---
 
