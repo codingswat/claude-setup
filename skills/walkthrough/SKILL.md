@@ -93,10 +93,11 @@ instead of shown as two strips. Checking desktop size only.
 
 ## Baseline
 
-In one real project, a day of testing a complex interactive screen turned up seven real
-defects that over a thousand automated tests had all missed — every one of them found by a
-person, and every one of them in the "during" column: the hold or the wait, mid-interaction,
-that a static test never sits through. That gap is the reason this skill exists.
+Illustrative: in one real project, a day of testing a complex interactive screen turned up
+several real defects that a large automated test suite had all missed — every one of them
+found by a person, and every one of them in the "during" column: the hold or the wait,
+mid-interaction, that a static test never sits through. That gap is the reason this skill
+exists.
 
 ## Commit the rehearsal pictures
 
@@ -104,4 +105,5 @@ Every rehearsal picture cited in a "done" report belongs in the actual repo (for
 under a path like `docs/design/<task>/pictures/`) in the same commit that reports it done —
 not only in a throwaway working copy. Screenshots that were the only evidence a check had
 passed have been lost before, along with a retired temporary workspace; treat them as part
-of the deliverable, not scratch.
+of the deliverable, not scratch. Take them from fixtures or test accounts only, never from a
+real user's screen — a committed screenshot can carry personal data into a public repo.

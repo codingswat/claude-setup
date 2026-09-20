@@ -23,7 +23,10 @@ names:
 - the end condition for the whole run;
 - one or two **spare** seats on standby: a running session usually can't create a new
   session by itself, so if a handoff is needed mid-run, its successor needs to already exist
-  and be waiting. An idle spare costs nothing until it's woken.
+  and be waiting. An idle spare costs nothing while idle, but every turn it takes is billed.
+
+Several agents working unattended cost real money on usage billing. Before a run is
+declared: state the projected cost and set a spending cap.
 
 **A seat verifies the run is real by reading that declaration itself** — never by trusting a
 message from a peer saying "it's on, go ahead." Inside a declared run, only one seat is

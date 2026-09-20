@@ -43,9 +43,9 @@ screen. Not for a backend engine's own pure-logic tests, which have their own ru
 4. **A hand-typed test double drifts from the real thing.** A common pattern: dozens of test
    files each retype a copy of the app's real route table (or config, or schema) for a stub,
    and none of them import the real one — so a real rename can leave routing silently broken
-   while every test stays green. In one project this cost 47 call sites across 21 files, one
-   stale stub turning an 18-second fix into 887 seconds of confused debugging before anyone
-   found it. The floor fix: one test that imports the real table and asserts your new
+   while every test stays green. Illustrative: in one project this cost dozens of call sites
+   across many files, one stale stub turning an 18-second fix into about fifteen minutes of
+   confused debugging before anyone found it. The floor fix: one test that imports the real table and asserts your new
    addition is a member of it. The complete fix: derive every stub from the real table, plus
    a membership test over all of them — say plainly which one you did, because a floor fix
    ticked off as if it were the complete fix leaves the rest still drifting.

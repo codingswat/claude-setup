@@ -38,7 +38,7 @@ starting point, not a law of physics.
 | Remaining context | Action |
 |---|---|
 | Above the upper floor | Take the next task |
-| Below the upper floor, at a task boundary | No new task; land or push, mark the plan file, close |
+| Below the upper floor, at a task boundary | No new task; land or push, mark the plan file, rewrite the role's state file (under two hundred words: current task, next step, open questions, what not to repeat — see `handing-off-live-work`), close |
 | Below the lower floor, a low-context warning, or right after compaction | Closing is your NEXT action — automatic, announced in chat with the next session's opening line; nothing running gets interrupted |
 
 Sub-skill for actually pushing unfinished work cleanly: `handing-off-live-work`.

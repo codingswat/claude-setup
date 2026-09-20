@@ -47,7 +47,9 @@ becomes:
    conflict.
 4. Commit by path: `git commit <path> <path> -m "…"`.
 5. Land it: `git push origin HEAD:main`. On "non-fast-forward," repeat step 1, then push
-   again — never `--force`, never `--no-verify`.
+   again — never `--force`, never `--no-verify`. This direct push is for a repo you alone
+   own; a team repo, branch protection, or required reviews mean you follow that repo's own
+   workflow (a pull request), never a direct push to main.
 
 **Gate every chained step on its actual exit code, never by piping its output through
 something else** (`| grep`, `| tail`, `| head` hide the real exit code of the command
@@ -73,12 +75,12 @@ automatic everywhere you clone.
 |---|---|---|
 | `commit-pathspec-guard`: no paths, index already holds files | Something else got staged | Commit by path — a pathspec commit ignores whatever else is staged; don't unstage anything |
 | `commit-pathspec-guard`: `-a` / `.` refused | A whole-tree sweep was attempted | Name your files instead |
-| A provenance / "no record" refusal | This session never wrote that file, or wrote it before committing | Re-read the diff again after the refusal; if every hunk really is yours, use the documented override; otherwise stop |
+| A provenance / "no record" refusal | This session never wrote that file, or wrote it before committing | Re-read the diff again after the refusal; if every hunk really is yours, set `SWEEP=1` for that one commit; otherwise stop |
 | A "changed since you read it" refusal | Another session's lines are now in the file too | Wait for their commit, pull, re-read the diff, retry |
 | `channel-size-guard` refusal | The file crossed its size band (for example, 9,000 words for a notes file, with a lower target to sweep down to) | Archive resolved entries down toward the lower target first, then write |
-| `block-dangerous-git` refusal | `reset --hard`, `clean`, a force-push, deleting a branch, and similar | State the target, scope and consequence, get an explicit yes, then use the documented override |
-| `heavy-suite-guard` refusal | Another session is already running a full suite | Wait; a single targeted test file is exempt |
-| Pre-commit ceiling refusal | Your commit adds an unusually large number of lines to a shared file in one go | Confirm it's deliberate (a genuine sweep), then use the documented override |
+| `block-dangerous-git` refusal | `reset --hard`, `clean`, a force-push, deleting a branch, and similar | State the target, scope and consequence, get an explicit yes, then set `GITGUARD=1` for that one command |
+| `heavy-suite-guard` refusal | Another session is already running a full suite | Wait; a single targeted test file is exempt. If you must run anyway, after the owner's yes, set `SUITE_OK=1` for that one command |
+| Pre-commit ceiling refusal | Your commit adds an unusually large number of lines to a shared file in one go — only checked when the channel conf (`~/.claude/hooks/channel-ceiling.conf`, set up by the installer's opt-in) is present | Confirm it's deliberate (a genuine sweep), read the diff, then set `SWEEP=1` for that one commit |
 
 An override flag only counts at the very start of a command segment — one written inside a
 commit message, a heredoc, or a quoted string does nothing.
