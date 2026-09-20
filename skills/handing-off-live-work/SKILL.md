@@ -1,13 +1,22 @@
 ---
 name: handing-off-live-work
-description: Use when a work session is ending mid-task and another session will continue it — being replaced, running out of context, pausing indefinitely, or asked to hand off. Not for a finished project's documentation.
+description: Use when a work session is ending mid-task and another session will continue it — being replaced, running out of context, pausing indefinitely, or asked to hand off. Leaves the state in the plan file and one short state file, never a handover document. Not for a finished project's documentation.
 ---
 
 # Handing off live work
 
 Four acts, in this order: **let everything finish, tidy up, write down what you are standing on,
-then commit it and hand the next session its opening prompt.** The order IS the skill. A handover written while anything is still running describes a
-machine that no longer exists by the time it is read.
+then commit it and hand the next session its opening prompt.** The order IS the skill. A state
+written while anything is still running describes a machine that no longer exists by the time it
+is read.
+
+**What gets written is short.** The plan file (or order file) already holds what landed and what
+is open, because it was kept current during the work; the closing session marks it and rewrites
+**one state file under two hundred words**. It does not write a handover document. Two sessions
+once retired at their memory floors mid-task and each wrote a four-thousand-word handover —
+spending, on the way out, exactly the memory the retirement was meant to protect, and restating
+what the plan file already held. The plan file and the role's boot file are the handover; the
+state file is the note left on the desk.
 
 **Pause is not stop.** Pausing means: start nothing new, let what is already running land, then
 report. It never means interrupting work mid-flight. Killing a running agent destroys work nobody
@@ -57,7 +66,7 @@ Wait for every subagent and every workflow to report. All of them. Then write.
   real and unreported; ending it early destroys exactly what you are trying to hand over. Waiting
   costs minutes; the work costs hours.
 - **Do not write the handover "while they finish".** Anything that reports after you write is
-  invisible to the document — commits it made, findings it had, files it changed. The next session
+  invisible to the state file — commits it made, findings it had, files it changed. The next session
   inherits work the handover does not know exists, and cannot tell it from debris.
 - **Do not substitute "record where it stopped" for waiting.** That is the exit for work you
   *cannot* wait on (a scheduled job, another person's session) — never for an agent of yours that
@@ -67,16 +76,16 @@ Wait for every subagent and every workflow to report. All of them. Then write.
   Tested: given a 6-agent review four minutes from done, one draft in three filled in the exception
   instead of waiting four minutes. The exception is for runs that genuinely cannot be waited out —
   unbounded, or hours away — not a disclosure form you complete to leave sooner.
-- Only then, if a run truly cannot be waited out, say so **in the document, by name**, all four:
+- Only then, if a run truly cannot be waited out, say so **in the state file, by name**, all four:
   1. what is running; 2. what it will touch; 3. **where its output lands — as a path**, not "in the
-  tree somewhere"; 4. that the handover predates it. Repeat it in slot 0.
+  tree somewhere"; 4. that the state file predates it. It is the state file's first line.
 - **A run you DID wait out is re-reported with its FINAL state, never its pre-wait numbers.**
   Tested: a draft waited correctly and still handed over the agent's "~25 minutes in, nothing
   committed" snapshot, which was stale by the time it wrote.
 
 **Why this is Step 0 and not a bullet in Step 1:** the pressure to skip it is highest exactly when
 it matters most — context filling, a replacement waiting, a long-running agent. Writing early feels
-efficient and produces a document that is wrong on arrival.
+efficient and produces a state that is wrong on arrival.
 
 ## Step 1 — Tidy up, and ACT (before writing a word)
 
@@ -95,95 +104,64 @@ instead of doing it. Advice is not a backup.
   Tested, both models, 2 of 6 drafts: asked for a completed fact and given no way to check, a
   session invents one — a branch that does not exist, a commit hash never issued. **That is worse
   than admitting nothing was preserved**, because the reader stops worrying and the only copy dies
-  with the machine. This is the one claim in the document that requires evidence; do not paste
+  with the machine. This is the one claim in the state file that requires evidence; do not paste
   command output for claims that need none.
 - Do YOUR paper trail now. Never delegate your own bookkeeping forward. Writing "log this if it
   isn't already" tells the reader you did not check, and devalues every other claim you make.
 - Clean up scratch files, temp servers, processes. Say what is still running.
 
-## Step 2 — The document
+## Step 2 — Mark the plan, rewrite the state file
 
-**The slots are a floor, not a ceiling.** Fill every one; add anything that does not fit. **A slot
-with nothing in it says "none".** Never invent an item to populate a slot, and never infer a cause
-you were not told — in testing, slot pressure produced both a fabricated reason and a task-table
-row that contradicted the same document two sections later.
+Two writes, both into files that already exist — nothing new is created.
+
+**The plan or order file** is the record of what landed and what is open. Mark every task you
+touched with its honest state: DONE-and-reviewed / DONE-but-unreviewed / NOT-STARTED /
+PARKED-by-<who>. **IN-FLIGHT is not a legal state once Step 0 is done** — a run you waited out
+gets the state it ENDED in, never what it was doing when the pause was called. Tested: 2 of 3
+drafts waited half an hour and still tabled the run with its pre-wait numbers. Anything the
+work FOUND that outlives the task — a bug, a behaviour change, a leak fixed inside unreviewed
+work — goes on the task's line in the plan, not in your head: in testing, drafts that reported
+machine state perfectly lost the single most consequential fact because no slot asked for it.
+
+**The role's state file** — one per role, a fixed path the next session boots from, rewritten
+(not appended) at every task boundary and now:
 
 ```markdown
-# Handover — <what> → next session
-
-## 0. Read this first (30 seconds)
-The two or three things that decide what the reader does in the next ten minutes.
-Every tested draft invented this header when the template lacked it — write it.
-If anything was still running when you wrote, it goes here, first.
-
-## 1. State of the machine
-Branch. Working tree clean or not, and what in it is NOT yours. What is running.
-Anything unpushed — and WHERE THE SECOND COPY IS, as a fact, not a plan.
-
-## 2. What the work found or changed          ← substance; the slot most often lost
-Bugs found, behaviour changed, anything discovered that outlives the task.
-Especially anything sitting inside unreviewed or unpushed work.
-
-## 3. Where the work is
-Table: task | state | commits | its record. State honestly:
-DONE-and-reviewed / DONE-but-unreviewed / IN-FLIGHT / NOT-STARTED / PARKED-by-<who>.
-**IN-FLIGHT is only legal if slot 1 says something is still running.** A run you waited
-out gets the state it ENDED in — what it produced, what it committed — never what it was
-doing when the pause was called. Tested: 2 of 3 drafts waited half an hour and still
-tabled the run as IN-FLIGHT with its pre-wait numbers, contradicting their own slot 1.
-
-## 4. Verified vs reported
-Which numbers you re-ran yourself; which you took from an agent. Label each.
-
-## 5. Owed and unexecuted
-Decided and assigned but NOT done. If there is exactly one, it gets its own
-heading — not a bullet among six.
-
-## 6. Facts that cost time to learn
-Each as a performable check: name the file, give the command. "Run from the repo
-root" → the command. For anything with a budget, state the REMAINING NUMBER and
-stop — every tested draft got the arithmetic right and then contradicted itself
-restating the mechanism in the next clause.
-
-## 7. Claims nobody has audited
-Proofs an agent says it did but you never opened. Queue them as work. A passing
-suite proves tests pass, never that one could fail.
-
-## 8. Judgement calls — named, not defended
-The choice, **and what you chose between** (drafts drop the alternative). Do not argue for it; invite disagreement.
-Add what would prove you wrong ONLY where there is a real test — a mechanical
-falsifier for every item produces off-target answers the reader cannot tell from
-real ones. "A judgement with no clean test" is a legitimate entry.
-
-## 9. Waiting on people
-Who owes what, and what it blocks — or "blocks nothing", or "never established,
-ask". Do not guess which.
-
-## 10. Where the detail lives
-Paths. Flag records other sessions write concurrently, and records that are
-gitignored and exist only on this machine.
+# <role> — where I stopped
+Current task: <task id and one line> — <its state from the plan>
+Next step: <the one thing the next session does first>
+Open questions: <each with who owes the answer, or "none">
+Do not repeat: <the thing tried that failed, with why — or "none">
+Unverified: <numbers you took from a helper and never re-ran — or "none">
+Heartbeat: <clock time, copied from the clock>
 ```
 
-## Step 3 — COMMIT the handover, and say where it landed
+Under two hundred words. **A slot with nothing in it says "none"** — never invent an item to fill
+it; in testing, slot pressure produced a fabricated reason and a row that contradicted the same
+document two sections later. Every path, hash, or file the state names is one you confirmed with
+a command. If something was still running when you wrote (the Step 0 exception, genuinely
+earned), it goes on the first line, with where its output will land as a path.
 
-A handover that exists only in this session's scrollback is not a handover. The next session
-inherits the repo, not your transcript.
+**What does NOT go in the state file:** the story of the session, what the plan file already
+says, the reasoning behind your judgement calls, advice. A judgement call is named on the plan
+line it concerns, with what you chose between — not defended.
 
-- **Commit and push the document itself**, together with the paper-trail edits it refers to — the
-  notes entry, the role's own handover file, the decision record. Pathspec commits only.
-- **Route the reader to it.** A document nobody is pointed at is a document nobody reads: add the
-  pointer to the file the next session BOOTS from *and* to the standing notes channel, in the same
-  commit.
+## Step 3 — COMMIT it, and say where it landed
+
+State that exists only in this session's scrollback is not state. The next session inherits the
+repo, not your transcript.
+
+- **Commit and push the plan file and the state file together**, with the paper-trail edits they
+  refer to — the notes entry, the decision record. Pathspec commits only.
 - **Paste the push confirmation.** `git log --oneline -1` plus an empty
   `git log --oneline origin/main..HEAD` are the two lines that prove it. If the push failed, say so
   and make it the reader's first action — the same rule as Step 1's preservation claim.
 - In a shared working tree, read `git diff --cached --name-only` with **no path filter** before
   committing: a path you did not stage is another session's work.
 - **If a decision lands after you write** — the owner answers an open question minutes later — go
-  back and correct every document that still says it is open, the handover included. A handover
-  that misstates the one open item is worse than none.
+  back and correct the state file and the plan line that still say it is open.
 
-**If the handover is not committed, nothing below matters.** A prompt pointing at an uncommitted
+**If the state is not committed, nothing below matters.** A prompt pointing at an uncommitted
 file sends the next session to a path that does not exist.
 
 ## Step 4 — Write the next session's opening prompt
@@ -195,8 +173,9 @@ session that knows the most and will not be there to answer questions.
 Give it **in chat, as one copy-pasteable block** (the owner pastes it; they do not open files to
 find it). It carries:
 
-1. **Role, model, and the boot order** — including the handover you just committed, positioned
-   *before* the shared notes channel, because it is the account of what actually happened.
+1. **Role, model, and the boot order** — the role's boot digest, then the state file you just
+   committed, then the order file, then the notes channel — the state file before the channel,
+   because it is the account of where things actually stand.
 2. **The state they inherit**, in three or four lines: what is released or claimed, what is green,
    what is explicitly NOT dispatched. Verify each by reading the file, not from memory.
 3. **Their work in priority order**, with the ONE thing anyone is waiting on first.
@@ -211,21 +190,21 @@ find it). It carries:
 prompt is a brief, and a brief that misstates its target files sends the next session to work on
 something that is not there.
 
-**A prompt is not a summary of the handover.** The handover says what happened; the prompt says
-what to do next and what to distrust. If the prompt reads like the handover's abstract, it is
-doing the wrong job.
+**A prompt is not a copy of the state file.** The state file says where things stand; the prompt
+says what to do next and what to distrust. If the prompt reads like the state file with
+greetings, it is doing the wrong job.
 
 ## Rationalisations for writing before everything has stopped
 
 | Excuse | Reality |
 |---|---|
-| "I'll note it's still running and move on" | Then the document is wrong on arrival. Wait. |
+| "I'll note it's still running and move on" | Then the state is wrong on arrival. Wait. |
 | "It's only a few minutes, the exception covers it" | It does not. Under ~15 minutes there is no exception — you wait. |
-| "I'm out of context, I have to write now" | A handover missing a whole agent's work costs the next session more than a shorter one written late. |
+| "I'm out of context, I have to write now" | A state file missing a whole agent's work costs the next session more than one written late. Two hundred words fit in any floor. |
 | "It's nearly done, I'll write the rest meanwhile" | You cannot know what it will report. Two of six tested drafts invented facts under exactly this kind of time pressure. |
 | "Cancelling it is cleaner than waiting" | Cancelling destroys unreported work. Waiting costs minutes. |
-| "I'll tell them about it in chat, that's enough" | Chat is not inherited. Commit the document. |
-| "The next session can find it, it's in the repo" | Route them: a pointer in the boot file and the notes channel. |
+| "I'll tell them about it in chat, that's enough" | Chat is not inherited. Commit the state file. |
+| "The next session can find it, it's in the repo" | The state file is at the fixed path the role boots from; the prompt names it. |
 | "The prompt is the owner's job" | You know the most and will not be there. Write it. |
 | "Stopping now is what pause means" | It is not. Pause = start nothing new and let running work land. Stop = interrupt immediately, and nobody asked for that. |
 | "They said pause, so I should wind up now" | Pause means start nothing new and let running work land — not abandon it mid-flight. |
@@ -241,9 +220,10 @@ doing the wrong job.
 | Defending your judgement calls | State the choice; invite the disagreement. |
 | Filling a slot to avoid a gap | "None." Inventing an item to fill it creates contradictions. |
 | Rewriting what the plan file says | Point at it. Duplicates go stale, then contradict. |
+| Writing a handover document | Mark the plan, rewrite the state file. Two hundred words. |
 | Writing while an agent is still running | Wait. Its commits land after your sentence and nobody sees them. |
-| Leaving the handover uncommitted | The next session inherits the repo, not your scrollback. |
-| A prompt that just abstracts the handover | The prompt says what to DO and what to distrust. |
+| Leaving the state file uncommitted | The next session inherits the repo, not your scrollback. |
+| A prompt that just copies the state file | The prompt says what to DO and what to distrust. |
 | A prompt that hides your recommendation's weak spots | Name what you did not test. Inherited confidence is the expensive kind. |
 
 ## Red flags
@@ -254,12 +234,13 @@ doing the wrong job.
 - An agent or workflow of yours is still running and you are writing anyway.
 - You are filling in the exception for something that finishes in minutes.
 - You waited for a run and then reported the numbers it had BEFORE you waited.
-- Slot 1 says nothing is running and slot 3 still says IN-FLIGHT.
+- Nothing is running and a plan line still says IN-FLIGHT.
+- The state file is over two hundred words, or has a section the template does not.
 - You wrote a branch name, a hash or a path you did not confirm with a command.
 - The second copy of unpushed work is a recommendation, not a location.
-- Nothing in the document says what the work actually found.
+- Nothing on the plan lines says what the work actually found.
 - The reader could not, in 30 seconds, say what to do first.
-- The handover is written but not committed — or committed but nothing points at it.
+- The state file is written but not committed.
 - You wrote a prompt containing a path, hash or URL you did not confirm with a command.
 - Your prompt recommends something and does not say what you failed to test about it.
 - **Anything you started is still running.** Stop reading this and go wait for it.

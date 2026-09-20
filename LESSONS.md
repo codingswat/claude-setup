@@ -97,6 +97,76 @@ a crop can't be checked against the whole picture you actually care about.
 at the same size — treat any close-up as backup material, never the main proof.
 **Enforced by** — habit.
 
+### Write the test first, and watch it fail before the code exists
+
+**Lesson** — the test is written before the code and run once to see it fail; a test written
+afterwards mostly proves that the code does what the code does.
+**What happened** — a data-format change was built first and tested afterwards; the tests passed
+on their very first run, which is exactly what a test that cannot fail looks like. "Test first"
+had been the named method for months but was never in the rulebook's own words, so it slid.
+**The rule to copy** — every feature's test is written before its code and run once to see it go
+red; that red run, with its exit code, is quoted in the commit that lands the code.
+**Enforced by** — habit, checked at review: a landing with no red run quoted is a finding.
+
+### A guard is not done until someone else has tried to break it
+
+**Lesson** — anything that blocks, refuses, or checks gets a second reviewer who never saw it
+built, briefed only "get past it, and make it refuse honest work" — every attempt actually run.
+**What happened** — four hooks and two scripts shipped in one afternoon, each with the builder's
+own passing tests. A blind bypass review the next day found three ways past them and thirteen
+ways to trip them on honest work: a newline after a guarded command, output piped through a
+logger, an ordinary wait loop refused as dangerous. The builder's tests had checked the shapes
+the builder thought of.
+**The rule to copy** — before a guard counts as done, a reviewer who did not build it tries to
+bypass it and to make it refuse ordinary work, runs every attempt, and the builder fixes what got
+through; only then do the builder's own tests count.
+**Enforced by** — habit; the attack's findings become the guard's two-sided test cases.
+
+### Run it against the real thing once, and count what it saw
+
+**Lesson** — before calling anything done, run it once on the real input it will meet and say how
+many things it actually handled; zero is a finding, not a pass.
+**What happened** — two guards over a task list passed hundreds of tests for two days while
+matching zero live tasks: the tests used one naming pattern and the real list used another.
+Every test was green; nothing was guarded.
+**The rule to copy** — the last step before "done" is one run against the real file, fixture, or
+screen, with the count of what it saw stated in words; a count of zero stops the task.
+**Enforced by** — habit.
+
+### A "done" definition names behaviours, not files
+
+**Lesson** — when you write down what "done" means before the work starts, name what the thing
+must refuse and what it must let through, never which files must exist.
+**What happened** — a setup reform's done-list had eleven lines, all of the form "this file exists
+with this content". Every line was met, and three real bypasses shipped, because nothing on the
+list said "the guard refuses X and allows Y".
+**The rule to copy** — each done line names one input the thing must refuse and one it must allow
+("refuses a test piped through a pager, allows one joined with &&"), and the review checks the
+work against those lines before it looks at the builder's own tests.
+**Enforced by** — habit.
+
+### A simulated browser is not proof that a finger can press it
+
+**Lesson** — for anything a person touches on screen, a test that runs in a simulated page does
+not count; only a real browser at the real screen size does.
+**What happened** — twice in one day a control passed every simulated-page test and was dead
+under a real finger: once because a drag handle was painted underneath an invisible tap layer,
+once because the simulated page fires events in a different order than a real browser. The
+simulation cannot see paint order and does not pause between listeners the way a browser does.
+**The rule to copy** — a button, handle, or gesture is proven in a real browser, at phone width,
+by someone who did not build it, before it is called done.
+**Enforced by** — habit.
+
+### "Nothing changed" is measured over the inputs the checks sweep
+
+**Lesson** — a claim that a change moves no result is only as good as the set of inputs it was
+measured over; use the inputs the deciding tests use, not the handful you had open.
+**What happened** — a build was reported as moving no output across seventeen sample cases, and
+landed. One of the deciding tests sweeps eight locations, and the output moved at one of them.
+**The rule to copy** — a "nothing moves" claim names the input set it was run over, and that set
+is the one the judging tests sweep, not a convenient subset.
+**Enforced by** — habit.
+
 ## Git and things you cannot undo
 
 ### One working feature, one commit, pushed now
@@ -207,6 +277,30 @@ commit log.
 **Enforced by** — the commit-authorship hooks above catch the git half; the rest is a manual
 check.
 
+### Other people's addresses never go into tracked files
+
+**Lesson** — a tester's or a customer's email address, name, or phone number stays in the one
+store built for it, never in a note, log, or plan that git tracks.
+**What happened** — a relay of tester feedback carried a tester's email into the shared notes
+file, which was pushed. Pushed history is not rewritten over it, so the address is there for
+good; the fix was a rule, a letter per tester in every tracked file, and a scan for the next one.
+**The rule to copy** — people are named in tracked files by a letter or a note id; their
+addresses live only in the feedback store; a relay carrying one is a review finding.
+**Enforced by** — the pre-commit privacy check, for anything on its list; otherwise habit.
+
+### Evidence lives where git carries it
+
+**Lesson** — a result that proves something (screenshots, measured numbers, a review's findings)
+is written to a tracked path before the task is called done; an ignored scratch folder is not a
+record.
+**What happened** — sixteen screenshots behind a "16 pictures, 0 defects" verdict lived only in
+an ignored folder inside one chat's private worktree; the worktree was removed as finished, and
+the evidence went with it. The removal check had looked only at tracked work.
+**The rule to copy** — every measured result a decision leans on is written to a path git tracks,
+in the same commit as the claim; a folder about to be deleted is checked for untracked files,
+not only for uncommitted ones.
+**Enforced by** — habit.
+
 ## Talking to Claude
 
 ### Add alongside, don't quietly replace
@@ -288,6 +382,17 @@ Each cost a session to find, and would have cost another the next time without t
 trap, what it broke, and the workaround; add to it the moment a new one is found.
 **Enforced by** — habit.
 
+### One go per task, not one per step
+
+**Lesson** — a "go" covers the task and its follow-ons; a chat does not come back for a fresh yes
+on a piece of work whose results you have already read.
+**What happened** — a chat asked whether a fix opened by a review, and a build whose numbers the
+owner had already read, each needed a new go-ahead — when go had been said an hour earlier. Each
+trip is a round of the owner's attention for nothing.
+**The rule to copy** — the owner's go is given once per task, in the chat that owns decisions,
+recorded on the task's file, and covers the review's follow-on work; nobody asks twice.
+**Enforced by** — habit.
+
 ## Money and models
 
 ### Small chores go to the cheapest model that can do them
@@ -329,6 +434,17 @@ reversal, or open-ended exploration with no clear end), stop that one item, pres
 clear recommendation, and keep working on everything else that doesn't depend on the answer.
 **Enforced by** — habit.
 
+### A helper that must write a file needs a helper type that can
+
+**Lesson** — before asking a helper to leave its result in a file, check that its type has the
+file-writing tool; a read-only reviewer asked for a file answers in chat instead.
+**What happened** — three chats in one day briefed a review-only helper to write a report file;
+that type cannot write files, so each poured a long report into the parent chat, costing the very
+memory the file was meant to save.
+**The rule to copy** — a brief that names an output file names a helper type that holds the write
+tool; review-only and fact-check types are briefed for a short answer in chat.
+**Enforced by** — habit; the brief template names the type next to the output path.
+
 ## When one chat is not enough
 
 ### Write decisions and mistakes down, not just in the chat
@@ -353,6 +469,19 @@ mid-session and it loses that thread entirely.
 **The rule to copy** — before reorganizing any project folder, close or pause every chat
 working inside it first, move the folder, then start fresh chats at the new location.
 **Enforced by** — habit.
+
+### A closing chat leaves its state in the plan, not a handover essay
+
+**Lesson** — a chat that is retiring lands or pushes its work, marks the plan, and rewrites one
+short state file; it does not write a long handover document.
+**What happened** — two chats retired at their memory floors mid-task and each wrote a
+four-thousand-word handover — spending, on the way out, the very memory the retirement was meant
+to protect, and telling the next chat things the plan file already held.
+**The rule to copy** — at retirement: push what is finished, mark the plan, rewrite one state
+file under two hundred words (current task, next step, open questions, what must not be
+repeated), and close; the plan and the role's boot file are the handover.
+**Enforced by** — habit here; the private setup has a Stop hook that refuses to end a turn with
+changed tracked files unless the state file is among them, not yet published.
 
 ---
 

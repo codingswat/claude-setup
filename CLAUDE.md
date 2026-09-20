@@ -15,7 +15,7 @@ assumption, not a constraint.
 Greet them briefly and offer the install. Say plainly what it will touch:
 
 > This will add hook scripts, a project template and some skills under `~/.claude`, and
-> register the hooks (six entries) in `~/.claude/settings.json`. Anything it would overwrite gets backed up
+> register the hooks (seven entries) in `~/.claude/settings.json`. Anything it would overwrite gets backed up
 > first, and nothing is deleted. The two sharp pieces — the auto-backup hook and the
 > machine-wide git hooks — are off unless you ask for them.
 

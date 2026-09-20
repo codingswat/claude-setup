@@ -12,9 +12,10 @@ Written from scratch, no external pack or author behind them.
 - **overnight/** — runs an unattended work session end to end: restate the queue and ask every
   question up front, work everything that needs no human input, park anything that does, and
   close with a two-section morning summary (FYI / INPUT NEEDED).
-- **handing-off-live-work/** — hands a half-finished task to the next session correctly: let
-  everything running finish, write down exactly what state things are in, commit it, and write
-  the next session's opening prompt — in that order.
+- **handing-off-live-work/** — closes a session mid-task correctly: let everything running
+  finish, preserve anything that exists in one place, leave the state in the plan file and one
+  short state file (not a handover essay), commit it, and write the next session's opening
+  prompt — in that order.
 - **handover/** — writes a single self-contained `HANDOVER.md` for a developer who has never seen
   the project, complete enough to rebuild its behaviour from the document alone.
 

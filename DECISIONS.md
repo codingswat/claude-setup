@@ -34,3 +34,12 @@ only the repo copy and the two questions, found 26 items including a product lea
 item was fixed with a test before the push. The owner accepted the stand-in.
 **Rules out:** Nothing for next time — the empty-folder review stays the standard; this records
 the one exception and what it caught.
+
+**Decided:** The public repo is refreshed from the private setup's dated change log and
+mistakes file, not by re-reading the rulebook; a lesson is added only when a live rule has an
+incident behind it, and the retirement handover is a short state file, never a document.
+**Why:** The rulebook says what is true now; the change log says why it changed, which is what
+transfers. Two chats retiring mid-task each wrote a four-thousand-word handover, spending the
+memory the retirement was meant to save — the plan file already held what they wrote.
+**Rules out:** Lessons copied from the rulebook without their incident; a public handover skill
+that produces a long document at retirement.

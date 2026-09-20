@@ -49,7 +49,7 @@ tiers, always called by these names:
 Every seat's stated model is a **default, not a rule** — whoever runs the project can put a
 different model in a given seat's chair; the seat says out loud which model it is running.
 
-### Planner — *default model: opus*
+### Planner — *default model: the strongest available (the tier above opus, where one exists)*
 
 **Owns:** the specs, the overall plan, the agreed shapes that let parts of the system talk to
 each other (**contracts** — an agreed data shape, frozen so nobody quietly changes it out from
@@ -58,7 +58,12 @@ under the other side), the decision log, and settling disagreements between chat
 **Never writes product code** — a chat that both plans and builds will quietly bend the plan
 to fit whatever it just wrote. **Also owns being the single commander** — see "One commander"
 below: every cross-chat request and every decision needing the owner's judgment passes through
-this seat.
+this seat. **And owns the done-list:** before a stage's first task is handed out, the Planner
+writes the "must be true when done" lines — never the seat that builds. Each line names a
+**behaviour**, never a file state: for a guard, one input it must refuse and one it must allow
+("refuses a test piped through a pager, allows one joined with &&"). A done-list of "this file
+exists" lines once let three real bypasses ship with every line met. Each task names the lines
+it satisfies; the review checks a task against its lines first, the builder's own tests second.
 
 ### Designer — *default model: opus*
 
@@ -127,8 +132,11 @@ git push origin HEAD:main
 Never `--force`. Never merge inside the shared root folder — that folder is only the meeting
 point every seat starts from and lands back onto.
 
-At most **three** dev seats run at once (see "Limits" below); each seat's folder, once its
-work is finished, is removed and its branch deleted — nothing left half-open.
+At most **two** dev seats run at once (see "Limits" below); each seat's folder, once its
+work is finished, is removed and its branch deleted — nothing left half-open. **Before a folder
+is removed, check it for untracked files, not only uncommitted ones**: sixteen screenshots
+behind a "no defects" verdict once lived only in an ignored scratch folder inside a worktree,
+and were removed with it.
 
 ---
 
@@ -143,7 +151,13 @@ list of exact contents; the exact shape is a project's own choice.
   findings that outlive one task, handoffs. Newest entries at the top, each signed with role
   and time. Only **live** items belong here — once resolved, an entry moves to an archive in
   the same piece of work that closed it. A notes file that keeps growing forever stops being
-  read, which is the same as not having one.
+  read, which is the same as not having one. **Give it a size band with two edges:** a trigger
+  (say 9,000 words) above which the Planner sweeps closed entries out before writing anything
+  new, and a lower target (say 7,000) the sweep trims down to — never "just under the trigger",
+  or the next entry trips it again. The band binds the Planner only: no other seat is ever
+  refused an entry for size; over the band it appends with a note and the Planner sweeps
+  before its own next write. An entry older than a week is archived at every sweep unless one
+  signed line beside it says why it is still live.
 - **A plan file** — the single source of truth for done, in progress, and next. Whoever
   claims a piece of work marks it with their role name; whoever finishes it marks that too.
   Nobody trusts memory or a transcript for this — only the file.
@@ -155,6 +169,20 @@ list of exact contents; the exact shape is a project's own choice.
   showing up twice is a candidate to become a standing rule.
 - **A parked-work file** — anything postponed on purpose, each with a note on what would wake
   it back up.
+
+- **One boot digest per role.** A fresh chat reading the whole notes channel at boot costs a
+  large share of its memory before it has done anything — one seat spent roughly a third of
+  its room on the boot read alone. So each role boots from **one short file** (at most 350
+  words) read *instead of* the decision index and the channel's top. Fixed slots: the role's
+  title and default model, where its private folder goes, its zone, the ten-or-so live rulings
+  that bind it (one line each), three or four hazards with the command that checks each, and
+  three pointers — the roster line naming its current order, its state file, its inbox. No
+  task, no open questions, no date: the digest is who you are, not what happened. Whoever
+  changes a ruling or a hazard updates the digest in the same commit; a ruling leaves the
+  digest once it is built and pinned by a test.
+- **One state file per role** — where the last holder of the seat stopped, rewritten at every
+  task boundary, under two hundred words: current task, next step, open questions, what must
+  not be repeated. This, with the order file, is the whole handover (see "Context floors").
 
 None of these files' contents are invented here — this describes the practice, not a template
 to copy. A project adopting this pattern writes its own.
@@ -193,6 +221,21 @@ A report from a dev chat to the Planner is kept to **three lines**: current stat
 needs, what is blocking it — unless asked for more. The full story lives in the notes file;
 the report is the short version that gets read.
 
+**One machine steward.** Worktrees separate the files, not the machine: the shared installed
+dependencies, the running servers and their ports, the hooks. Those are one zone, "the
+machine", owned by the Planner and touched only through **one seat the Planner names** — the
+Planner itself by default. Anything machine-wide (an install in the shared folder, a repair of
+the shared tree, deleting folders or branches, a full test suite under load) is done by that
+seat alone, which says "starting" and "finished" as two separate messages while every other
+seat holds its runs between them. Whoever finds a breakage says so and **waits**; two seats
+each "fixing" the shared tree is how it ends up half-written for everyone. A package is only
+ever *added to the list files* from a worktree; the one install runs in the shared folder,
+announced.
+
+**One go per task.** The owner's go-ahead is given once, in the Planner's chat, recorded on
+the task's file, and covers the task's follow-ons — a fix opened by its review, a build whose
+numbers the owner already read. A seat does not come back for a fresh yes on each of those.
+
 ---
 
 ## A routing names who, when, and the starting word
@@ -213,10 +256,12 @@ anything they can act on.
 
 ## Limits: how many seats, how much load
 
-**At most three dev seats run against the shared project at once.** Beyond that, the chance of
-two chats stepping on the same shared machinery (not files — those are separated per worktree
-— but installed dependencies, a running server, test infrastructure) rises faster than the
-benefit of the extra parallelism.
+**At most two dev seats run against the shared project at once** — in practice the one that
+builds and deploys the front end, and one on the engine. This was three; it came down to two
+because the chance of two chats stepping on the same shared machinery (not files — those are
+separated per worktree — but installed dependencies, a running server, test infrastructure)
+rose faster than the benefit of the extra parallelism, and because the owner's attention is the
+real ceiling: every seat reports to one person.
 
 **Only one heavy test run happens at a time**, project-wide. A full test suite, an end-to-end
 run, or anything that seriously loads the machine is exclusive — check how busy the machine
@@ -225,13 +270,29 @@ are fine anytime.
 
 ---
 
-## Context floors: handing off before a chat runs out of room
+## Context floors: closing before a chat runs out of room
 
 Every chat's memory (its **context window** — how much prior conversation and file content it
 can hold at once) is finite, and it fills as work happens. At every natural break, a seat notes
-roughly how much room is left. Below a set floor, it stops taking new work and writes a
-**handoff file** instead — what landed, what's open, where to start reading — so a chat
-running low is never tempted to squeeze in "just one more task" and lose track on the way out.
+roughly how much room is left, **in tokens, never as a percentage** (the percentage depends on
+which model is in the chair; the token count does not). Below a set floor it takes no new
+task; lower still, closing is the next action — so a chat running low is never tempted to
+squeeze in "just one more task" and lose track on the way out.
+
+**Closing means: land or push what is finished, mark the order file, rewrite the role's state
+file, close. No handover document.** This is a change from an earlier version of the method.
+Two seats once retired at their floors mid-order and each wrote a four-thousand-word handover
+— spending, on the way out, exactly the memory the retirement was meant to protect, and
+restating what the order file already held. The order file and the boot digest are the
+handover; the state file is the note on the desk.
+
+**The doorman.** The floor can be enforced rather than hoped for: a hook that runs when a
+turn ends reads the chat's context use and, at or over the role's floor, writes a "retired"
+marker that makes every later message to that chat bounce to the next holder's inbox. The
+same hook refuses to let a turn end with changed tracked files unless the state file is among
+them — so the state file is always current when the doorman closes the door. One caution from
+its own blind review: "idle" must mean the chat has stopped working, never that the *owner*
+has been silent for a while.
 
 ---
 
@@ -269,16 +330,20 @@ entire job is arguing with the plan before it gets built.
 1. Chats cannot see each other — coordinate only through files in the project, never through
    memory of a conversation.
 2. Give each chat one role, with a clear list of what it must never touch.
-3. Every seat gets its own private folder (a worktree) — no shared workspace to collide over.
+3. Every seat gets its own private folder (a worktree) — no shared workspace to collide over;
+   the shared machine (installs, servers, hooks) is touched by one named steward only.
 4. Land finished work by fetching, rebasing, and fast-forward pushing — never force, never
    merge in the shared folder.
 5. Keep a live notes file, a plan file, a decision log, a mistakes ledger, a parked-work file
-   — live items only, closed items archived.
+   — live items only, closed items archived, each channel with a size band; and one short boot
+   digest and one state file per role, so a fresh chat reads a page, not the channel.
 6. Sign every entry with role and a real clock time; never rewrite someone else's entry.
 7. One commander (the Planner) routes every cross-seat request; decisions happen only in its
-   chat; every other seat reports in three lines.
+   chat, one go per task; every other seat reports in three lines. The Planner writes each
+   stage's done-list — behaviours, never file states — before the first task goes out.
 8. A wake message is information, not permission — the go-ahead always comes in that seat's
    own chat.
-9. At most three dev seats at once; one heavy test run at a time.
+9. At most two dev seats at once; one heavy test run at a time; a seat past its context floor
+   lands, marks the order, rewrites its state file and closes — no handover essay.
 10. Tell the project owner in the chat itself — a note filed in a shared file is not the same
     as telling anyone.
