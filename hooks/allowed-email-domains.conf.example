@@ -1,0 +1,11 @@
+# Copy to hooks/allowed-email-domains.conf to extend the email-domain half of
+# git-hooks/pre-commit's privacy check. One domain per line, added ON TOP of the built-in
+# default (GitHub's and Apple's own no-reply domains, plus the RFC 2606 example.* domains)
+# — you don't need to repeat those here.
+#
+# No file at all just means the built-in default is all that's allowed; that never fails a
+# commit closed, it only widens what counts as a placeholder rather than a real address.
+# Add your own project's or company's domains so a legitimate address in test fixtures or
+# docs stops being flagged.
+yourcompany.com
+yourproject.test

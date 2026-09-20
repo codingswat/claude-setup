@@ -1,26 +1,46 @@
 #!/bin/bash
 # Fires on every `git commit`, whatever made it (an agent, a script, or a person at the
-# terminal). Two independent checks:
+# terminal). Checks, most independently opt-in through their own config file — no config
+# means that check is inert, the safe default for a fresh install:
 #   (1) author identity — enforced only if hooks/backup.conf sets AUTHOR=...; otherwise
 #       this repo hasn't opted in and the check is skipped silently. A repo can also opt
 #       OUT explicitly (a work repo with its own author, on a machine that also runs a
 #       personal backup.conf): `git config --local hooks.identity false` skips this check
 #       silently, same as having no AUTHOR at all.
-#   (2) privacy — refuses a commit whose ADDED lines (the staged diff, not the whole file —
-#       an old line already in history isn't re-introduced by touching the file again)
-#       hold an absolute home path (`/Users/<name>/` or `/home/<name>/`, macOS and Linux)
-#       whose <name> isn't a known placeholder (node, runner, user, app, USERNAME,
-#       username, you, yourname, example — Docker base images, CI runners and doc
-#       placeholders all use these), or a line from an optional personal list,
-#       ~/.claude/redaction-names.local (one name per line; no list just means only the
-#       path check runs). Deliberate override, one commit: `PRIVACY_OK=1 git commit ...`.
+#   (2) a channel-file insertion ceiling — a shared file several people or sessions
+#       append to (running notes, a decision log, a changelog) should gain only a bounded
+#       number of lines per commit; a much bigger jump usually means two sessions' entries
+#       landed in the same commit. Configured in hooks/channel-ceiling.conf (see
+#       hooks/channel-ceiling.conf.example) as a LIMIT plus a list of repo-relative glob
+#       patterns; no file means this check never runs. Modified files only (a brand-new
+#       file cannot hold someone else's swept-in text), and archives (any path containing
+#       "ARCHIVE") are exempt. Override for a deliberate large write, one commit:
+#       `SWEEP=1 git commit ...` (this check only).
 #   (3) a root rules file (`CLAUDE.md`, path exactly at the repo top level, never
 #       `*/CLAUDE.md` in a subfolder) is capped by word count on the STAGED blob: 4000
 #       words if the repo's top level is `$HOME/.claude` (your global rulebook), 5750
 #       otherwise (a project rulebook). A rulebook that grows without limit stops being
 #       read. Override, one commit: `RULES_CAP_OK=1 git commit ...`.
-# (The private version this came from also has a check for how many lines a shared
-# "running notes" file may gain in one commit — that belongs in a project's own hooks.)
+#   (4) privacy — runs in EVERY repository, unconditionally, on the ADDED lines of the
+#       staged diff (an old line already in history isn't re-introduced by touching the
+#       file again):
+#         - an absolute home path (`/Users/<name>/` or `/home/<name>/`, macOS and Linux)
+#           whose <name> isn't a known placeholder (node, runner, user, app, USERNAME,
+#           username, you, yourname, example — Docker base images, CI runners and doc
+#           placeholders all use these);
+#         - any name listed in $HOME/.claude/.redaction-names.local (one per line, #
+#           comments allowed). This file must EXIST for the commit to proceed at all —
+#           no file there means privacy hasn't been set up on this machine, so the commit
+#           is REFUSED (fail closed) rather than silently skipping the names check. An
+#           existing file, even an empty one, is enough — it just means no names are
+#           configured yet, so only the home-path and email checks apply;
+#         - an email address whose domain is not on a small built-in allowlist (GitHub's
+#           and Apple's own no-reply domains, plus the RFC 2606 example.* domains) or in
+#           hooks/allowed-email-domains.conf (see
+#           hooks/allowed-email-domains.conf.example, one domain per line, added to the
+#           built-in list) — catches a real personal address before it reaches a public
+#           commit. This half has a safe built-in default and does not fail closed.
+#       Deliberate override, one commit: `PRIVACY_OK=1 git commit ...` (skips all of (4)).
 
 # ---- (1) author identity ----
 if [ "$(git config --local --get hooks.identity 2>/dev/null)" = "false" ]; then
@@ -48,6 +68,35 @@ else
   fi
 fi
 
+# ---- (2) optional: channel-file insertion ceiling ----
+CEILING_CONF="$HOME/.claude/hooks/channel-ceiling.conf"
+if [ -s "$CEILING_CONF" ] && [ "${SWEEP:-0}" != "1" ]; then
+  LIMIT=100
+  patterns=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    case "$line" in LIMIT=*) LIMIT="${line#LIMIT=}"; continue ;; esac
+    patterns+=("$line")
+  done < "$CEILING_CONF"
+  cfail=0
+  while IFS=$'\t' read -r added _deleted path; do
+    [ -z "$path" ] && continue
+    case "$path" in *ARCHIVE*) continue ;; esac
+    match=0
+    for pat in "${patterns[@]}"; do
+      case "$path" in $pat) match=1; break ;; esac
+    done
+    [ "$match" = 1 ] || continue
+    if [ "$added" != "-" ] && [ "$added" -gt "$LIMIT" ]; then
+      echo "pre-commit hook: REFUSED — $path gains $added lines in this commit (ceiling $LIMIT, hooks/channel-ceiling.conf)." >&2
+      echo "  A large jump usually means another session's text landed in the same commit as yours." >&2
+      echo "  Reconcile: git diff --cached -- $path   |   deliberate large write: SWEEP=1 git commit ..." >&2
+      cfail=1
+    fi
+  done < <(git diff --cached --numstat --diff-filter=M)
+  [ "$cfail" = 1 ] && exit 1
+fi
+
 # ---- (3) root CLAUDE.md word cap ----
 # Path exactly "CLAUDE.md" at a repo's top level, never a subfolder's "*/CLAUDE.md". The
 # global rulebook ($HOME/.claude, e.g. a config-backup repo whose toplevel IS $HOME/.claude)
@@ -66,23 +115,50 @@ if [ "${RULES_CAP_OK:-0}" != "1" ]; then
   done < <(git diff --cached --name-only --diff-filter=AM)
 fi
 
-# ---- (2) privacy: ADDED lines of the staged diff vs a home path or a listed name ----
+# ---- (4) privacy: ADDED lines of the staged diff vs a home path, a listed name, or an
+#          unlisted email domain ----
 [ "${PRIVACY_OK:-}" = "1" ] && exit 0
 python3 - <<'PY' || exit 1
 import re, subprocess, sys, os
-names_file = os.path.expanduser("~/.claude/redaction-names.local")
+
+names_file = os.path.expanduser("~/.claude/.redaction-names.local")
+if not os.path.isfile(names_file):
+    print(f"pre-commit hook: REFUSED — {names_file} does not exist, so the privacy check's "
+          "names list is not configured on this machine (fail closed, not open). Create the "
+          "file (an empty one is enough to proceed with no names configured), one real name "
+          "or handle to guard per line. Deliberate override, one commit: PRIVACY_OK=1 git commit ...",
+          file=sys.stderr)
+    sys.exit(1)
 needles = []
-if os.path.isfile(names_file):
-    for ln in open(names_file, encoding="utf-8"):
-        s = ln.strip()
-        if s and not s.startswith("#"):
-            needles.append(s.lower())
+for ln in open(names_file, encoding="utf-8"):
+    s = ln.strip()
+    if s and not s.startswith("#"):
+        needles.append(s.lower())
+
 EXCLUDED = {"node", "runner", "user", "app", "USERNAME", "username", "you", "yourname", "example"}
 home_path = re.compile(r"/(?:Users|home)/([A-Za-z0-9_.-]+)/")
+
+# Email domains: a small, universal built-in default plus anything the user adds in
+# hooks/allowed-email-domains.conf (one domain per line, # comments allowed). No conf file
+# just means the built-in default is all that's allowed — never fails closed, since the
+# default already covers the common placeholder/service cases.
+ALLOWED_EMAIL_DOMAINS = {
+    "users.noreply.github.com", "privaterelay.appleid.com",
+    "example.com", "example.net", "example.org", "example.test", "localhost",
+}
+domains_conf = os.path.expanduser("~/.claude/hooks/allowed-email-domains.conf")
+if os.path.isfile(domains_conf):
+    for ln in open(domains_conf, encoding="utf-8"):
+        s = ln.strip()
+        if s and not s.startswith("#"):
+            ALLOWED_EMAIL_DOMAINS.add(s.lower())
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+
 diff = subprocess.run(["git", "diff", "--cached", "-U0", "--no-color"], capture_output=True).stdout
 text = diff.decode("utf-8", "surrogateescape")
 cur_file = None
 offenders = {}
+email_offenders = {}
 for line in text.splitlines():
     if line.startswith("+++ "):
         p = line[4:]
@@ -103,11 +179,25 @@ for line in text.splitlines():
             n += 1
     if n and cur_file:
         offenders[cur_file] = offenders.get(cur_file, 0) + n
+    if cur_file:
+        for m in EMAIL_RE.finditer(added):
+            domain = m.group(1).lower()
+            if domain not in ALLOWED_EMAIL_DOMAINS:
+                cnt, _ex = email_offenders.get(cur_file, (0, None))
+                local = m.group(0).split("@")[0]
+                email_offenders[cur_file] = (cnt + 1, f"{(local[:1] or 'x')}***@{domain}")
 if offenders:
     print("pre-commit hook: REFUSED — an absolute home path or a listed name is in an ADDED "
           "line of the staged diff (file -> matches): " + ", ".join(f"{k} -> {v}" for k, v in offenders.items()),
           file=sys.stderr)
     print("  Remove it, re-stage, commit again. Deliberate override, one commit: PRIVACY_OK=1 git commit ...", file=sys.stderr)
+    sys.exit(1)
+if email_offenders:
+    print("pre-commit hook: REFUSED — an email address outside the allowed domains is in an "
+          "ADDED line of the staged diff (file -> count, one masked example): " +
+          ", ".join(f"{k} -> {v[0]} ({v[1]})" for k, v in email_offenders.items()), file=sys.stderr)
+    print("  If the domain is legitimate, add it to hooks/allowed-email-domains.conf. "
+          "Deliberate override, one commit: PRIVACY_OK=1 git commit ...", file=sys.stderr)
     sys.exit(1)
 PY
 exit 0

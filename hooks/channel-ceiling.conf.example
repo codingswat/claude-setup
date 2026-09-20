@@ -1,0 +1,13 @@
+# Copy to hooks/channel-ceiling.conf to turn on the channel-file insertion ceiling in
+# git-hooks/pre-commit. One LIMIT line (optional, default 100) plus one repo-relative
+# glob pattern per line — matched with a plain bash `case` glob against the staged path,
+# so "NOTES.md" matches only a top-level file and "*/NOTES.md" matches one in any folder.
+# Blank lines and lines starting with # are ignored.
+#
+# No file at all means this check never runs — the safe default for a repo with no shared
+# files several people or sessions append to. Turn it on for the files where a much bigger
+# jump than usual usually means two sessions' entries landed in the same commit.
+LIMIT=100
+NOTES.md
+CHANGELOG.md
+*/NOTES.md

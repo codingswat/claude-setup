@@ -85,9 +85,26 @@ push_with_heal() {
   return 1
 }
 
+# NUL-safe walk of `git status --porcelain --untracked-files=all -z`: a path with a
+# space (or any byte) is not split by whitespace, and a new DIRECTORY does not collapse
+# to one `?? dir/` entry (nothing inside it would ever be scanned). For a rename/copy
+# entry (status starts with R or C) porcelain -z emits the NEW path as this field and
+# the OLD path as the NEXT NUL-delimited field — read and discard it so it isn't
+# mistaken for a separate changed file; the new path is what gets scanned/listed.
+porcelain_paths() {
+  git status --porcelain --untracked-files=all -z 2>/dev/null | {
+    local entry status path old
+    while IFS= read -r -d '' entry; do
+      status="${entry:0:2}"; path="${entry:3}"
+      case "$status" in R*|C*) IFS= read -r -d '' old ;; esac
+      printf '%s\n' "$path"
+    done
+  }
+}
+
 # Short list of changed paths for the commit message (capped for sanity).
 changed_files() {
-  git status --porcelain 2>/dev/null | awk '{printf "%s ", $NF}' | cut -c1-120
+  porcelain_paths | tr '\n' ' ' | cut -c1-120
 }
 
 # Secret scan: refuse to commit or push while a changed file contains something that
@@ -107,17 +124,10 @@ files_have_secret() {
   printf '%s' "$hits"
 }
 secret_scan() {
-  local hits="" f
-  # -z / --untracked-files=all: without them a new DIRECTORY collapses to one `?? dir/`
-  # entry (nothing inside it is ever scanned) and a path with a space is printed quoted
-  # (the quote becomes part of the filename) — both let a secret through untouched while
-  # `git add -A` below still stages the real file. NUL-split covers exactly that set.
-  while IFS= read -r -d '' f; do
-    f="${f:3}"   # strip the two-char status + one space that -z still prefixes
-    if [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" >/dev/null 2>&1; then
-      hits="${hits:+$hits$'\n'}$f"
-    fi
-  done < <(git status --porcelain --untracked-files=all -z 2>/dev/null)
+  local hits
+  hits=$(porcelain_paths | while IFS= read -r f; do
+    [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" 2>/dev/null
+  done)
   if [ -n "$hits" ]; then
     warn "$1: possible secret in: $hits — NOT committed, NOT pushed. Remove it; the next turn backs up normally once it's gone."
     return 1
@@ -159,6 +169,14 @@ if is_repo_root "$CLAUDE_DIR"; then
     else
       warn "the commit in ~/.claude failed and the config is NOT backed up. git said: $(printf '%s' "$err" | head -2 | tr '\n' ' '). Tell the user plainly."
     fi
+  fi
+  # A clean tree with no NEW changes this turn still retries a push left over from a
+  # turn whose push failed (offline, remote rejected, etc.) — otherwise that commit
+  # sits local until the next dirty turn. `@{u}..HEAD` errors (exit nonzero, empty
+  # output) when there is no upstream; that is tolerated, not treated as an ahead count.
+  ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null)
+  if [ -n "$ahead" ] && [ "$ahead" -gt 0 ] 2>/dev/null; then
+    push_with_heal "config backup repo"
   fi
 elif git -C "$CLAUDE_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
   warn "~/.claude is not its own git repository — it sits inside a larger one ($(git -C "$CLAUDE_DIR" rev-parse --show-toplevel 2>/dev/null)). REFUSING to back up: committing from here would stage that whole repository, and the ~/.claude/.gitignore allowlist cannot protect files outside ~/.claude. Tell the user; they need ~/.claude to be its own repo."

@@ -8,6 +8,11 @@
 #   - whole-tree pathspecs: `git commit .` / `./` / `:/`
 # Passes: any commit that names its own paths, and a bare `git commit` when the index is
 # empty (there is nothing else it could sweep in).
+# Also passes, unconditionally: a commit run inside a linked git worktree (`git worktree
+# add`). A linked worktree has its own index, separate from the main checkout and every
+# other worktree, so nothing staged there can belong to another session — the whole
+# concern this guard exists for cannot arise. Judged per command segment, on the repo
+# that segment actually runs in (cwd, `cd`, or `git -C`).
 # Commit messages and heredoc bodies are stripped out before matching, so a message that
 # merely MENTIONS "-a" or "." is not refused.
 # Deliberate whole-index commit: start the command (or the segment after ; && |) with
@@ -41,6 +46,13 @@ repo=os.environ.get("CWD") or os.getcwd()
 def toks_of(seg):
     try: return shlex.split(seg, posix=True)
     except ValueError: return seg.split()
+def linked(r):
+    # A linked worktree has its own git-dir under <main>/.git/worktrees/<name>; the
+    # main checkout (or a plain, non-worktree repo) has git-dir == common-dir.
+    try:
+        o=subprocess.run(["git","-C",r,"rev-parse","--path-format=absolute","--git-dir","--git-common-dir"],capture_output=True,text=True,timeout=5).stdout.splitlines()
+        return len(o)>=2 and o[0].strip()!="" and os.path.realpath(o[0].strip())!=os.path.realpath(o[1].strip())
+    except Exception: return False
 for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
     seg=seg.strip().lstrip("(").strip()
     toks=toks_of(seg)
@@ -56,6 +68,7 @@ for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
         i+=1
     if i>=len(rest) or rest[i]!="commit": continue
     args=rest[i+1:]
+    if linked(seg_repo): continue   # own linked worktree: nothing else can be staged here
     if any(a in ("-a","--all") or (a.startswith("-") and not a.startswith("--") and "a" in a[1:] and a not in VALFLAGS) for a in args):
         print("REFUSE_ALL"); sys.exit(0)
     paths=[]; j=0; after_dd=False

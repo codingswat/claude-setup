@@ -8,6 +8,9 @@
 # this script (see hooks/heavy-suite.conf.example for the format: PATTERN='...' as an
 # extended regex, MAX_LOAD=10). No conf file: falls back to a built-in default matching
 # `npm test`, `npm run test`, `npm run e2e`, `vitest run`, `playwright test`, MAX_LOAD=10.
+# A bare `vitest`/`vitest run` or direct `playwright test` (no `npx`) that names no
+# specific test file is always treated as heavy too, on top of PATTERN — see the checks
+# below; this never narrows what PATTERN already refuses, only widens it.
 # Deliberate override: start the command (or the segment after ; && |) with `SUITE_OK=1 `.
 # Test seam: HEAVY_SUITE_LOAD_OVERRIDE=<load> stands in for the real `uptime` reading.
 # Both jq and python3 parse the command below; if either is missing this guard cannot
@@ -49,7 +52,18 @@ s=sys.stdin.read()
 s=re.sub(r"<<-?\s*[\x27\"]?(\w+)[\x27\"]?[^\n]*\n.*?\n\1(?=\n|$)", " HEREDOC ", s, flags=re.S)
 s=re.sub(r"(-m|--message)(=|\s+)(\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27)", r"\1 MSG", s, flags=re.S)
 sys.stdout.write(s)')"
-printf '%s' "$cmd" | grep -qE "$PATTERN" || exit 0
+heavy=0
+printf '%s' "$cmd" | grep -qE "$PATTERN" && heavy=1
+# Extra, always-on safety net alongside PATTERN (never narrower than it, only wider):
+# a bare `vitest`/`vitest run`, with or without `npx`, that does NOT name a specific
+# test file (no .ts/.tsx/.js/.mjs token) runs the whole suite even though PATTERN's own
+# vitest clause requires the word "run" — catch that case too. A command naming its own
+# test file stays exempt, matching the "targeted runs are never refused" contract above.
+if printf '%s' "$cmd" | grep -qE '(^|[;&| ])(npx +)?vitest( +run)?([ ;&|]|$)' \
+   && ! printf '%s' "$cmd" | grep -qE '\.(m?ts|tsx|m?js)([ ;&|]|$)'; then heavy=1; fi
+# `playwright test` run directly, without `npx`, is also a full suite.
+printf '%s' "$cmd" | grep -qE '(^|[;&| ])(npx +)?playwright +test([ ;&|]|$)' && heavy=1
+[ "$heavy" = 1 ] || exit 0
 
 # Portable 1-minute load: macOS has no /proc/loadavg, Linux has no `sysctl vm.loadavg`;
 # `uptime`'s wording (macOS "load averages:" vs Linux "load average:") is the last resort.

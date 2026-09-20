@@ -1,0 +1,12 @@
+# Copy to hooks/block-dangerous-git.conf (next to block-dangerous-git.sh) to turn on the
+# git-stash guard. One extended regex per line (grep -E), matched against
+# `git config remote.origin.url` for the repo a `git stash` command would run in. Blank
+# lines and lines starting with # are ignored.
+#
+# No file (or no match) means the stash guard never fires — the safe default for a
+# checkout only one session ever works in. Turn it on for a repo more than one session
+# (a pair, a second terminal, an agent and a human) shares at the same time: `git stash`
+# there hides EVERYONE's uncommitted work, not just the caller's.
+#
+# Example: guard stashes in a specific GitHub repo, matched on owner/name.
+yourname/your-shared-repo

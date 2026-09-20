@@ -18,6 +18,14 @@
 # Deliberate, approved run: start the command (or the segment after ; && |) with
 # `GITGUARD=1 ` — only that position counts, so the token inside a message or a quoted
 # argument does not disarm the guard.
+# Optional extra check, OFF by default: in a checkout shared by more than one session
+# (a shared dev box, a pair-programming worktree), `git stash` hides EVERY session's
+# uncommitted work, not just the caller's. List the repos where that applies in
+# hooks/block-dangerous-git.conf (see hooks/block-dangerous-git.conf.example) — one
+# substring/regex per line, matched against `git config remote.origin.url`. No file (or
+# no match) means this check never fires — the safe default for a solo checkout.
+# `git stash list`/`show` always pass, and a session alone in its own linked git
+# worktree is exempt (its stash cannot touch another worktree's files).
 # Both jq and python3 parse the command below; if either is missing this guard cannot
 # read what it's being asked to run, so it refuses rather than silently letting an
 # unparsed (and therefore unmatched) command through. Fail closed, like
@@ -72,4 +80,34 @@ for p in "${patterns[@]}"; do
     exit 2
   fi
 done
+
+# ---- optional: git stash guard for repos named in block-dangerous-git.conf ----
+STASH_CONF="$(dirname "$0")/block-dangerous-git.conf"
+if [ -s "$STASH_CONF" ]; then
+  # Match on a copy with every quoted string removed (a sentence that MENTIONS git
+  # stash is not a stash); `list`/`show` pass even when followed by ; & | or a newline.
+  cmdq="$(printf '%s' "$cmd" | sed -E "s/\"([^\"\\\\]|\\\\.)*\"/ Q /g; s/'[^']*'/ Q /g")"
+  if printf '%s' "$cmdq" | grep -qE "${W}git${G} +stash( |\$|[;&|)])" && ! printf '%s' "$cmdq" | grep -qE "${W}git${G} +stash +(list|show)( |\$|[;&|)])"; then
+    repo="$(printf '%s' "$input" | jq -r '.cwd // empty')"; [ -z "$repo" ] && repo="$PWD"
+    # The repo is the LAST `cd` before the stash (a leading "(" is ignored), or a
+    # `git -C` target, else the session cwd.
+    before="$(printf '%s' "$cmd" | sed -E 's/git( +-[^ ;&|]+( +[^-;&| ][^ ;&|]*)?)* +stash.*$//')"
+    cdpath="$(printf '%s' "$before" | grep -oE '(^|[;&|(] *)cd +("[^"]+"|[^ ;&|)]+)' | tail -1 | sed -E 's/^.*cd +//; s/^"//; s/"$//')"; [ -n "$cdpath" ] && repo="$cdpath"
+    cpath="$(printf '%s' "$cmd" | grep -oE "${W}git +-C +(\"[^\"]+\"|[^ ;&|]+)" | head -1 | sed -E 's/.*-C +//; s/^"//; s/"$//')"; [ -n "$cpath" ] && repo="$cpath"
+    # A linked worktree stashes only its own working directory — no other session's
+    # files are touched — so it is exempt regardless of what block-dangerous-git.conf lists.
+    gd="$(git -C "$repo" rev-parse --path-format=absolute --git-dir 2>/dev/null)"; gc="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    linked=0; if [ -n "$gd" ] && [ "$(cd "$gd" 2>/dev/null && pwd -P)" != "$(cd "$gc" 2>/dev/null && pwd -P)" ]; then linked=1; fi
+    if [ "$linked" = 0 ]; then
+      origin="$(git -C "$repo" config --get remote.origin.url 2>/dev/null)"
+      while IFS= read -r pat || [ -n "$pat" ]; do
+        case "$pat" in ''|'#'*) continue ;; esac
+        if printf '%s' "$origin" | grep -qE "$pat"; then
+          echo "block-dangerous-git: REFUSED — \`git stash\` in a checkout listed in block-dangerous-git.conf hides every session's uncommitted work, not just yours. Commit your own paths instead; \`git stash list\`/\`show\` are allowed. Deliberate, approved stash: GITGUARD=1 <command>" >&2
+          exit 2
+        fi
+      done < "$STASH_CONF"
+    fi
+  fi
+fi
 exit 0
