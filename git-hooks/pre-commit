@@ -9,6 +9,13 @@
 #       yours. A repo can also opt OUT explicitly (a work repo with its own author, on a
 #       machine that also runs a personal backup.conf): `git config --local hooks.identity
 #       false` skips this check silently, same as having no AUTHOR at all.
+#       WHAT THIS CHECK CANNOT SEE, stated plainly: a commit this hook never runs on. A
+#       `git rebase` replays commits without firing pre-commit or commit-msg on any of
+#       them, so `GIT_COMMITTER_NAME=… git rebase` writes whatever identity it likes; and
+#       `git commit --author="…"` sets an author the flag never puts into
+#       `git var GIT_AUTHOR_IDENT`, which is what is read here. Both are caught later, by
+#       git-hooks/pre-push, which re-checks the author AND committer of every commit a
+#       push would add. A `--amend` IS caught here, because it runs this hook.
 #   (2) a channel-file insertion ceiling — a shared file several people or sessions
 #       append to (running notes, a decision log, a changelog) should gain only a bounded
 #       number of lines per commit; a much bigger jump usually means two sessions' entries

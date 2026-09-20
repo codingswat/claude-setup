@@ -6,5 +6,9 @@
 # messages and heredoc bodies have been stripped out. MAX_LOAD is the 1-minute load
 # average (from `uptime`) at or above which the guard assumes a heavy suite is already
 # running elsewhere and refuses to start another one.
-PATTERN='(^|[;&| ])(npm +test|npm +run +(test|e2e)|npx +vitest +run|npx +playwright +test)([ ;&|]|$)'
+# The line below IS the guard's built-in default, written out so you can edit it: npm,
+# yarn and pnpm alike, any `run test:<something>` script, and vitest/playwright with or
+# without npx. Narrowing it is how a suite slips past the load check, so narrow on
+# purpose, never by accident.
+PATTERN='(^|[;&| ])(npm|yarn|pnpm) +(test|run +(test(:[A-Za-z0-9_.:-]+)?|e2e))([ ;&|]|$)|(^|[;&| ])(npx +)?(vitest +run|playwright +test)([ ;&|]|$)'
 MAX_LOAD=10

@@ -33,8 +33,10 @@
 # alternative, which made EVERY command holding a gate word a refusal).
 # No conf file: the built-in list alone applies.
 #
-# GATE_OK=1 at the START of the command passes and writes a ledger line via
-# override-ledger.sh, naming the rule it bypassed; if that line CANNOT be written (no
+# GATE_OK=1 at the start of the SEGMENT that would be refused passes and writes a ledger
+# line via override-ledger.sh, naming the rule it bypassed — `GATE_OK=1 npm test | tee
+# out.log` approves that run, `GATE_OK=1 true && npm test | tee out.log` approves only the
+# `true`; if that line CANNOT be written (no
 # ledger script, unwritable path) the override is REFUSED, not honoured.
 #
 # WHAT IT DOES WITHOUT ITS TOOLS. jq missing: fails CLOSED (exit 2) on input it cannot
@@ -77,7 +79,6 @@ if [ -f "$CONF" ]; then
 fi
 verdict="$(printf '%s' "$cmd" | GATE_EXTRA="$GATE_EXTRA" python3 -c "$GUARD_PY_COMMON"'
 s = clean(sys.stdin.read())
-override = "1" if override_at_start(blank_quoted(s), "GATE_OK") else "0"
 s = blank_quoted(s)
 gate = r"(?:(?:npx\s+)?(?:vitest|playwright|tsc)\b|npm\s+(?:run\s+)?(?:test(?::[\w-]+)?|typecheck)\b)"
 extra = [ln.strip() for ln in os.environ.get("GATE_EXTRA", "").split("\n") if ln.strip()]
@@ -88,16 +89,19 @@ cmdpos = r"(?:^|[;&|(]|\n)\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*"   # the gate
 seg = r"(?:[^|;&\n]|\d?>&\d)*"     # the gate arguments: 2>&1 allowed; && ; | end them
 query = re.compile(r"--(?:version|help|list)\b")
 s_flat = re.sub(r"\n", ";", s)     # a bare newline joins statements exactly like ; for rule (a)
-def out(v):
-    print(v + "\t" + override); sys.exit()
-for m in re.finditer(cmdpos + gate + seg, s_flat):
+def out(v, pos=None):
+    # The override counts only at the start of the SEGMENT that broke the rule: an
+    # earlier `GATE_OK=1 true &&` approves the true, not the gate that follows it.
+    over = "1" if (pos is not None and override_here(s_flat, "GATE_OK", pos)) else "0"
+    print(v + "\t" + over); sys.exit()
+for m in re.finditer("(?:" + cmdpos + ")(" + gate + seg + ")", s_flat):
     if query.search(m.group(0)):
         continue
     rest = s_flat[m.end():]
     if re.match(r"\|&?\s*(?:tee|tail|head|grep|wc|sed|awk|less|cut)\b", rest):
-        out("pipe")
+        out("pipe", m.start(1))
     if re.match(r";\s*(?:git\s+(?:commit|push)\b|echo\s+READY\b)", rest):
-        out("semicolon")
+        out("semicolon", m.start(1))
 for m in re.finditer(r"\b(?:while|until|for)\b(.*?)(?:;|\bdo\b)", s_flat):
     cond = m.group(1)
     if re.search(r"\b(?:curl|nc|kill\s+-0|pgrep|lsof)\b", cond):
@@ -108,9 +112,10 @@ for m in re.finditer(r"\b(?:while|until|for)\b(.*?)(?:;|\bdo\b)", s_flat):
         body = body[:k]
     both = cond + " " + body
     if re.search(r"\bsleep\b", both) and re.search(r"\b(?:grep|tail)\b", both):
-        out("waiter")
+        out("waiter", m.start())
 out("ok")
-' 2>/dev/null)" || verdict="parse-error"
+' 2>/dev/null)"
+guard_parsed "gate-guard" python3 $? "$verdict" "$cmd"
 rule="${verdict%%$'\t'*}"; over="${verdict##*$'\t'}"
 if [ "$over" = 1 ]; then
   guard_log_override GATE_OK "$cmd" "$rule" || { guard_refuse_unrecorded "gate-guard" "GATE_OK=1"; exit 2; }

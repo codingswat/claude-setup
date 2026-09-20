@@ -1,6 +1,23 @@
 #!/bin/bash
 # Fires on every `git push` from a machine that has this registered (global
-# core.hooksPath). When the repo root's package.json has a "typecheck" script, every
+# core.hooksPath). Two checks, in this order:
+#
+# (1) IDENTITY of every commit being pushed — the author AND the committer of each commit
+#     in <what the remote has>..<what you are pushing>, for every ref in the push. This is
+#     where a REBASE is caught: `git rebase` replays commits without running pre-commit or
+#     commit-msg on any of them, so `GIT_COMMITTER_NAME=Claude git rebase main mybranch`
+#     wrote an AI committer into every replayed commit and nothing saw it until now (a
+#     `--amend` is caught earlier, by pre-commit). `git commit --author="…"` is the same
+#     hole on the author side: the flag never reaches `git var GIT_AUTHOR_IDENT`, which is
+#     what pre-commit reads.
+#     Refused unconditionally: an author or committer naming Claude or Anthropic — pushed
+#     history must read as your own work. Refused when configured: an identity that does
+#     not match AUTHOR= in ~/.claude/hooks/backup.conf, the same setting and the same
+#     per-repo opt-out (`git config --local hooks.identity false`) git-hooks/pre-commit
+#     uses. No AUTHOR line, or the opt-out: only the Claude/Anthropic half applies.
+#     A commit already on the remote is never re-judged — only what this push adds.
+#
+# (2) TYPE-CHECK. When the repo root's package.json has a "typecheck" script, every
 # commit being pushed (the local sha of each ref on stdin; deletions skipped) is exported
 # CLEAN into a temp folder (`git archive`) — with the pushed repo's OWN `node_modules`
 # (from the working tree you're pushing from, never committed) symlinked into that export
@@ -22,13 +39,56 @@
 # THAT repo; otherwise it says so and does nothing.
 # Tests: hooks/test-hooks.sh.
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+refs="$(cat)"          # <local ref> <local sha> <remote ref> <remote sha>, one line per ref
+
+# ---- (1) the identity of every commit this push would add ----
+ident_conf=""
+if [ "$(git -C "$root" config --local --get hooks.identity 2>/dev/null)" != "false" ] && [ -f "$HOME/.claude/hooks/backup.conf" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in AUTHOR=*) ident_conf="${line#AUTHOR=}" ;; esac
+  done < "$HOME/.claude/hooks/backup.conf"
+fi
+judge() {   # $1 sha, $2 role, $3 identity
+  if printf '%s' "$3" | grep -qiE 'claude|anthropic'; then
+    echo "pre-push hook: REFUSED — commit ${1:0:7} has a $2 naming Claude/Anthropic: ${3%% <*}." >&2
+    echo "  A rebase replays commits without running pre-commit or commit-msg on any of them, and the \`--author=\` flag never reaches the author check either — this is where both are caught." >&2
+    echo "  Rewrite with your own identity, e.g.: git rebase -i --exec \"git commit --amend --no-edit --reset-author\" <base>   (gap: --no-verify skips this hook; do not use it.)" >&2
+    exit 1
+  fi
+  if [ -n "$ident_conf" ]; then
+    case "$3" in
+      "$ident_conf"*) ;;
+      *) echo "pre-push hook: REFUSED — the $2 of commit ${1:0:7} does not match hooks/backup.conf." >&2
+         echo "  want: $ident_conf" >&2
+         echo "  got:  ${3%% <*} <...>" >&2
+         echo "  Per-repo opt-out: git config --local hooks.identity false   (gap: --no-verify skips this hook.)" >&2
+         exit 1 ;;
+    esac
+  fi
+}
+while read -r _lref lsha _rref rsha; do
+  case "$lsha" in ''|*[!0-9a-fA-F]*) continue ;; esac     # not a sha: nothing to judge
+  case "$lsha" in *[!0]*) ;; *) continue ;; esac          # all zeros: a deletion
+  if [ -z "$rsha" ] || [ -z "${rsha//0/}" ]; then
+    range=("$lsha" --not --remotes)                       # a new ref: everything not pushed yet
+  else
+    range=("$rsha..$lsha")                                # only what this push adds
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    sha="${line%%|*}"; who="${line#*|}"
+    judge "$sha" "${who%%|*}" "${who#*|}"
+  done <<<"$(git -C "$root" log --format="%H|author|%an <%ae>%n%H|committer|%cn <%ce>" "${range[@]}" 2>/dev/null)"
+done <<<"$refs"
+
+# ---- (2) the type-check of every commit being pushed ----
 if [ "$(git -C "$root" config --local --get hooks.typecheck 2>/dev/null)" != "true" ]; then
   echo "pre-push: type-check skipped — opt in per repo with: git config hooks.typecheck true" >&2
   exit 0
 fi
 [ -f "$root/package.json" ] || exit 0
 jq -e '.scripts.typecheck' "$root/package.json" >/dev/null 2>&1 || exit 0
-shas="$(awk '$2 != "" && $2 !~ /^0+$/ {print $2}' | sort -u)"   # the local sha of every ref on stdin; deletions (all-zero) skipped
+shas="$(printf '%s\n' "$refs" | awk '$2 != "" && $2 !~ /^0+$/ {print $2}' | sort -u)"   # the local sha of every ref pushed; deletions (all-zero) skipped
 [ -z "$shas" ] && exit 0
 for sha in $shas; do
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/push-check.XXXXXX")" || exit 1

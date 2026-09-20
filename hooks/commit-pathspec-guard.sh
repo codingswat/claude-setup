@@ -15,6 +15,8 @@
 #     (only the shell can expand that target), or a path that is no git repository. The
 #     whole guard reads that folder's index, so an unknown folder means an unjudged commit
 #   - `--pathspec-from-file=<list>` whose list cannot be read (missing, or `-` for stdin).
+#     A list holding a NUL byte is read as the NUL-separated list it can only be (that
+#     byte used to reach os.path and crash this guard open, which passed the commit).
 #     A readable list is EXPANDED, so the paths inside it face the same whole-tree and
 #     provenance checks as paths typed on the command line — otherwise a one-line file
 #     saying `.` was a sweep in disguise
@@ -33,9 +35,10 @@
 # is not refused; `bash|sh|zsh -c "…"` and `eval "…"` are unwrapped first, so
 # `sh -c "git commit -a -m sweep"` is judged as the sweep it is rather than as an
 # unreadable string; tabs, escaped newlines and stray backslashes become plain spaces.
-# Deliberate whole-index or reconciled commit: start the command (or the segment after
-# ; && |) with `SWEEP=1 ` — only that position counts, judged on text with quoted strings
-# removed. Every use is written to hooks/override-ledger.sh with the refusal it bypassed;
+# Deliberate whole-index or reconciled commit: start the COMMIT'S OWN segment with
+# `SWEEP=1 ` — `echo x && SWEEP=1 git commit -m x` carries the index deliberately, while
+# `git commit -a -m x && SWEEP=1 true` approves only the `true` and the sweep is still
+# refused. Judged on text with quoted strings removed. Every use is written to hooks/override-ledger.sh with the refusal it bypassed;
 # if that line CANNOT be written (no ledger script, unwritable path) the override is
 # REFUSED, not honoured.
 # jq, python3 and hooks/guard-lib.sh all parse the command below; if any is missing this
@@ -76,9 +79,11 @@ verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" python3 -c 
 import subprocess, shlex
 raw = sys.stdin.read()
 s = clean(raw)
-# override: only at the start of a command segment, judged on text with every quoted string removed
 unq = blank_quoted(s)
-sweep = re.search(r"(^|[;&|\n] *)SWEEP=1 ", unq, flags=re.M) is not None
+# The override is read per SEGMENT (below): SWEEP=1 waives the refusal of the segment it
+# stands at the start of, never of a segment somewhere else on the same line.
+cur_sweep = False
+commit_sweep = False
 def log_override(reason):
     ledger = os.path.join(os.environ.get("HOOKDIR", ""), "override-ledger.sh")
     if not os.path.isfile(ledger):
@@ -89,7 +94,7 @@ def log_override(reason):
         return 1
 def finish(v):
     # With SWEEP=1 the refusal is waived — but only once the ledger line is on disk.
-    if sweep:
+    if cur_sweep:
         if log_override(v) != 0:
             print("REFUSE_LEDGER")
         else:
@@ -115,10 +120,6 @@ def linked(r):
 def toplevel(r):
     t=git_out(r,"rev-parse","--show-toplevel").strip()
     return os.path.realpath(t) if t else None
-# A git binary produced by substitution cannot be matched by any pattern, so it is not
-# read as a commit it can hide behind: refuse and ask for a plain `git`.
-if has_substituted_git(unq) and not linked(repo):
-    finish("REFUSE_SUBST")
 UNRESOLVABLE=("$", "`", "*", "?")
 def read_pathspec_file(where, name, nul):
     """The paths inside a --pathspec-from-file list, or None when it cannot be read —
@@ -131,13 +132,25 @@ def read_pathspec_file(where, name, nul):
             data = fh.read()
     except Exception:
         return None
+    # A NUL inside the list can only be a NUL-separated list (the
+    # --pathspec-file-nul format that git itself writes): read as lines it leaves a NUL
+    # inside a path, and a path with a NUL raises out of os.path — which used to kill
+    # this guard and let the commit through unjudged.
+    if b"\0" in data:
+        nul = True
     sep = b"\0" if nul else b"\n"
-    return [x.decode("utf-8", "replace").strip() for x in data.split(sep) if x.strip()]
+    return [x.decode("utf-8", "replace").replace("\0", "").strip() for x in data.split(sep) if x.strip()]
 out=[]
-for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
+for seg in segments(s):
     seg=seg.strip().lstrip("(").strip()
+    cur_sweep = override_at_start(blank_quoted(seg), "SWEEP")
     toks=toks_of(seg)
     if not toks: continue
+    # A git binary produced by a substitution or held in a variable cannot be matched by
+    # any pattern, so it is not read as a commit it can hide behind: refuse and ask for a
+    # plain `git`.
+    if has_substituted_git(blank_quoted(seg)) and not (repo and linked(repo)):
+        finish("REFUSE_SUBST")
     if toks[0]=="cd" and len(toks)>1:
         t=toks[1]
         if any(ch in t for ch in UNRESOLVABLE):
@@ -151,6 +164,7 @@ for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
         if rest[i]=="-c" and i+1<len(rest): i+=2; continue
         i+=1
     if i>=len(rest) or rest[i]!="commit": continue
+    if cur_sweep: commit_sweep = True
     args=rest[i+1:]
     # The whole guard reads the repo this commit runs in. If that folder cannot be worked
     # out — an unresolvable `cd`, or a path that is no git repo — nothing below can be
@@ -189,9 +203,11 @@ for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", s):
     st=git_out(seg_repo,"diff","--cached","--name-only").strip()
     if st:
         finish("REFUSE_INDEX:"+st.replace("\n",", "))
-if sweep:
+if commit_sweep:
+    cur_sweep = True
     finish("nothing refused, the whole index carried deliberately")
 print("\n".join(out) if out else "OK")')"
+guard_parsed "commit-pathspec-guard" python3 $? "$verdict" "$cmd"
 case "$verdict" in
   OK) exit 0 ;;
   REFUSE_LEDGER)

@@ -43,7 +43,9 @@ brings Node, so this is almost always satisfied.
 Three `PreToolUse` guards (`block-dangerous-git.sh`, `commit-pathspec-guard.sh`,
 `heavy-suite-guard.sh`) additionally need `jq` **and** `python3` on `PATH` — they read the
 tool call with one and normalise the command with the other, and fail CLOSED (refuse
-everything) if either is missing. So the installer registers those three only when **both**
+everything) if either is missing, or if either is installed but **broken**: a parser that
+runs and returns nothing leaves the guard with an empty command, which matches no pattern,
+so an unreadable command is refused rather than waved through. So the installer registers those three only when **both**
 are present, with a warning naming what to install. The size pair (`channel-size-guard.sh`
 and its `PostToolUse` half `channel-size-post.sh`) needs `jq` alone and is registered
 whenever `jq` is there; without `jq` both are inert, so neither is registered. A fifth, `gate-guard.sh`, is different: it degrades safely with no `jq` (a cruder
@@ -104,6 +106,10 @@ cp -Rn skills/. ~/.claude/skills/
 # Two files you personalise — copy only if you don't already have them:
 [ -f ~/.claude/hooks/owner-card.md ]    || cp hooks/owner-card.md ~/.claude/hooks/owner-card.md
 [ -f ~/.claude/hooks/heavy-suite.conf ] || cp hooks/heavy-suite.conf.example ~/.claude/hooks/heavy-suite.conf
+# Upgrading, and you already have a heavy-suite.conf copied from an older example? Its
+# PATTERN missed `yarn test`, `pnpm test` and `npm run test:<name>`. Diff it against
+# hooks/heavy-suite.conf.example (whose PATTERN is now exactly the guard's built-in
+# default) and widen yours, or delete yours to fall back to the built-in.
 
 # Five more .conf.example files — copied as EXAMPLES only, next to their hooks. Each
 # matching guard stays inert until you copy one to its live name yourself:
@@ -403,9 +409,18 @@ This makes `commit-msg`, `pre-commit`, `pre-merge-commit` and `pre-push` (copied
 run in **every repository on this machine** — and it **replaces any hooks that repo already has** in its own
 `.git/hooks/`, silently. That's the sharp edge: only do this if you want it everywhere.
 
-`pre-push` will not type-check a repo unless that repo opts in: without it, a pushed repo's
-own `package.json` would otherwise run whatever its `scripts.typecheck` says on your machine,
-just because you cloned or forked it. Opt in per repo with:
+`pre-push` checks two things. First, the **identity** of every commit the push would add —
+author and committer alike. This is where a `git rebase` is caught: a rebase replays commits
+without running `pre-commit` or `commit-msg` on any of them, so `GIT_COMMITTER_NAME=… git
+rebase` (and `git commit --author="…"`, which never reaches the author check either) used to
+reach the remote unseen. An author or committer naming Claude/Anthropic is refused always;
+matching `AUTHOR=` in `hooks/backup.conf` is required only when that line exists, with the
+same per-repo opt-out as `pre-commit` (`git config --local hooks.identity false`). Only what
+the push ADDS is judged, never history the remote already has.
+
+Second, the type-check — and that one will not run in a repo unless the repo opts in: without
+it, a pushed repo's own `package.json` would otherwise run whatever its `scripts.typecheck`
+says on your machine, just because you cloned or forked it. Opt in per repo with:
 
 ```bash
 git config --local hooks.typecheck true

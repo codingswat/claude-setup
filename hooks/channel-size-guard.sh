@@ -29,8 +29,9 @@
 # The file name is matched with a word boundary on BOTH sides, so `RELEASE-NOTES.md` is
 # not a `NOTES.md`.
 # Write/Edit/MultiEdit are judged on the content the tool is about to write.
-# Growth is measured in the band's OWN unit (words via `wc -w`, lines via `wc -l`), never
-# bytes; a relative Bash path is resolved against the hook JSON's `.cwd` when given, and
+# Growth is measured in the band's OWN unit — words via `wc -w`, lines via `wc -l`, bytes
+# via `wc -c` (a `bytes` band is the exact ceiling hooks/channel-size-post.sh also reads;
+# without one it derives a generous byte bound from the words/lines stop); a relative Bash path is resolved against the hook JSON's `.cwd` when given, and
 # left unchecked (noted, not refused) when `.cwd` is absent, rather than refused on a guess;
 # the basename compare is case-insensitive.
 # Tests: hooks/test-hooks.sh (sections 22 and 29).
@@ -58,8 +59,15 @@ all_watched_basenames() { # every basename channel-ceiling.conf gives a unit/ban
     [ -n "$2" ] && [ -n "$3" ] && [ -n "$4" ] && printf '%s\n' "${1##*/}"
   done < "$CONF" | sort -u
 }
-measure() { [ -f "$2" ] || { echo 0; return; }; if [ "$1" = words ]; then wc -w < "$2" | tr -d ' '; else wc -l < "$2" | tr -d ' '; fi; }
-count_str() { if [ "$1" = words ]; then printf '%s' "$2" | wc -w | tr -d ' '; else printf '%s' "$2" | wc -l | tr -d ' '; fi; }
+# A band names its own unit: words, lines, or bytes. `bytes` used to fall through to the
+# line count here, so a byte hard stop measured the wrong quantity and never refused —
+# hooks/channel-size-post.sh honoured it and this hook did not.
+measure() { [ -f "$2" ] || { echo 0; return; }
+  case "$1" in words) wc -w < "$2" | tr -d ' ' ;; bytes) wc -c < "$2" | tr -d ' ' ;; *) wc -l < "$2" | tr -d ' ' ;; esac; }
+count_str() { case "$1" in
+    words) printf '%s' "$2" | wc -w | tr -d ' ' ;;
+    bytes) printf '%s' "$2" | wc -c | tr -d ' ' ;;
+    *)     printf '%s' "$2" | wc -l | tr -d ' ' ;; esac; }
 refuse() { echo "channel-size-guard: REFUSED — $1 is over its HARD STOP ($2 $3, stop $4). Only a shrinking edit (a sweep) may touch it now." >&2; exit 2; }
 warn()   { echo "channel-size-guard: NOTE — $1 is over its band ($2 $3, band $4): the edit is allowed; sweep it to an archive soon." >&2; }
 
@@ -75,7 +83,9 @@ case "$tool" in
       [ -z "$unit" ] && continue
       cur="$(measure "$unit" "$f")"
       if [ "$tool" = Write ]; then
-        wnew="$(printf '%s' "$input" | jq -r '.tool_input.content' | { if [ "$unit" = words ]; then wc -w; else wc -l; fi; } | tr -d ' ')"
+        # if/elif, not a case: bash 3.2 (the macOS system bash) misparses a case pattern
+        # inside $( … ) and the count came back as the script text itself.
+        wnew="$(printf '%s' "$input" | jq -r '.tool_input.content' | { if [ "$unit" = words ]; then wc -w; elif [ "$unit" = bytes ]; then wc -c; else wc -l; fi; } | tr -d ' ')"
         # judged on the LARGER of the file's current size and the content about to be
         # written — a small write onto a big file (a genuine sweep) still passes.
         [ "$wnew" -gt "$cur" ] && cur="$wnew"

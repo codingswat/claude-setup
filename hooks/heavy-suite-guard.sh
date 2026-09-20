@@ -22,9 +22,12 @@
 # extended regex, MAX_LOAD=10); a conf saved with Windows line endings (CRLF) is read the
 # same as a Unix one — a stray carriage return used to leave PATTERN unmatchable, which
 # silently disabled the guard. No conf file: the built-in default above applies.
-# Deliberate override: start the command with `SUITE_OK=1 ` — the START only, judged on
-# text with quoted strings removed, so the word inside a commit message can no longer
-# disarm the guard. Every use is written to hooks/override-ledger.sh; if that line CANNOT
+# Deliberate override: start the SEGMENT that would be refused with `SUITE_OK=1 ` —
+# `cd apps/web && SUITE_OK=1 npm test` approves that run, while `SUITE_OK=1 true && npm
+# test` approves only the `true`. Judged on text with quoted strings removed, so the word
+# inside a commit message can no longer disarm the guard. A command word hidden in a
+# variable (`T=npm; $T test`) is judged by its arguments, with `npm` standing in for the
+# name the guard cannot see. Every use is written to hooks/override-ledger.sh; if that line CANNOT
 # be written (no ledger script, unwritable path) the override is REFUSED, not honoured.
 # Test seam: HEAVY_SUITE_LOAD_OVERRIDE=<load> stands in for the real `uptime` reading.
 # jq, python3 and hooks/guard-lib.sh all parse the command below; if any is missing this
@@ -47,7 +50,9 @@ fi
 . "$GUARD_LIB"
 input="$(cat)"
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
+guard_parsed "heavy-suite-guard" jq $? "$cmd" ""      # a jq that runs but fails reads nothing
 [ -z "$cmd" ] && exit 0
+rawcmd="$cmd"
 
 CONF="$(dirname "$0")/heavy-suite.conf"
 PATTERN='(^|[;&| ])(npm|yarn|pnpm) +(test|run +(test(:[A-Za-z0-9_.:-]+)?|e2e))([ ;&|]|$)|(^|[;&| ])(npx +)?(vitest +run|playwright +test)([ ;&|]|$)'
@@ -63,11 +68,20 @@ if [ -f "$CONF" ]; then
   done < "$CONF"
 fi
 
-# The matching copy: messages and heredocs dropped, wrappers unwrapped, whitespace
-# normalised, quoted text blanked, redirections turned into separators.
-cmd="$(printf '%s' "$cmd" | python3 -c "$GUARD_PY_COMMON"'
+# One record per command segment — messages and heredocs dropped, wrappers unwrapped,
+# whitespace (and `${IFS}`) normalised, quoted text blanked, redirections turned into
+# separators — as: <override at the start of THIS segment 0|1> TAB <segment> TAB <the same
+# segment with a hidden command word replaced by `npm`>.
+segrecs="$(printf '%s' "$cmd" | python3 -c "$GUARD_PY_COMMON"'
 s = blank_quoted(clean(sys.stdin.read()))
-sys.stdout.write(re.sub(r"[<>]", " ", s))')"
+s = re.sub(r"[<>]", " ", s)
+out=[]
+for seg in segments(s):
+    seg = seg.replace("\n", " ")
+    flag = "1" if override_at_start(seg, "SUITE_OK") else "0"
+    out.append(flag + "\t" + seg + "\t" + hidden_cmdword(seg, "npm"))
+sys.stdout.write("\n".join(out))')"
+guard_parsed "heavy-suite-guard" python3 $? "$segrecs" "$rawcmd"
 
 targeted() {   # a single-file run, one named test, or a --version/--list/--help query
   printf '%s' "$1" | grep -qE '(^| )[^ ]+\.(test|spec)\.[A-Za-z0-9]+( |$)' && return 0
@@ -75,24 +89,31 @@ targeted() {   # a single-file run, one named test, or a --version/--list/--help
   printf '%s' "$1" | grep -qE '(^| )(--version|--list|--help)( |$)' && return 0
   return 1
 }
-heavy=0
-while IFS= read -r seg; do
-  [ -n "$seg" ] || continue
-  targeted "$seg" && continue
-  printf '%s' "$seg" | grep -qE "$PATTERN" && { heavy=1; break; }
+is_heavy() {   # $1 a segment: PATTERN, then the always-on safety net beside it
+  printf '%s' "$1" | grep -qE "$PATTERN" && return 0
   # Always-on safety net alongside PATTERN (never narrower, only wider): a bare
   # `vitest`/`npx vitest` naming no test file still runs the whole suite.
-  printf '%s' "$seg" | grep -qE '(^|[;&| ])(npx +)?vitest( +run)?([ ;&|]|$)' && { heavy=1; break; }
-  printf '%s' "$seg" | grep -qE '(^|[;&| ])(npx +)?playwright +test([ ;&|]|$)' && { heavy=1; break; }
-done <<< "$(printf '%s' "$cmd" | tr ';&|\n' '\n\n\n\n')"
+  printf '%s' "$1" | grep -qE '(^|[;&| ])(npx +)?vitest( +run)?([ ;&|]|$)' && return 0
+  printf '%s' "$1" | grep -qE '(^|[;&| ])(npx +)?playwright +test([ ;&|]|$)' && return 0
+  return 1
+}
+heavy=0
+while IFS=$'\t' read -r flag seg sseg; do
+  [ -n "$flag" ] || continue
+  targeted "$seg" && continue
+  hit=0
+  is_heavy "$seg" && hit=1
+  [ "$hit" = 0 ] && [ "$sseg" != "$seg" ] && is_heavy "$sseg" && hit=1
+  if [ "$flag" = 1 ]; then
+    # An approved segment, recorded with what it bypassed — logged whether or not this
+    # segment is the heavy one, so every use of the word leaves a line.
+    guard_log_override SUITE_OK "$rawcmd" "heavy suite, load check skipped" \
+      || { guard_refuse_unrecorded "heavy-suite-guard" "SUITE_OK=1"; exit 2; }
+    continue
+  fi
+  [ "$hit" = 1 ] && { heavy=1; break; }
+done <<<"$segrecs"
 
-# An approved override, recorded with what it bypassed.
-if printf '%s' "$cmd" | python3 -c "$GUARD_PY_COMMON"'
-sys.exit(0 if override_at_start(sys.stdin.read(), "SUITE_OK") else 1)'; then
-  guard_log_override SUITE_OK "$(printf '%s' "$input" | jq -r '.tool_input.command // empty')" "heavy suite, load check skipped" \
-    || { guard_refuse_unrecorded "heavy-suite-guard" "SUITE_OK=1"; exit 2; }
-  exit 0
-fi
 [ "$heavy" = 1 ] || exit 0
 
 # Portable 1-minute load: macOS has no /proc/loadavg, Linux has no `sysctl vm.loadavg`;

@@ -1412,6 +1412,141 @@ if grep -q 'gate-guard.sh' "$IH2/.claude/settings.json" 2>/dev/null; then ok; el
 pass_n=$((pass_n+1))
 
 
+echo "30 blind-attacker findings (part 3): the parsers, the IFS spelling, per-segment overrides"
+REPO30="$(cd "$HOOKS_DIR/.." && pwd -P)"
+r30="$T/h30-commit"; mkdir -p "$r30"; git -C "$r30" init -q -b main; git -C "$r30" config core.hooksPath /dev/null
+echo a > "$r30/a.txt"; git -C "$r30" add -A; "${ID[@]}" git -C "$r30" commit -q -m init
+echo b > "$r30/b.txt"; git -C "$r30" add b.txt      # another session's staged file
+jb30() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$1" "$2"; }
+# ex30 <refuse|pass> <want> <label> <command> [runner...]  (default runner: commit-pathspec-guard)
+ex30() { local kind="$1" want="$2" label="$3" c="$4"; shift 4
+  if [ "$#" = 0 ]; then set -- bash "$HOOKS_DIR/commit-pathspec-guard.sh"; fi
+  jb30 "$c" "$r30" | "$@" >/dev/null 2>&1; local got=$?
+  if [ "$got" = "$want" ]; then ok; else bad "$label (wanted exit $want, got $got)"; fi
+  if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+
+# --- D1 a parser that EXISTS but fails: the substitution is empty, the guard must REFUSE -
+PYBAD30="$T/h30-badpy"; mkdir -p "$PYBAD30"
+printf '#!/bin/sh\nexit 1\n' > "$PYBAD30/python3"; chmod +x "$PYBAD30/python3"
+PYQ30="$T/h30-quietpy"; mkdir -p "$PYQ30"
+printf '#!/bin/sh\nexit 0\n' > "$PYQ30/python3"; chmod +x "$PYQ30/python3"
+INPUT="$(json_bash 'git reset --hard')"
+expect refuse 2 "D1 python3 present but failing: block-dangerous-git must REFUSE" env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
+expect refuse 2 "D1 a python3 that exits 0 printing nothing must REFUSE too" env PATH="$PYQ30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
+err30="$(printf '%s' "$INPUT" | env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh" 2>&1 1>/dev/null)"
+if printf '%s' "$err30" | grep -qi 'parse'; then ok; else bad "D1 the refusal must say the guard could not parse its input (got: '$err30')"; fi
+refuse_n=$((refuse_n+1))
+INPUT="$(json_bash 'npm test')"
+expect refuse 2 "D1 python3 present but failing: heavy-suite-guard must REFUSE" env PATH="$PYBAD30:$PATH" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+ex30 refuse 2 "D1 python3 present but failing: commit-pathspec-guard must REFUSE" 'git commit --all -m x' env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+ex30 refuse 2 "D1 a silent python3 must not let a sweep through either" 'git commit --all -m x' env PATH="$PYQ30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log')"
+expect refuse 2 "D1 gate-guard with a failing python3 stays closed" env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'git status')"; expect pass 0 "D1 pair: with a working python3 a safe git command passes" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'ls')"; expect pass 0 "D1 pair: heavy-suite-guard still allows an ordinary command" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+ex30 pass 0 "D1 pair: a named-path commit still passes" 'git commit b.txt -m x'
+
+# --- D2 ${IFS} as a word separator, and a command word hidden in a variable -------------
+for c in 'git${IFS}reset${IFS}--hard' 'git $IFS reset --hard' 'GIT=git; $GIT reset --hard' 'G=git; ${G} push --force origin main'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "D2 must refuse: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+for c in 'git${IFS}status' 'echo "${IFS}"' 'W=x; $W/bin/lint.sh --fix' 'git status && echo ok'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "D2 pair, must allow: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+ex30 refuse 2 "D2 a commit --all spelled with \${IFS} must be refused" 'git${IFS}commit${IFS}--all -m x'
+ex30 refuse 2 "D2 a commit whose git comes from a variable must be refused" 'G=git; $G commit --all -m x'
+ex30 pass 0 "D2 pair: a substituted binary that does not commit still passes" '$(which git) status'
+ex30 pass 0 "D2 pair: a variable-named tool that does not commit passes" 'W=x; $W/bin/lint.sh --fix'
+for c in 'npm${IFS}test' 'T=npm; $T test'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "D2 load 25 must refuse: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"; done
+for c in 'npm${IFS}run${IFS}typecheck' 'W=x; $W/bin/lint.sh --fix'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "D2 pair, load 25 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"; done
+INPUT="$(json_bash 'npx${IFS}tsc${IFS}--noEmit | head')"
+expect refuse 2 "D2 gate-guard: a gate spelled with \${IFS} piped into a reader must refuse" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'npx${IFS}tsc${IFS}--noEmit && git commit -m x f.ts')"
+expect pass 0 "D2 pair: the same gate joined with && must pass" bash "$HOOKS_DIR/gate-guard.sh"
+
+# --- D3 the override must stand at the start of the SAME segment that matched -----------
+OL30="$T/h30-ovl.tsv"
+for c in 'git push --force && GITGUARD=1 true' 'git push --force; GITGUARD=1 true' 'git reset --hard
+GITGUARD=1 true'; do
+  rm -f "$OL30"; INPUT="$(json_bash "$c")"
+  expect refuse 2 "D3 an override on a LATER segment must not disarm: $c" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+rm -f "$OL30"; INPUT="$(json_bash 'echo start && GITGUARD=1 git reset --hard')"
+expect pass 0 "D3 pair: the override at the start of the matched segment still passes" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/block-dangerous-git.sh"
+if [ -f "$OL30" ]; then ok; else bad "D3 pair: that honoured override must still write its ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$OL30"; INPUT="$(json_bash 'GITGUARD=1 git reset --hard')"
+expect pass 0 "D3 pair: the override at the start of the command still passes" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/block-dangerous-git.sh"
+rm -f "$OL30"
+ex30 refuse 2 "D3 SWEEP on a later segment must not disarm the sweep refusal" 'git commit -a -m x && SWEEP=1 true' env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+ex30 pass 0 "D3 pair: SWEEP at the start of the commit's own segment passes" 'echo start && SWEEP=1 git commit -m x' env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+rm -f "$OL30"; INPUT="$(json_bash 'SUITE_OK=1 true && npm test')"
+expect refuse 2 "D3 SUITE_OK on another segment must not disarm the load guard" env OVERRIDE_LEDGER="$OL30" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+rm -f "$OL30"; INPUT="$(json_bash 'cd apps/web && SUITE_OK=1 npm test')"
+expect pass 0 "D3 pair: SUITE_OK on the heavy segment itself passes" env OVERRIDE_LEDGER="$OL30" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+rm -f "$OL30"; INPUT="$(json_bash 'GATE_OK=1 true && npm test | tee out.log')"
+expect refuse 2 "D3 GATE_OK on another segment must not disarm gate-guard" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/gate-guard.sh"
+rm -f "$OL30"; INPUT="$(json_bash 'GATE_OK=1 npm test | tee out.log')"
+expect pass 0 "D3 pair: GATE_OK on the gate's own segment still passes" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/gate-guard.sh"
+
+# --- D4 a NUL byte inside a --pathspec-from-file list ----------------------------------
+python3 -c 'import sys;open(sys.argv[1],"wb").write(b"b.txt\x00.\x00")' "$r30/nul-list.txt"
+ex30 refuse 2 "D4 a NUL-separated list naming the whole tree must be REFUSED, not crash open" 'git commit --pathspec-from-file=nul-list.txt -m x'
+python3 -c 'import sys;open(sys.argv[1],"wb").write(b"b.txt\x00")' "$r30/nul-ok.txt"
+ex30 pass 0 "D4 pair: a NUL-separated list naming one file passes" 'git commit --pathspec-from-file=nul-ok.txt -m x'
+printf 'b.txt\n' > "$r30/plain-list.txt"
+ex30 pass 0 "D4 pair: a plain newline list naming one file still passes" 'git commit --pathspec-from-file=plain-list.txt -m x'
+
+# --- D5 git-hooks/pre-push: the identity of every commit being pushed -------------------
+AN_DOM30="$(printf '%s%s' anthro pic).com"   # built at runtime: no literal address in this file
+CLA30="noreply@$AN_DOM30"
+mkrepo idreb ""
+git -C "$T/idreb" push -q origin main 2>/dev/null
+git -C "$T/idreb" checkout -q -b rb; echo x > "$T/idreb/rb.txt"; git -C "$T/idreb" add -A; "${ID[@]}" git -C "$T/idreb" commit -q -m rb
+git -C "$T/idreb" checkout -q main; echo y > "$T/idreb/y.txt"; git -C "$T/idreb" add -A; "${ID[@]}" git -C "$T/idreb" commit -q -m main2
+git -C "$T/idreb" push -q origin main 2>/dev/null
+env GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com GIT_COMMITTER_NAME=Claude GIT_COMMITTER_EMAIL="$CLA30" git -C "$T/idreb" rebase -q main rb >/dev/null 2>&1
+if git -C "$T/idreb" push -q origin rb 2>/dev/null; then bad "D5 a rebase that wrote a Claude COMMITTER must be refused at push"; else ok; fi
+refuse_n=$((refuse_n+1))
+pperr30="$(git -C "$T/idreb" push origin rb 2>&1 1>/dev/null)"
+if printf '%s' "$pperr30" | grep -qi 'committer\|identity'; then ok; else bad "D5 the refusal must name the identity it found (got: $pperr30)"; fi
+refuse_n=$((refuse_n+1))
+mkrepo idreb2 ""
+git -C "$T/idreb2" push -q origin main 2>/dev/null
+git -C "$T/idreb2" checkout -q -b rb2; echo x > "$T/idreb2/rb.txt"; git -C "$T/idreb2" add -A; "${ID[@]}" git -C "$T/idreb2" commit -q -m rb
+git -C "$T/idreb2" checkout -q main; echo y > "$T/idreb2/y.txt"; git -C "$T/idreb2" add -A; "${ID[@]}" git -C "$T/idreb2" commit -q -m main2
+git -C "$T/idreb2" push -q origin main 2>/dev/null
+"${ID[@]}" git -C "$T/idreb2" rebase -q main rb2 >/dev/null 2>&1
+if git -C "$T/idreb2" push -q origin rb2 2>/dev/null; then ok; else bad "D5 pair: the same rebase with an ordinary identity must still push"; fi
+pass_n=$((pass_n+1))
+mkrepo idauth ""
+echo z > "$T/idauth/z.txt"; git -C "$T/idauth" add -A
+"${ID[@]}" git -C "$T/idauth" commit -q --author="Claude <$CLA30>" -m "authored elsewhere" >/dev/null 2>&1
+if git -C "$T/idauth" push -q origin main 2>/dev/null; then bad "D5 a commit whose AUTHOR names Claude must be refused at push"; else ok; fi
+refuse_n=$((refuse_n+1))
+
+# --- D6 a bytes band in channel-ceiling.conf must be enforced by the PRE hook -----------
+CSZ30="$T/csz30"; mkdir -p "$CSZ30"; cp "$HOOKS_DIR/channel-size-guard.sh" "$CSZ30/"
+printf 'LIMIT=100\nNOTES.md bytes 100 200\n' > "$CSZ30/channel-ceiling.conf"
+d30="$T/csz30repo"; mkdir -p "$d30"
+python3 -c "import sys;open(sys.argv[1],'w').write('x'*300)" "$d30/NOTES.md"   # 300 bytes, ONE line
+big30="$(python3 -c "print('y'*300, end='')")"
+INPUT="$(jw "$d30/NOTES.md" "$big30")"; expect refuse 2 "D6 a Write growing a file over its BYTES hard stop must be REFUSED" bash "$CSZ30/channel-size-guard.sh"
+INPUT="$(jb2 'echo x >> NOTES.md' "$d30")"; expect refuse 2 "D6 a Bash append onto a file over its BYTES hard stop must be REFUSED" bash "$CSZ30/channel-size-guard.sh"
+small30="$(python3 -c "print('y'*50, end='')")"
+INPUT="$(jw "$d30/NOTES.md" "$small30")"; expect pass 0 "D6 pair: a Write SHRINKING it under the byte stop must be ALLOWED" bash "$CSZ30/channel-size-guard.sh"
+python3 -c "import sys;open(sys.argv[1],'w').write('x'*50)" "$d30/NOTES.md"
+INPUT="$(jb2 'echo x >> NOTES.md' "$d30")"; expect pass 0 "D6 pair: an append onto a small file must be ALLOWED" bash "$CSZ30/channel-size-guard.sh"
+
+# --- D7 the SHIPPED heavy-suite.conf.example, copied as the live conf -------------------
+HSX30="$T/h30-example-conf"; mkdir -p "$HSX30"
+cp "$HOOKS_DIR/heavy-suite-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$HSX30/"
+cp "$REPO30/hooks/heavy-suite.conf.example" "$HSX30/heavy-suite.conf"
+for c in 'yarn test' 'pnpm test' 'npm run test:all' 'npm test' 'npx vitest run'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "D7 shipped example conf, load 25 must refuse: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSX30/heavy-suite-guard.sh"; done
+for c in 'npm run typecheck' 'yarn lint' 'ls'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "D7 pair, shipped example conf, load 25 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSX30/heavy-suite-guard.sh"; done
+
+
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
 printf '%s\n' "$HL_OUT" | tail -3
