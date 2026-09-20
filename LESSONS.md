@@ -366,7 +366,7 @@ piped through a filter in one case, and separated from the push with a semicolon
 both let the push run whether the check passed or not.
 **The rule to copy** — a blocking check runs alone, its exit code is captured, and it's joined to
 the commit or push with a real "and" — never filtered, never semicolon-joined.
-**Enforced by** — the private setup has a hook for this, not yet published.
+**Enforced by** — `hooks/gate-guard.sh`, installed by default.
 
 ### Log every use of a safety-bypass override
 
@@ -376,9 +376,8 @@ of that override gets logged — when, where, and what was run.
 of when it happened or why.
 **The rule to copy** — every use of a safety-bypass override is logged — the time, the folder,
 and the exact command — to a separate file kept just for that.
-**Enforced by** — not logged by this repo's own shipped hooks today (this repo's override words
-are `PRIVACY_OK`, `GITGUARD`, `SWEEP`); the private setup has a ledger hook for it, not yet
-published.
+**Enforced by** — `hooks/override-ledger.sh`, installed by default (this repo's override words
+are `PRIVACY_OK`, `GITGUARD`, `SWEEP`, `SUITE_OK`, `GATE_OK`, `RULES_CAP_OK`).
 
 ### A redaction scrub must catch every spelling of a name
 
@@ -564,7 +563,7 @@ end, never for a line of text the job might print — because it might never pri
 half, waiting for text a finished job had never actually printed.
 **The rule to copy** — a wait loop checks whether the job's process has exited, never whether
 some expected text has shown up in its log.
-**Enforced by** — the private setup has a hook for this, not yet published.
+**Enforced by** — `hooks/gate-guard.sh`, installed by default (its log-polling-loop check).
 
 ### A waiter must not watch itself
 
@@ -622,8 +621,9 @@ to protect, and telling the next chat things the plan file already held.
 **The rule to copy** — at retirement: push what is finished, mark the plan, rewrite one state
 file under two hundred words (current task, next step, open questions, what must not be
 repeated), and close; the plan and the role's boot file are the handover.
-**Enforced by** — habit here; the private setup has a Stop hook that refuses to end a turn with
-changed tracked files unless the state file is among them, not yet published.
+**Enforced by** — `hooks/stop-state-check.sh`, opt-in (part of the multi-chat coordination
+group; see INSTALL.md), refuses to end a turn with changed tracked files unless the state
+file is among them.
 
 ### One helper commits to a shared workspace at a time
 
@@ -633,7 +633,10 @@ of them may save (commit) at a time — the rest stay read-only until it's their
 helper's in-progress files got swept into the other's commit by mistake.
 **The rule to copy** — in any shared workspace, exactly one helper stages and commits at a time;
 every other helper working there in parallel stays read-only.
-**Enforced by** — habit.
+**Enforced by** — `hooks/channel-provenance-pre.sh` and `hooks/channel-provenance-post.sh`,
+opt-in (part of the multi-chat coordination group; see INSTALL.md), which let
+`hooks/commit-pathspec-guard.sh` refuse a commit carrying a shared file's change that this
+session did not make.
 
 ### Parallelize by shared data, not shared files
 

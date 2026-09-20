@@ -47,3 +47,7 @@ that produces a long document at retirement.
 **Decided:** The 20 September documents-only refresh landed after a blind review run by a helper inside the landing session, briefed with only the branch and the two questions, not by a separate session in an empty folder.
 **Why:** The change touched documents and one skill, no scripts; the helper checked every count and every added line for private names, paths and product details, and its four findings were fixed before the landing.
 **Rules out:** Nothing for next time; the empty-folder review stays the standard for anything that ships a script.
+
+**Decided:** The 21 September hooks and skills refresh landed after two blind attack rounds and a re-attack run by helpers inside the landing session (38 holes closed, each with a failing test first), with the owner's empty-folder review scheduled as a follow-up rather than as the gate.
+**Why:** The owner chose to land overnight and review in the morning; the in-session attackers reproduced every finding for real and the fixes each carry a two-sided test, which is the evidence the empty-folder review would have asked for.
+**Rules out:** Nothing for next time; the empty-folder review before a script goes public stays the standard, and this entry records the second exception and what the attackers caught.

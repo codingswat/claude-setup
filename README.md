@@ -93,8 +93,8 @@ Read them in this order if you're reading rather than installing.
 | [GLOSSARY.md](GLOSSARY.md) | Every technical term ever explained to me, one plain-English line each. My substitute for a CS degree. | as needed |
 | [TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md) | The rulebook as a form: sections to fill in, each saying what changes when you do, plus 17 starter rules that are live from your next session. This is what the installer puts at `~/.claude/CLAUDE.md`. | 10 min |
 | [TEMPLATE-project-CLAUDE.md](TEMPLATE-project-CLAUDE.md) | The per-project rulebook, as a form. | 5 min |
-| [hooks/](hooks/) | The scripts that enforce the rules: the rules injector, the card injector, the dangerous-git blocker, the bare-commit guard, the heavy-test-suite guard, a guard that refuses a test run piped into a reader or raced against a commit, a growth watcher for shared files like a running notes doc, the auto-backup with a secret scan, a ledger that records what each helper agent cost, an override-use ledger — plus an opt-in group for running more than one Claude Code session on the same repo (who wrote which line of a shared file, and a way to bounce a message to a session that's already retired or gone idle) — and a test script that proves each one fires and each one stays quiet. | — |
-| [git-hooks/](git-hooks/) | Three git-side guards, opt-in: commits carry your name not the assistant's, no home-directory path or listed name gets committed, and a push is type-checked first. | — |
+| [hooks/](hooks/) | The scripts that enforce the rules: the rules injector, the card injector, the dangerous-git blocker, the bare-commit guard, the heavy-test-suite guard, the gate guard (refuses a test run piped into a reader, raced against a commit with `;`, or waited on with a log-polling loop instead of the job itself), a growth watcher for shared files like a running notes doc that re-measures after every write, the auto-backup with a secret scan, a ledger that records what each helper agent cost, an override-use ledger that logs every time you tell a hook to stand down — plus an opt-in group for running more than one Claude Code session on the same repo (an edit-provenance pair that tracks who wrote which line of a shared file, a doorman that bounces a message to a session that's already retired or gone idle, and a check that a retiring session actually left its state file behind) — and a test suite of 465 cases that proves each one fires and each one stays quiet. | — |
+| [git-hooks/](git-hooks/) | Four git-side guards, opt-in: commits carry your name not the assistant's, no home-directory path or listed name gets committed, a merge carries the same privacy scan as a normal commit, and a push is type-checked first. | — |
 | [skills/](skills/) | My own skills plus four cherry-picked from bigger packs — and a credited list of everything else I run. See [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md). Four of my own (`summarize`, `overnight`, `handing-off-live-work`, `handover`) come from a multi-chat way of working and are optional — `summarize` shapes every report you get, so delete its folder if you don't want that. | — |
 | [project-template/](project-template/) | Starter files every new project gets: a gitignore that keeps secrets out, an empty decision log, a specs folder, a minimal README. Note: the installed `domain-modeling` skill keeps its own decision log in ADR format (`docs/adr/`) — pick one decision-log convention per project. | — |
 | [DECISIONS.md](DECISIONS.md) | A few entries from this repo's own decision log, to show the format. | 2 min |
@@ -110,8 +110,9 @@ their answers without noticing.
 **My rulebook, verbatim.** It is around thirty rules written in my voice for my situation. What
 transfers is the lesson behind each, so that is what [LESSONS.md](LESSONS.md) carries.
 
-**Project-specific hooks.** The ones wired to one project's file names and layout stay
-private; their ideas are described in the multi-chat guide, and their generic cousins ship.
+**Project-specific hooks.** Two install-layout hooks, wired to one project's file names and
+layout, stay private; their ideas are described in the multi-chat guide, and their generic
+cousins ship.
 
 **The skills packs I run alongside this.** They are installed plugins, auto-updated from
 their authors' repositories; republishing copies would hand you a stale fork. Install them

@@ -281,9 +281,9 @@ squeeze in "just one more task" and lose track on the way out.
 
 **Files are memory; a chat's own context is a scratch buffer.** Anything a later chat must know
 has to be written down somewhere it can read — a chat's own recollection of its conversation
-doesn't survive past its closing, no matter how sharp it still feels while it's happening. The
-private setup enforces this with a hook that isn't in this repo (the doorman paragraph below
-describes it); here, without that hook, it's a habit: write the status file at every task
+doesn't survive past its closing, no matter how sharp it still feels while it's happening. This
+is enforced by a hook shipped here as part of the opt-in multi-chat group (the doorman
+paragraph below describes it; see INSTALL.md): write the status file at every task
 boundary, treating your own memory, past the floor, as unreliable, not just slow to consult.
 
 **Closing means: land or push what is finished, mark the order file, rewrite the role's state
@@ -293,7 +293,7 @@ Two seats once retired at their floors mid-order and each wrote a four-thousand-
 restating what the order file already held. The order file and the boot digest are the
 handover; the state file is the note on the desk.
 
-**The doorman** (not in this repo). The floor can be enforced rather than hoped for: a hook that runs when a
+**The doorman** (shipped here as part of the opt-in multi-chat group; see INSTALL.md). The floor can be enforced rather than hoped for: a hook that runs when a
 turn ends reads the chat's context use and, at or over the role's floor, writes a "retired"
 marker that makes every later message to that chat bounce to the next holder's inbox. The
 same hook refuses to let a turn end with changed tracked files unless the state file is among
