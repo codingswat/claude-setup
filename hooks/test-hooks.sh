@@ -657,5 +657,159 @@ cap_try_global
 if [ "$CAP_RC" = 0 ]; then ok; else bad "a 4000-word global CLAUDE.md must pass; RC=$CAP_RC ERR='$CAP_ERR'"; fi
 pass_n=$((pass_n+1))
 
+echo "20 hooks/override-ledger.sh"
+OLL="$T/override-ledger.tsv"
+r20="$T/ovl-repo"; mkdir -p "$r20/sub"; git -C "$r20" init -q -b main
+rm -f "$OLL"
+(cd "$r20/sub" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "some command")
+folder20="$(tail -1 "$OLL" 2>/dev/null | cut -f2)"; name20="$(tail -1 "$OLL" 2>/dev/null | cut -f3)"; cmd20="$(tail -1 "$OLL" 2>/dev/null | cut -f4)"
+if [ "$folder20" = "ovl-repo" ] && [ "$name20" = "TESTWORD" ] && [ "$cmd20" = "some command" ]; then ok; else bad "inside a repo (even from a subdir): folder must be the git TOPLEVEL basename; got folder='$folder20' name='$name20' cmd='$cmd20'"; fi
+refuse_n=$((refuse_n+1))
+OUT20="$T/ovl-outside"; mkdir -p "$OUT20"; base20="$(basename "$OUT20")"
+rm -f "$OLL"
+(cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "another one")
+folder20b="$(tail -1 "$OLL" 2>/dev/null | cut -f2)"
+if [ "$folder20b" = "$base20" ]; then ok; else bad "outside any repo: folder must fall back to \$PWD's own basename; got '$folder20b' want '$base20'"; fi
+pass_n=$((pass_n+1))
+LONGCMD="$(python3 -c "print('x'*250)")"
+rm -f "$OLL"
+(cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "$LONGCMD")
+gotfield_full="$(tail -1 "$OLL" 2>/dev/null | cut -f4)"; gotlen=${#gotfield_full}
+if [ "$gotlen" = 200 ]; then ok; else bad "the command column must be truncated to 200 chars, got $gotlen"; fi
+pass_n=$((pass_n+1))
+rm -f "$OLL"
+NLCMD="$(printf 'line one\tline two\nline three')"
+(cd "$OUT20" && OVERRIDE_LEDGER="$OLL" bash "$HOOKS_DIR/override-ledger.sh" TESTWORD "$NLCMD")
+gotfield="$(tail -1 "$OLL" 2>/dev/null | cut -f4)"
+if [ "$gotfield" = "line one line two line three" ]; then ok; else bad "newlines/tabs in the command must be flattened to single spaces, got '$gotfield'"; fi
+pass_n=$((pass_n+1))
+rc20=$(env OVERRIDE_LEDGER="/nonexistent-$$/deep/path/overrides.tsv" bash "$HOOKS_DIR/override-ledger.sh" X "y" >/dev/null 2>&1; echo $?)
+if [ "$rc20" = 0 ]; then ok; else bad "override-ledger.sh must exit 0 even when its ledger path cannot be created"; fi
+pass_n=$((pass_n+1))
+
+echo "21 hooks/gate-guard.sh"
+for c in 'npm test | tee out.log' 'npm run typecheck | grep -q PASS' 'vitest run | tail -20' 'npx playwright test; git commit -am "x"' 'while ! grep -q READY build.log; do sleep 2; done' 'until tail -1 build.log | grep -q DONE; do sleep 1; done'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "must refuse: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
+NLGATE=$'npm test\ngit push'
+INPUT="$(json_bash "$NLGATE")"; expect refuse 2 "a bare newline joining a gate to a push must refuse" bash "$HOOKS_DIR/gate-guard.sh"
+for c in 'npm test && git commit -am "x"' 'npm test && git push' 'ls -la' 'GATE_OK=1 npm test | tee out.log' 'git commit -m "ran npm test and it passed"' 'while ! curl -sf localhost:3000/health; do sleep 2; done' 'npx vitest run src/foo.test.ts && echo done'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "must allow: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
+GGCONF="$T/gg-conf"; mkdir -p "$GGCONF"; cp "$HOOKS_DIR/gate-guard.sh" "$HOOKS_DIR/override-ledger.sh" "$GGCONF/"
+printf 'pytest\ngo test\n' > "$GGCONF/gate-guard.conf"
+INPUT="$(json_bash 'pytest | tee out.log')"; expect refuse 2 "conf-added gate 'pytest' piped must refuse" bash "$GGCONF/gate-guard.sh"
+INPUT="$(json_bash 'go test | tee out.log')"; expect refuse 2 "conf-added gate 'go test' piped must refuse" bash "$GGCONF/gate-guard.sh"
+INPUT="$(json_bash 'pytest && echo done')"; expect pass 0 "conf-added gate 'pytest' joined with && must pass" bash "$GGCONF/gate-guard.sh"
+INPUT="$(json_bash 'npm test')"; expect pass 0 "with no jq/no gate found at all: bare gate command alone (no pipe/semicolon) must pass" bash "$HOOKS_DIR/gate-guard.sh"
+
+echo "22 hooks/channel-size-guard.sh"
+huge="$(python3 -c "print(' '.join(['w']*99999))")"
+INPUT="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$T/anyfile/NOTES.md" "$huge")"
+expect pass 0 "no hooks/channel-ceiling.conf at all: any size is ALLOWED (inert)" bash "$HOOKS_DIR/channel-size-guard.sh"
+CSZ="$T/csz-conf"; mkdir -p "$CSZ"; cp "$HOOKS_DIR/channel-size-guard.sh" "$CSZ/"
+printf 'LIMIT=100\nNOTES.md words 10 20\nMISTAKES.md lines 5 10\n*/NOTES.md words 10 20\n' > "$CSZ/channel-ceiling.conf"
+jw() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2"; }
+je() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":sys.argv[2],"new_string":sys.argv[3]}}))' "$1" "$2" "$3"; }
+jm() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"MultiEdit","tool_input":{"file_path":sys.argv[1],"edits":[{"old_string":sys.argv[2],"new_string":sys.argv[3]}]}}))' "$1" "$2" "$3"; }
+jb2() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$1" "$2"; }
+cszd="$T/cszrepo"; mkdir -p "$cszd/sub"
+w21="$(python3 -c "print(' '.join(['w']*21))")"
+printf '%s' "$w21" > "$cszd/NOTES.md"
+INPUT="$(je "$cszd/NOTES.md" "$w21" "$w21 x y z")"; expect refuse 2 "Edit GROWING an over-stop NOTES.md must be REFUSED" bash "$CSZ/channel-size-guard.sh"
+INPUT="$(je "$cszd/NOTES.md" "$w21" "w w w")"; expect pass 0 "Edit SHRINKING an over-stop NOTES.md must be ALLOWED (a sweep)" bash "$CSZ/channel-size-guard.sh"
+w25="$(python3 -c "print(' '.join(['w']*25))")"
+INPUT="$(jw "$cszd/NOTES.md" "$w25")"; expect refuse 2 "Write GROWING content on an over-stop NOTES.md must be REFUSED" bash "$CSZ/channel-size-guard.sh"
+w5="$(python3 -c "print(' '.join(['w']*5))")"
+INPUT="$(jw "$cszd/NOTES.md" "$w5")"; expect pass 0 "Write SHRINKING content on an over-stop NOTES.md must be ALLOWED" bash "$CSZ/channel-size-guard.sh"
+printf '%s' "$w21" > "$cszd/sub/NOTES.md"
+INPUT="$(je "$cszd/sub/NOTES.md" "$w21" "$w21 z")"; expect refuse 2 "a nested NOTES.md (matched via */NOTES.md by basename) growing over stop must be REFUSED" bash "$CSZ/channel-size-guard.sh"
+w15="$(python3 -c "print(' '.join(['w']*15))")"
+cszd2="$T/cszrepo2"; mkdir -p "$cszd2"; printf '%s' "$w15" > "$cszd2/NOTES.md"
+INPUT="$(je "$cszd2/NOTES.md" "$w15" "$w15 x")"; expect pass 0 "growing within the band (over band, not over stop) must be ALLOWED, with a note" bash "$CSZ/channel-size-guard.sh"
+mist11="$(python3 -c "print('\n'.join(['line']*11))")"
+mistd="$T/cszrepo3"; mkdir -p "$mistd"; printf '%s\n' "$mist11" > "$mistd/MISTAKES.md"
+INPUT="$(jm "$mistd/MISTAKES.md" "$mist11" "$mist11
+more")"; expect refuse 2 "MultiEdit GROWING an over-stop MISTAKES.md (line band) must be REFUSED" bash "$CSZ/channel-size-guard.sh"
+INPUT="$(jm "$mistd/MISTAKES.md" "$mist11" "line")"; expect pass 0 "MultiEdit SHRINKING an over-stop MISTAKES.md must be ALLOWED" bash "$CSZ/channel-size-guard.sh"
+cszd3="$T/cszrepo4"; mkdir -p "$cszd3"; printf '%s' "$w21" > "$cszd3/NOTES.md"
+INPUT="$(jb2 'echo more >> NOTES.md' "$cszd3")"; expect refuse 2 "Bash >> onto an over-stop NOTES.md must be REFUSED" bash "$CSZ/channel-size-guard.sh"
+w3="$(python3 -c "print(' '.join(['w']*3))")"
+printf '%s' "$w3" > "$cszd3/NOTES.md"
+INPUT="$(jb2 'echo more >> NOTES.md' "$cszd3")"; expect pass 0 "Bash >> onto a small (under-band) NOTES.md must be ALLOWED" bash "$CSZ/channel-size-guard.sh"
+INPUT="$(jb2 'echo hi' "$cszd3")"; expect pass 0 "a Bash command naming no watched file must be ALLOWED" bash "$CSZ/channel-size-guard.sh"
+
+echo "23 hooks/provenance.py + commit-pathspec-guard.sh: session provenance for shared channel files"
+PROVCONF="$T/prov-conf"; mkdir -p "$PROVCONF"
+cp "$HOOKS_DIR/commit-pathspec-guard.sh" "$HOOKS_DIR/provenance.py" "$HOOKS_DIR/override-ledger.sh" "$PROVCONF/"
+printf 'NOTES.md\n' > "$PROVCONF/channel-ceiling.conf"
+PROVSTATE="$T/prov-state"; mkdir -p "$PROVSTATE"
+provd="$T/provrepo"; mkdir -p "$provd"; git -C "$provd" init -q -b main; git -C "$provd" config core.hooksPath /dev/null
+echo seed > "$provd/NOTES.md"; git -C "$provd" add -A; "${ID[@]}" git -C "$provd" commit -q -m init
+jhook() { python3 -c 'import json,sys;print(json.dumps({"tool_name":sys.argv[1],"tool_input":{"file_path":sys.argv[2],"command":sys.argv[3]},"cwd":sys.argv[4],"session_id":sys.argv[5]}))' "$1" "$2" "$3" "$4" "$5"; }
+run_prov() { printf '%s' "$2" | env PROVENANCE_STATE_DIR="$PROVSTATE" python3 "$PROVCONF/provenance.py" "$1" >/dev/null; }
+SID_A="sess-A-$$"
+run_prov pre  "$(jhook Write "$provd/NOTES.md" "" "$provd" "$SID_A")"
+echo "session A note" >> "$provd/NOTES.md"
+run_prov post "$(jhook Write "$provd/NOTES.md" "" "$provd" "$SID_A")"
+git -C "$provd" add NOTES.md
+outp="$(printf '%s' "$(jhook Bash "" "git commit NOTES.md -m x" "$provd" "$SID_A")" | env PROVENANCE_STATE_DIR="$PROVSTATE" bash "$PROVCONF/commit-pathspec-guard.sh" 2>&1)"; rcp=$?
+if [ "$rcp" = 0 ]; then ok; else bad "session A commits its OWN recorded NOTES.md write: must be ALLOWED; rc=$rcp out='$outp'"; fi
+pass_n=$((pass_n+1))
+run_prov pre  "$(jhook Bash "" "git commit NOTES.md -m x" "$provd" "$SID_A")"
+"${ID[@]}" git -C "$provd" commit -q -m "sessionA note"
+run_prov post "$(jhook Bash "" "git commit NOTES.md -m x" "$provd" "$SID_A")"
+echo "foreign unrecorded change" >> "$provd/NOTES.md"
+git -C "$provd" add NOTES.md
+outp2="$(printf '%s' "$(jhook Bash "" "git commit NOTES.md -m x" "$provd" "$SID_A")" | env PROVENANCE_STATE_DIR="$PROVSTATE" bash "$PROVCONF/commit-pathspec-guard.sh" 2>&1)"; rcp2=$?
+if [ "$rcp2" = 2 ] && printf '%s' "$outp2" | grep -q 'no-record'; then ok; else bad "a foreign, unrecorded NOTES.md change must be REFUSED (no-record); rc=$rcp2 out='$outp2'"; fi
+refuse_n=$((refuse_n+1))
+outp3="$(printf '%s' "$(jhook Bash "" "SWEEP=1 git commit NOTES.md -m x" "$provd" "$SID_A")" | env PROVENANCE_STATE_DIR="$PROVSTATE" bash "$PROVCONF/commit-pathspec-guard.sh" 2>&1)"; rcp3=$?
+if [ "$rcp3" = 0 ]; then ok; else bad "SWEEP=1 must override the provenance refusal; rc=$rcp3 out='$outp3'"; fi
+pass_n=$((pass_n+1))
+NOPROV="$T/noprovrepo"; mkdir -p "$NOPROV"; git -C "$NOPROV" init -q -b main; git -C "$NOPROV" config core.hooksPath /dev/null
+echo seed > "$NOPROV/NOTES.md"; git -C "$NOPROV" add -A; "${ID[@]}" git -C "$NOPROV" commit -q -m init
+echo "totally foreign" >> "$NOPROV/NOTES.md"; git -C "$NOPROV" add NOTES.md
+outp4="$(printf '%s' "$(jhook Bash "" "git commit NOTES.md -m x" "$NOPROV" "nosession")" | bash "$HOOKS_DIR/commit-pathspec-guard.sh" 2>&1)"; rcp4=$?
+if [ "$rcp4" = 0 ]; then ok; else bad "no hooks/channel-ceiling.conf at all: provenance must be INERT (always allow); rc=$rcp4 out='$outp4'"; fi
+pass_n=$((pass_n+1))
+
+echo "24 override-ledger.sh wiring: every override word logs one line"
+ledger_has() { [ -f "$1" ] || return 1; cut -f3 "$1" | grep -qxF "$2"; }
+WL="$T/wiring-ledger.tsv"
+rm -f "$WL"; INPUT="$(json_bash 'GITGUARD=1 git reset --hard')"; printf '%s' "$INPUT" | env OVERRIDE_LEDGER="$WL" bash "$HOOKS_DIR/block-dangerous-git.sh" >/dev/null 2>&1
+if ledger_has "$WL" GITGUARD; then ok; else bad "block-dangerous-git.sh: GITGUARD=1 must write a ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$WL"; INPUT="$(json_bash 'SUITE_OK=1 npm test')"; printf '%s' "$INPUT" | env OVERRIDE_LEDGER="$WL" HEAVY_SUITE_LOAD_OVERRIDE=12 bash "$HOOKS_DIR/heavy-suite-guard.sh" >/dev/null 2>&1
+if ledger_has "$WL" SUITE_OK; then ok; else bad "heavy-suite-guard.sh: SUITE_OK=1 must write a ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$WL"; INPUT="$(json_bash 'GATE_OK=1 npm test | tee out.log')"; printf '%s' "$INPUT" | env OVERRIDE_LEDGER="$WL" bash "$HOOKS_DIR/gate-guard.sh" >/dev/null 2>&1
+if ledger_has "$WL" GATE_OK; then ok; else bad "gate-guard.sh: GATE_OK=1 must write a ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$WL"
+wlr="$T/wl-repo"; mkdir -p "$wlr"; git -C "$wlr" init -q -b main; git -C "$wlr" config core.hooksPath /dev/null
+echo a > "$wlr/a.txt"; git -C "$wlr" add a.txt; "${ID[@]}" git -C "$wlr" commit -q -m init
+echo b > "$wlr/b.txt"; git -C "$wlr" add b.txt
+jbc2() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$1" "$2"; }
+jbc2 'SWEEP=1 git commit -m "x"' "$wlr" | env OVERRIDE_LEDGER="$WL" bash "$HOOKS_DIR/commit-pathspec-guard.sh" >/dev/null 2>&1
+if ledger_has "$WL" SWEEP; then ok; else bad "commit-pathspec-guard.sh: SWEEP=1 must write a ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$WL"
+pcHOME="$T/fakehome-wl"; mkdir -p "$pcHOME/.claude/hooks"
+cp "$HOOKS_DIR/override-ledger.sh" "$pcHOME/.claude/hooks/"
+: > "$pcHOME/.claude/.redaction-names.local"
+printf 'LIMIT=1\nNOTES.md\n' > "$pcHOME/.claude/hooks/channel-ceiling.conf"
+pcr="$T/wl-pc-repo"; mkdir -p "$pcr"; git -C "$pcr" init -q -b main; git -C "$pcr" config core.hooksPath "$GIT_HOOKS_DIR"
+echo seed > "$pcr/NOTES.md"; env HOME="$pcHOME" git -C "$pcr" add -A; env HOME="$pcHOME" "${ID[@]}" git -C "$pcr" commit -q -m init >/dev/null 2>&1
+printf 'a\nb\n' >> "$pcr/NOTES.md"; env HOME="$pcHOME" git -C "$pcr" add -A
+env HOME="$pcHOME" OVERRIDE_LEDGER="$WL" SWEEP=1 "${ID[@]}" git -C "$pcr" commit -q -m test >/dev/null 2>&1
+if ledger_has "$WL" SWEEP; then ok; else bad "git-hooks/pre-commit: SWEEP=1 (channel ceiling) must write a ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$WL"
+rcr="$T/wl-rc-repo"; mkdir -p "$rcr"; git -C "$rcr" init -q -b main; git -C "$rcr" config core.hooksPath "$GIT_HOOKS_DIR"
+python3 -c "print(' '.join(['w']*5751))" > "$rcr/CLAUDE.md"
+env HOME="$pcHOME" git -C "$rcr" add -A
+env HOME="$pcHOME" OVERRIDE_LEDGER="$WL" RULES_CAP_OK=1 "${ID[@]}" git -C "$rcr" commit -q -m test >/dev/null 2>&1
+if ledger_has "$WL" RULES_CAP_OK; then ok; else bad "git-hooks/pre-commit: RULES_CAP_OK=1 must write a ledger line"; fi
+pass_n=$((pass_n+1))
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

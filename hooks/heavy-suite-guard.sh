@@ -12,6 +12,8 @@
 # specific test file is always treated as heavy too, on top of PATTERN — see the checks
 # below; this never narrows what PATTERN already refuses, only widens it.
 # Deliberate override: start the command (or the segment after ; && |) with `SUITE_OK=1 `.
+# Every use is logged by hooks/override-ledger.sh, if present (a missing ledger script
+# never blocks this guard).
 # Test seam: HEAVY_SUITE_LOAD_OVERRIDE=<load> stands in for the real `uptime` reading.
 # Both jq and python3 parse the command below; if either is missing this guard cannot
 # read what it's being asked to run, so it refuses rather than silently letting an
@@ -28,7 +30,10 @@ fi
 input="$(cat)"
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
 [ -z "$cmd" ] && exit 0
-printf '%s' "$cmd" | grep -qE '(^|[;&|] *)SUITE_OK=1 ' && exit 0
+if printf '%s' "$cmd" | grep -qE '(^|[;&|] *)SUITE_OK=1 '; then
+  L="$(dirname "$0")/override-ledger.sh"; [ -f "$L" ] && bash "$L" SUITE_OK "$cmd"
+  exit 0
+fi
 
 CONF="$(dirname "$0")/heavy-suite.conf"
 PATTERN='(^|[;&| ])(npm +test|npm +run +(test|e2e)|npx +vitest +run|npx +playwright +test)([ ;&|]|$)'

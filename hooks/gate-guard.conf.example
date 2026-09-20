@@ -1,0 +1,16 @@
+# Copy to hooks/gate-guard.conf (next to gate-guard.sh) to teach the guard about MORE
+# commands that count as a "gate" — a test run, typecheck, or build check whose exit code
+# should decide what happens next. One command per line, added ON TOP of the built-in
+# default (vitest, playwright, tsc, npm test, npm run test, npm run typecheck) — you don't
+# need to repeat those here.
+#
+# Each line is the literal words of the invocation (an optional leading `npx` is always
+# tolerated, so you don't need to list both forms). Blank lines and lines starting with #
+# are ignored.
+#
+# No file at all: the built-in default alone applies — the safe default for a project that
+# only uses the tools already covered.
+pytest
+jest
+go test
+cargo test

@@ -12,10 +12,13 @@
 #       number of lines per commit; a much bigger jump usually means two sessions' entries
 #       landed in the same commit. Configured in hooks/channel-ceiling.conf (see
 #       hooks/channel-ceiling.conf.example) as a LIMIT plus a list of repo-relative glob
-#       patterns; no file means this check never runs. Modified files only (a brand-new
-#       file cannot hold someone else's swept-in text), and archives (any path containing
-#       "ARCHIVE") are exempt. Override for a deliberate large write, one commit:
-#       `SWEEP=1 git commit ...` (this check only).
+#       patterns — the SAME file hooks/channel-size-guard.sh reads for its own, separate
+#       live-growth check, so a line there may carry extra columns this check ignores; only
+#       the first field (the pattern) matters here. No file means this check never runs.
+#       Modified files only (a brand-new file cannot hold someone else's swept-in text),
+#       and archives (any path containing "ARCHIVE") are exempt. Override for a deliberate
+#       large write, one commit: `SWEEP=1 git commit ...` (this check only) — every use is
+#       logged by hooks/override-ledger.sh, if present.
 #   (3) a root rules file (`CLAUDE.md`, path exactly at the repo top level, never
 #       `*/CLAUDE.md` in a subfolder) is capped by word count on the STAGED blob: 4000
 #       words if the repo's top level is `$HOME/.claude` (your global rulebook), 5750
@@ -70,31 +73,37 @@ fi
 
 # ---- (2) optional: channel-file insertion ceiling ----
 CEILING_CONF="$HOME/.claude/hooks/channel-ceiling.conf"
-if [ -s "$CEILING_CONF" ] && [ "${SWEEP:-0}" != "1" ]; then
-  LIMIT=100
-  patterns=()
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*) continue ;; esac
-    case "$line" in LIMIT=*) LIMIT="${line#LIMIT=}"; continue ;; esac
-    patterns+=("$line")
-  done < "$CEILING_CONF"
-  cfail=0
-  while IFS=$'\t' read -r added _deleted path; do
-    [ -z "$path" ] && continue
-    case "$path" in *ARCHIVE*) continue ;; esac
-    match=0
-    for pat in "${patterns[@]}"; do
-      case "$path" in $pat) match=1; break ;; esac
-    done
-    [ "$match" = 1 ] || continue
-    if [ "$added" != "-" ] && [ "$added" -gt "$LIMIT" ]; then
-      echo "pre-commit hook: REFUSED — $path gains $added lines in this commit (ceiling $LIMIT, hooks/channel-ceiling.conf)." >&2
-      echo "  A large jump usually means another session's text landed in the same commit as yours." >&2
-      echo "  Reconcile: git diff --cached -- $path   |   deliberate large write: SWEEP=1 git commit ..." >&2
-      cfail=1
-    fi
-  done < <(git diff --cached --numstat --diff-filter=M)
-  [ "$cfail" = 1 ] && exit 1
+if [ -s "$CEILING_CONF" ]; then
+  if [ "${SWEEP:-0}" = "1" ]; then
+    L="$HOME/.claude/hooks/override-ledger.sh"
+    [ -f "$L" ] && bash "$L" SWEEP "git commit (pre-commit: the channel ceiling lifted)"
+  else
+    LIMIT=100
+    patterns=()
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in ''|'#'*) continue ;; esac
+      case "$line" in LIMIT=*) LIMIT="${line#LIMIT=}"; continue ;; esac
+      set -- $line   # only the first field is the pattern; channel-size-guard.sh's
+      patterns+=("$1")   # optional unit/band/stop columns are ignored here.
+    done < "$CEILING_CONF"
+    cfail=0
+    while IFS=$'\t' read -r added _deleted path; do
+      [ -z "$path" ] && continue
+      case "$path" in *ARCHIVE*) continue ;; esac
+      match=0
+      for pat in "${patterns[@]}"; do
+        case "$path" in $pat) match=1; break ;; esac
+      done
+      [ "$match" = 1 ] || continue
+      if [ "$added" != "-" ] && [ "$added" -gt "$LIMIT" ]; then
+        echo "pre-commit hook: REFUSED — $path gains $added lines in this commit (ceiling $LIMIT, hooks/channel-ceiling.conf)." >&2
+        echo "  A large jump usually means another session's text landed in the same commit as yours." >&2
+        echo "  Reconcile: git diff --cached -- $path   |   deliberate large write: SWEEP=1 git commit ..." >&2
+        cfail=1
+      fi
+    done < <(git diff --cached --numstat --diff-filter=M)
+    [ "$cfail" = 1 ] && exit 1
+  fi
 fi
 
 # ---- (3) root CLAUDE.md word cap ----
@@ -102,7 +111,12 @@ fi
 # global rulebook ($HOME/.claude, e.g. a config-backup repo whose toplevel IS $HOME/.claude)
 # gets the tighter cap; a project rulebook gets the looser one. RULES_CAP_OK=1 skips this
 # check only.
-if [ "${RULES_CAP_OK:-0}" != "1" ]; then
+if [ "${RULES_CAP_OK:-0}" = "1" ]; then
+  if git diff --cached --name-only --diff-filter=AM | grep -qx 'CLAUDE.md'; then
+    L="$HOME/.claude/hooks/override-ledger.sh"
+    [ -f "$L" ] && bash "$L" RULES_CAP_OK "git commit (pre-commit: the rules-file cap lifted)"
+  fi
+else
   while IFS= read -r path; do
     [ "$path" = "CLAUDE.md" ] || continue
     toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"

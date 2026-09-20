@@ -1,13 +1,25 @@
-# Copy to hooks/channel-ceiling.conf to turn on the channel-file insertion ceiling in
-# git-hooks/pre-commit. One LIMIT line (optional, default 100) plus one repo-relative
-# glob pattern per line — matched with a plain bash `case` glob against the staged path,
-# so "NOTES.md" matches only a top-level file and "*/NOTES.md" matches one in any folder.
-# Blank lines and lines starting with # are ignored.
+# Copy to hooks/channel-ceiling.conf. Shared by two guards that watch the same shared
+# files, so they only need configuring once:
+#   - git-hooks/pre-commit's channel-file insertion ceiling: refuses a COMMIT that adds
+#     more than LIMIT lines to one of these files in one go (a sign two sessions' entries
+#     landed together).
+#   - hooks/channel-size-guard.sh's growth band: warns once a file's TOTAL size crosses a
+#     "sweep it soon" band, and refuses further growth once it crosses a hard stop —
+#     checked live, on every Write/Edit/MultiEdit/Bash-append, not only at commit time.
 #
-# No file at all means this check never runs — the safe default for a repo with no shared
-# files several people or sessions append to. Turn it on for the files where a much bigger
-# jump than usual usually means two sessions' entries landed in the same commit.
+# One optional LIMIT line (default 100, used only by pre-commit), then one line per file:
+#   <repo-relative glob pattern>  [<unit> <band> <hard-stop>]
+# The pattern is matched with a plain bash `case` glob — "NOTES.md" matches only a
+# top-level file, "*/NOTES.md" matches one in any folder. <unit> is "words" or "lines".
+# Leave the last three fields off a line to add a pattern to pre-commit's ceiling ONLY —
+# channel-size-guard.sh ignores a line with no unit/band/stop. A pattern can appear on more
+# than one line with a different unit (a file watched on both its word count and its line
+# count). channel-size-guard.sh matches by the pattern's own BASENAME (it can't always see
+# a file's full repo-relative path), so `*/NOTES.md` there just means "any NOTES.md".
+#
+# No file at all: neither guard does anything for any file — the safe default for a repo
+# with no shared files several people or sessions append to.
 LIMIT=100
-NOTES.md
+NOTES.md          words 9000 15000
 CHANGELOG.md
-*/NOTES.md
+*/NOTES.md        words 9000 15000

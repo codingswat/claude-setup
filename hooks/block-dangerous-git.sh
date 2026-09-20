@@ -17,7 +17,8 @@
 # merely MENTIONS a banned command is not refused.
 # Deliberate, approved run: start the command (or the segment after ; && |) with
 # `GITGUARD=1 ` — only that position counts, so the token inside a message or a quoted
-# argument does not disarm the guard.
+# argument does not disarm the guard. Every use is logged by hooks/override-ledger.sh, if
+# present (a missing ledger script never blocks this guard).
 # Optional extra check, OFF by default: in a checkout shared by more than one session
 # (a shared dev box, a pair-programming worktree), `git stash` hides EVERY session's
 # uncommitted work, not just the caller's. List the repos where that applies in
@@ -58,7 +59,10 @@ import re,sys
 s=sys.stdin.read()
 s=re.sub(r"\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27", " Q ", s)
 sys.stdout.write(s)')"
-printf '%s' "$unq" | grep -qE '(^|[;&|] *)GITGUARD=1 ' && exit 0
+if printf '%s' "$unq" | grep -qE '(^|[;&|] *)GITGUARD=1 '; then
+  L="$(dirname "$0")/override-ledger.sh"; [ -f "$L" ] && bash "$L" GITGUARD "$cmd"
+  exit 0
+fi
 W='(^|[^a-zA-Z0-9_./-])'                          # `git` as a whole word
 G='( +-[^ ;&|]+( +[^-;&| ][^ ;&|]*)?)*'            # optional global flags, each with one optional value
 A='( +[^ ;&|]+)*'                                  # optional arguments, never across ; & |
