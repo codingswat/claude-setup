@@ -1,0 +1,27 @@
+# Copy to hooks/state-check.conf to turn on two paired guards for a multi-session or
+# multi-role project — hooks/stop-state-check.sh (a Stop hook) and hooks/doorman.sh (a
+# UserPromptSubmit hook). Both read this ONE file. No file at all: both guards do nothing
+# for every session — the safe default for a single-session project with no roles to track.
+#
+# One optional line, anywhere in the file:
+#   STATE_FILE <path>
+# {role} in <path> is replaced with the matched role name below. Default if this line is
+# left out: docs/state/{role}.md
+#
+# Every other non-blank, non-comment line:
+#   <folder-glob>  <role-name>  <floor-in-thousands-of-tokens>
+# <folder-glob> is matched against the BASENAME of the session's working directory (a git
+# worktree name, e.g. "myapp-planner-3", or a shared root folder's own name) with a plain
+# bash `case` glob — "myapp-planner*" matches "myapp-planner-3"; "myapp-*" matches any
+# other worktree. The FIRST matching line wins, so put more specific patterns first.
+# <role-name> is free text — it fills {role} in STATE_FILE and labels the inbox/retired
+# files. <floor-in-thousands-of-tokens> is when stop-state-check.sh marks that session
+# "retired": its context at or over this many thousand tokens. Pick a number well under
+# your model's real context window, so a session still has room to write its state file and
+# hand off cleanly before it runs out.
+#
+# A working directory whose basename matches no line here is untouched by either guard.
+STATE_FILE docs/state/{role}.md
+myapp-planner*   planner   500
+myapp-*          dev       850
+myapp            root      850

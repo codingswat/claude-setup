@@ -811,5 +811,110 @@ env HOME="$pcHOME" OVERRIDE_LEDGER="$WL" RULES_CAP_OK=1 "${ID[@]}" git -C "$rcr"
 if ledger_has "$WL" RULES_CAP_OK; then ok; else bad "git-hooks/pre-commit: RULES_CAP_OK=1 must write a ledger line"; fi
 pass_n=$((pass_n+1))
 
+echo "25 hooks/stop-state-check.sh: the per-role context floor and the state-file requirement"
+SCD="$T/state-check-conf"; mkdir -p "$SCD"; cp "$HOOKS_DIR/stop-state-check.sh" "$SCD/"
+printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  5\n' > "$SCD/state-check.conf"
+scr="$T/myapp-dev1"; mkdir -p "$scr/state"; git -C "$scr" init -q -b main; git -C "$scr" config core.hooksPath /dev/null
+echo seed > "$scr/README.md"; git -C "$scr" add -A; "${ID[@]}" git -C "$scr" commit -q -m init
+ssc_json() { python3 -c 'import json,sys;print(json.dumps({"cwd":sys.argv[1],"session_id":sys.argv[2],"stop_hook_active":sys.argv[3]=="true","transcript_path":sys.argv[4]}))' "$1" "$2" "$3" "$4"; }
+echo more >> "$scr/README.md"
+outss1="$(ssc_json "$scr" sidX false "" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh")"
+if printf '%s' "$outss1" | grep -q '"decision":"block"'; then ok; else bad "stop-state-check.sh: a changed tracked file with the state file untouched must be BLOCKED; got '$outss1'"; fi
+refuse_n=$((refuse_n+1))
+printf '**Current task:** x\n**Next step:** y\n' > "$scr/state/dev.md"
+git -C "$scr" add -A
+outss2="$(ssc_json "$scr" sidX false "" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh")"
+if printf '%s' "$outss2" | grep -q '"decision":"block"'; then bad "stop-state-check.sh: a changed AND FILLED state file must be ALLOWED; got '$outss2'"; else ok; fi
+pass_n=$((pass_n+1))
+
+echo "25b hooks/stop-state-check.sh: retirement past the role's context floor"
+TP25="$T/ssc-transcript.jsonl"
+printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":8000,"output_tokens":10}}}\n' > "$TP25"
+outss3="$(ssc_json "$scr" sidRET25 false "$TP25" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh")"
+if printf '%s' "$outss3" | grep -q 'RETIRED at 8k'; then ok; else bad "stop-state-check.sh: context over the role's floor must RETIRE the session; got '$outss3'"; fi
+pass_n=$((pass_n+1))
+[ -f "$T/ssc-state/retired/sidRET25" ] && ok || bad "stop-state-check.sh: retirement must write state/retired/<session_id>"
+pass_n=$((pass_n+1))
+
+echo "25c hooks/stop-state-check.sh: no hooks/state-check.conf at all is INERT"
+SCD2="$T/state-check-noconf"; mkdir -p "$SCD2"; cp "$HOOKS_DIR/stop-state-check.sh" "$SCD2/"
+scr2="$T/myapp-dev2"; mkdir -p "$scr2"; git -C "$scr2" init -q -b main; git -C "$scr2" config core.hooksPath /dev/null
+echo seed > "$scr2/README.md"; git -C "$scr2" add -A; "${ID[@]}" git -C "$scr2" commit -q -m init
+echo more >> "$scr2/README.md"
+outss4="$(ssc_json "$scr2" sidNC false "" | bash "$SCD2/stop-state-check.sh")"
+if [ -z "$outss4" ]; then ok; else bad "stop-state-check.sh: no conf file must be INERT (no block); got '$outss4'"; fi
+pass_n=$((pass_n+1))
+
+echo "26 hooks/doorman.sh: refuses a RETIRED session and a genuinely idle+heavy one; passes a fresh one"
+DCD="$T/doorman-conf"; mkdir -p "$DCD"; cp "$HOOKS_DIR/doorman.sh" "$DCD/"
+printf 'myapp-dev*  dev  850\n' > "$DCD/state-check.conf"
+dm="$T/myapp-dev3"; mkdir -p "$dm"
+dj() { python3 -c 'import json,sys;print(json.dumps({"cwd":sys.argv[1],"session_id":sys.argv[2],"prompt":sys.argv[3],"transcript_path":sys.argv[4]}))' "$1" "$2" "$3" "$4"; }
+
+mkdir -p "$T/doorman-state/retired"; echo "2026-01-01 00:00 dev 900k" > "$T/doorman-state/retired/sidDM-A"
+dj "$dm" sidDM-A hello "" | STATE_CHECK_STATE_DIR="$T/doorman-state" bash "$DCD/doorman.sh" >/dev/null 2>&1
+rcA=$?
+if [ "$rcA" = 2 ]; then ok; else bad "doorman.sh: a session already marked RETIRED must be REFUSED (exit 2), got $rcA"; fi
+refuse_n=$((refuse_n+1))
+
+dj "$dm" sidDM-B hello "" | STATE_CHECK_STATE_DIR="$T/doorman-state" bash "$DCD/doorman.sh" >/dev/null 2>&1
+rcB=$?
+if [ "$rcB" = 0 ]; then ok; else bad "doorman.sh: a fresh session with no transcript must PASS (fail open), got $rcB"; fi
+pass_n=$((pass_n+1))
+
+echo "26b hooks/doorman.sh: 'idle' means the SESSION stopped working, never that the owner was merely silent"
+T0E=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('2026-01-01T00:00:00','%Y-%m-%dT%H:%M:%S')))")
+NOWE=$((T0E + 70*60))
+NOWT=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime($NOWE)))")
+RECE=$((NOWE - 2*60))
+RECT=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime($RECE)))")
+TPC="$T/doorman-tp-c.jsonl"
+cat > "$TPC" <<EOF
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"$RECT","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":1}}}
+{"type":"user","timestamp":"$NOWT","message":{"content":"current prompt"}}
+EOF
+dj "$dm" sidDM-C "current prompt" "$TPC" | STATE_CHECK_STATE_DIR="$T/doorman-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD/doorman.sh" >/dev/null 2>&1
+rcC=$?
+if [ "$rcC" = 0 ]; then ok; else bad "doorman.sh: the owner silent 70min but the SESSION active 2min ago must PASS (not idle), got $rcC"; fi
+pass_n=$((pass_n+1))
+
+TPD="$T/doorman-tp-d.jsonl"
+cat > "$TPD" <<EOF
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:05Z","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":1}}}
+{"type":"user","timestamp":"$NOWT","message":{"content":"current prompt"}}
+EOF
+dj "$dm" sidDM-D "current prompt" "$TPD" | STATE_CHECK_STATE_DIR="$T/doorman-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD/doorman.sh" >/dev/null 2>&1
+rcD=$?
+if [ "$rcD" = 2 ]; then ok; else bad "doorman.sh: BOTH sides quiet 70min with high context must REFUSE (genuinely idle), got $rcD"; fi
+refuse_n=$((refuse_n+1))
+
+echo "26c hooks/doorman.sh: no hooks/state-check.conf at all is INERT"
+DCD2="$T/doorman-noconf"; mkdir -p "$DCD2"; cp "$HOOKS_DIR/doorman.sh" "$DCD2/"
+dj "$dm" sidDM-E hello "" | bash "$DCD2/doorman.sh" >/dev/null 2>&1
+rcE=$?
+if [ "$rcE" = 0 ]; then ok; else bad "doorman.sh: no conf file must be INERT (always pass), got $rcE"; fi
+pass_n=$((pass_n+1))
+
+echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
+HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
+printf '%s\n' "$HL_OUT" | tail -3
+HL_LAST="$(printf '%s\n' "$HL_OUT" | grep -E '^test-helper-ledger\.sh:' | tail -1)"
+HL_P="$(printf '%s' "$HL_LAST" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')"
+HL_F="$(printf '%s' "$HL_LAST" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')"
+if [ "$HL_RC" = 0 ] && [ "${HL_F:-1}" = 0 ]; then ok; else bad "hooks/test-helper-ledger.sh must exit 0 with 0 failed; rc=$HL_RC last='$HL_LAST'"; fi
+pass_n=$((pass_n+1))
+pass=$((pass + ${HL_P:-0})); fail=$((fail + ${HL_F:-0}))
+
+RC_OUT="$(GIT_HOOKS_DIR="$GIT_HOOKS_DIR" bash "$HOOKS_DIR/test-rules-cap.sh" 2>&1)"; RC_RC=$?
+printf '%s\n' "$RC_OUT" | tail -3
+RC_LAST="$(printf '%s\n' "$RC_OUT" | grep -E '^test-rules-cap\.sh:' | tail -1)"
+RC_P="$(printf '%s' "$RC_LAST" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')"
+RC_F="$(printf '%s' "$RC_LAST" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')"
+if [ "$RC_RC" = 0 ] && [ "${RC_F:-1}" = 0 ]; then ok; else bad "hooks/test-rules-cap.sh must exit 0 with 0 failed; rc=$RC_RC last='$RC_LAST'"; fi
+pass_n=$((pass_n+1))
+pass=$((pass + ${RC_P:-0})); fail=$((fail + ${RC_F:-0}))
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
