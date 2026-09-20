@@ -829,6 +829,10 @@ printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  5\n' > "$SCD/state-check.co
 scr="$T/myapp-dev1"; mkdir -p "$scr/state"; git -C "$scr" init -q -b main; git -C "$scr" config core.hooksPath /dev/null
 echo seed > "$scr/README.md"; git -C "$scr" add -A; "${ID[@]}" git -C "$scr" commit -q -m init
 ssc_json() { python3 -c 'import json,sys;print(json.dumps({"cwd":sys.argv[1],"session_id":sys.argv[2],"stop_hook_active":sys.argv[3]=="true","transcript_path":sys.argv[4]}))' "$1" "$2" "$3" "$4"; }
+# The state-file job only blocks when it can see that THIS turn changed something — the
+# turn snapshot hooks/doorman.sh writes when the prompt arrives (see section 29's M12).
+# Taken here with the tree still clean, so the change below is this turn's.
+mkdir -p "$T/ssc-state/turnsnap"; git -C "$scr" status --porcelain --untracked-files=no > "$T/ssc-state/turnsnap/sidX"
 echo more >> "$scr/README.md"
 outss1="$(ssc_json "$scr" sidX false "" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh")"
 if printf '%s' "$outss1" | grep -q '"decision":"block"'; then ok; else bad "stop-state-check.sh: a changed tracked file with the state file untouched must be BLOCKED; got '$outss1'"; fi
@@ -1051,6 +1055,361 @@ INPUT="$(json_bash 'ls')"; expect refuse 2 "missing guard-lib.sh: heavy-suite-gu
 jb28 'git status' "$r28" > "$T/h28-nolib-in.json"
 if bash "$NOLIB28/commit-pathspec-guard.sh" < "$T/h28-nolib-in.json" >/dev/null 2>&1; then bad "missing guard-lib.sh: commit-pathspec-guard must fail CLOSED"; else ok; fi; refuse_n=$((refuse_n+1))
 INPUT="$(json_bash 'ls -la')"; expect pass 0 "pair: with guard-lib.sh present the same command passes" bash "$HOOKS_DIR/gate-guard.sh"
+
+
+echo "29 blind-attacker findings (part 2): the git hooks, the size guard, the state pair"
+REPO29="$(cd "$HOOKS_DIR/.." && pwd -P)"
+
+# --- B1 a merge commit runs no pre-commit hook: git-hooks/pre-merge-commit -------------
+mg="$T/mergerepo"; mkdir -p "$mg"; git -C "$mg" init -q -b main; git -C "$mg" config core.hooksPath "$GIT_HOOKS_DIR"
+mgadd() { env HOME="$FAKE_HOME" git -C "$mg" add -A; }
+mgcommit() { env HOME="$FAKE_HOME" "${ID[@]}" git -C "$mg" commit -q -m "$1" >/dev/null 2>&1; }
+echo seed > "$mg/a.txt"; mgadd; mgcommit init
+env HOME="$FAKE_HOME" git -C "$mg" checkout -q -b tainted
+printf 'a note from ZebulonQuixote\n' > "$mg/t.txt"; mgadd
+env HOME="$FAKE_HOME" PRIVACY_OK=1 "${ID[@]}" git -C "$mg" commit -q -m tainted >/dev/null 2>&1
+env HOME="$FAKE_HOME" git -C "$mg" checkout -q main
+echo other > "$mg/b.txt"; mgadd; mgcommit other
+mg_before="$(git -C "$mg" rev-list --count HEAD)"
+env HOME="$FAKE_HOME" "${ID[@]}" git -C "$mg" merge --no-ff -m "merge tainted" tainted >/dev/null 2>&1
+mg_after="$(git -C "$mg" rev-list --count HEAD)"
+if [ "$mg_after" = "$mg_before" ]; then ok; else bad "B1 git merge --no-ff carrying a listed name must be REFUSED (pre-merge-commit)"; fi
+refuse_n=$((refuse_n+1))
+env HOME="$FAKE_HOME" git -C "$mg" merge --abort >/dev/null 2>&1
+env HOME="$FAKE_HOME" git -C "$mg" checkout -q -b cleanbranch
+echo fine > "$mg/c.txt"; mgadd; mgcommit clean
+env HOME="$FAKE_HOME" git -C "$mg" checkout -q main
+mg_before2="$(git -C "$mg" rev-list --count HEAD)"
+env HOME="$FAKE_HOME" "${ID[@]}" git -C "$mg" merge --no-ff -m "merge clean" cleanbranch >/dev/null 2>&1
+mg_after2="$(git -C "$mg" rev-list --count HEAD)"
+if [ "$mg_after2" -gt "$mg_before2" ]; then ok; else bad "B1 pair: a clean branch must still merge"; fi
+pass_n=$((pass_n+1))
+
+# --- B2/B3 pre-commit privacy: the FILENAME, and a blob git calls binary ----------------
+pf="$T/privfile"; mkdir -p "$pf/x"; git -C "$pf" init -q -b main; git -C "$pf" config core.hooksPath "$GIT_HOOKS_DIR"
+pftry() { git -C "$pf" add -A; env HOME="$FAKE_HOME" "${ID[@]}" git -C "$pf" commit -q -m t >/dev/null 2>&1; }
+echo seed > "$pf/seed.txt"; pftry
+echo "nothing sensitive in here" > "$pf/x/ZebulonQuixote-notes.md"
+if pftry; then bad "B2 a listed name used as a FILENAME must be refused"; else ok; git -C "$pf" reset -q; rm -f "$pf/x/ZebulonQuixote-notes.md"; fi
+refuse_n=$((refuse_n+1))
+echo "nothing sensitive in here" > "$pf/x/ordinary-notes.md"
+if pftry; then ok; else bad "B2 pair: an ordinary filename must still commit"; fi
+pass_n=$((pass_n+1))
+python3 -c 'import sys;open(sys.argv[1],"wb").write("a note from ZebulonQuixote\n".encode("utf-16-le"))' "$pf/u16.txt"
+if pftry; then bad "B3 a listed name inside a UTF-16 blob (binary to git) must be refused"; else ok; git -C "$pf" reset -q; rm -f "$pf/u16.txt"; fi
+refuse_n=$((refuse_n+1))
+python3 -c 'import sys;open(sys.argv[1],"wb").write("an ordinary note\n".encode("utf-16-le"))' "$pf/u16ok.txt"
+if pftry; then ok; else bad "B3 pair: a clean UTF-16 blob must still commit"; fi
+pass_n=$((pass_n+1))
+python3 -c 'import sys;open(sys.argv[1],"wb").write(bytes(range(256))*4)' "$pf/blob.bin"
+if pftry; then ok; else bad "B3 pair: a genuinely binary file naming nobody must still commit"; fi
+pass_n=$((pass_n+1))
+
+# --- B4/m18 auto-backup: placeholders, the pragma, and a secret used as a FILENAME ------
+PH="$T/fakehome-placeholder"; mkdir -p "$PH/.claude/hooks"
+git -C "$PH/.claude" init -q -b main; git -C "$PH/.claude" config core.hooksPath /dev/null
+git -C "$PH/.claude" config user.name Tester; git -C "$PH/.claude" config user.email tester@example.com
+printf 'AUTHOR=Tester <tester@example.com>\nMIRROR_DIR=\n' > "$PH/.claude/hooks/backup.conf"
+echo hello > "$PH/.claude/CLAUDE.md"
+env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+ph0="$(git -C "$PH/.claude" rev-list --count HEAD 2>/dev/null || echo 0)"
+printf 'OPENAI_API_KEY=%s\n' "$(printf '%s%s' 'your-' 'key-goes-here-xx')" >> "$PH/.claude/CLAUDE.md"
+env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+ph1="$(git -C "$PH/.claude" rev-list --count HEAD)"
+if [ "$ph1" -gt "$ph0" ]; then ok; else bad "B4 an obvious placeholder value (your-…) must NOT hold the backup"; fi
+pass_n=$((pass_n+1))
+BEAR29="$(printf '%s%s' 'Bea' 'rer ')abcdefghijklmnopqrstuvwx"
+printf 'scan("%s")  # pragma: allow-secret\n' "$BEAR29" >> "$PH/.claude/CLAUDE.md"
+env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+ph2="$(git -C "$PH/.claude" rev-list --count HEAD)"
+if [ "$ph2" -gt "$ph1" ]; then ok; else bad "B4 a line marked '# pragma: allow-secret' must NOT hold the backup"; fi
+pass_n=$((pass_n+1))
+printf '%s\n' "$BEAR29" >> "$PH/.claude/CLAUDE.md"
+ph_out="$(env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" 2>&1)"
+ph3="$(git -C "$PH/.claude" rev-list --count HEAD)"
+if [ "$ph3" = "$ph2" ]; then ok; else bad "B4 pair: the same token with no pragma and no placeholder must still hold the backup"; fi
+refuse_n=$((refuse_n+1))
+if printf '%s' "$ph_out" | grep -q 'CLAUDE.md' && printf '%s' "$ph_out" | grep -q 'pragma: allow-secret'; then ok; else bad "B4 the blocking message must name the file AND the pragma (got: $ph_out)"; fi
+pass_n=$((pass_n+1))
+sed -i.bak "/abcdefghijklmnopqrstuvwx/d" "$PH/.claude/CLAUDE.md"; rm -f "$PH/.claude/CLAUDE.md.bak"
+env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+ph4="$(git -C "$PH/.claude" rev-list --count HEAD)"
+GHP29="$(printf '%s%s' 'gh' 'p_')abcdefghij1234567890"
+printf 'harmless content\n' > "$PH/.claude/hooks/$GHP29.md"
+env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+ph5="$(git -C "$PH/.claude" rev-list --count HEAD)"
+if [ "$ph5" = "$ph4" ]; then ok; else bad "m18 a secret used as a FILENAME must hold the backup"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$PH/.claude/hooks/$GHP29.md"
+printf 'harmless content\n' > "$PH/.claude/hooks/ordinary-note.md"
+env HOME="$PH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+ph6="$(git -C "$PH/.claude" rev-list --count HEAD)"
+if [ "$ph6" -gt "$ph4" ]; then ok; else bad "m18 pair: an ordinary filename must back up normally"; fi
+pass_n=$((pass_n+1))
+
+# --- B5 the COMMITTER identity is checked like the author ------------------------------
+ci29="$T/committer-repo"; mkdir -p "$ci29"; git -C "$ci29" init -q -b main; git -C "$ci29" config core.hooksPath "$GIT_HOOKS_DIR"
+echo a > "$ci29/a.txt"; git -C "$ci29" add -A
+if env HOME="$FAKE_HOME" GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com \
+     GIT_COMMITTER_NAME=Claude GIT_COMMITTER_EMAIL=noreply@anthropic.com \
+     git -C "$ci29" commit -q -m t >/dev/null 2>&1; then
+  bad "B5 a matching AUTHOR with a Claude COMMITTER must be refused"; else ok; fi
+refuse_n=$((refuse_n+1))
+if env HOME="$FAKE_HOME" "${ID[@]}" git -C "$ci29" commit -q -m t >/dev/null 2>&1; then ok; else bad "B5 pair: a matching author AND committer must commit"; fi
+pass_n=$((pass_n+1))
+INPUT=""
+printf 'notes: a clean message\n' > "$T/m29a"
+expect refuse 1 "B5 commit-msg: a Claude COMMITTER identity must be refused" env GIT_COMMITTER_NAME=Claude GIT_COMMITTER_EMAIL=noreply@anthropic.com bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29a"
+expect pass 0 "B5 pair: commit-msg with an ordinary committer passes" env GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29a"
+
+# --- B6 commit-pathspec-guard: --pathspec-from-file, an unresolvable cd, bad input ------
+c29="$T/h29-commit"; mkdir -p "$c29"; git -C "$c29" init -q -b main; git -C "$c29" config core.hooksPath /dev/null
+echo a > "$c29/a.txt"; git -C "$c29" add -A; "${ID[@]}" git -C "$c29" commit -q -m init
+echo b > "$c29/b.txt"; git -C "$c29" add b.txt
+printf '.\n' > "$c29/sweep-list.txt"; printf 'b.txt\n' > "$c29/named-list.txt"
+ex29() { local kind="$1" want="$2" label="$3" c="$4"
+  jb28 "$c" "$c29" | bash "$HOOKS_DIR/commit-pathspec-guard.sh" >/dev/null 2>&1; local got=$?
+  if [ "$got" = "$want" ]; then ok; else bad "$label (wanted exit $want, got $got)"; fi
+  if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+ex29 refuse 2 "B6 --pathspec-from-file naming the whole tree must be refused" 'git commit --pathspec-from-file=sweep-list.txt -m x'
+ex29 refuse 2 "B6 --pathspec-from-file whose file cannot be read must be refused" 'git commit --pathspec-from-file=no-such-list.txt -m x'
+ex29 refuse 2 "B6 --pathspec-from-file reading stdin cannot be read: refuse" 'git commit --pathspec-from-file=- -m x'
+ex29 pass 0 "B6 pair: --pathspec-from-file naming one real file passes" 'git commit --pathspec-from-file=named-list.txt -m x'
+ex29 refuse 2 "B6 a cd target this guard cannot resolve must be refused" 'cd "$HOME/prov" && git commit NOTES.md -m x'
+ex29 pass 0 "B6 pair: an absolute cd into a real repo still passes" "cd $c29 && git commit b.txt -m x"
+ex29 pass 0 "B6 pair: an ordinary pathspec commit still passes" 'git commit b.txt -m x'
+INPUT=''
+expect refuse 2 "B6 empty hook input must fail CLOSED" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+INPUT='{"tool_name":"Bash","tool_input":{"command":'
+expect refuse 2 "B6 truncated JSON must fail CLOSED" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+INPUT='{"tool_name":"Write","tool_input":{"file_path":"/x/NOTES.md","content":"git commit -a"}}'
+expect pass 0 "B6 pair: a non-Bash tool call passes untouched" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+
+# --- M7/M8/M9 channel-size-guard: word boundary, Bash shrinks, the post-write re-measure
+CSZ29="$T/csz29"; mkdir -p "$CSZ29"
+cp "$HOOKS_DIR/channel-size-guard.sh" "$CSZ29/" 2>/dev/null
+cp "$HOOKS_DIR/channel-size-post.sh" "$CSZ29/" 2>/dev/null
+printf 'LIMIT=100\nNOTES.md words 10 20\n' > "$CSZ29/channel-ceiling.conf"
+d29="$T/csz29repo"; mkdir -p "$d29"
+w21b="$(python3 -c "print(' '.join(['w']*21))")"
+printf '%s' "$w21b" > "$d29/RELEASE-NOTES.md"; printf '%s' "$w21b" > "$d29/NOTES.md"
+INPUT="$(jb2 'echo x >> RELEASE-NOTES.md' "$d29")"; expect pass 0 "M7 an unwatched RELEASE-NOTES.md must NOT be refused (both-side word boundary)" bash "$CSZ29/channel-size-guard.sh"
+INPUT="$(jb2 'echo x >> NOTES.md' "$d29")"; expect refuse 2 "M7 pair: the watched NOTES.md over its stop is still refused" bash "$CSZ29/channel-size-guard.sh"
+csz_allow=("sed -i '' '5,\$d' NOTES.md" ': > NOTES.md' 'cp NOTES.md NOTES-ARCHIVE.md' 'cat NOTES.md | head -5 > tmp.md')
+for c in "${csz_allow[@]}"; do
+  INPUT="$(jb2 "$c" "$d29")"; expect pass 0 "M8 a Bash shrink or copy must be ALLOWED: $c" bash "$CSZ29/channel-size-guard.sh"; done
+csz_refuse=('echo x >> NOTES.md' 'cat extra.md >> NOTES.md' 'echo x | tee -a NOTES.md' 'cat a.md b.md > NOTES.md')
+for c in "${csz_refuse[@]}"; do
+  INPUT="$(jb2 "$c" "$d29")"; expect refuse 2 "M8 pair: visible growth is still REFUSED: $c" bash "$CSZ29/channel-size-guard.sh"; done
+post29() { jb2 "$1" "$d29" | bash "$CSZ29/channel-size-post.sh" 2>&1; }
+python3 -c "import sys;open(sys.argv[1],'w').write('x'*100000)" "$d29/NOTES.md"
+o29p1="$(post29 'perl -pi -e "s/a/b/" NOTES.md')"
+if printf '%s' "$o29p1" | grep -q 'NOTES.md'; then ok; else bad "M9 a file huge in BYTES but tiny in words must be named after the write (got: $o29p1)"; fi
+refuse_n=$((refuse_n+1))
+printf '%s' "$(python3 -c "print(' '.join(['w']*5))")" > "$d29/NOTES.md"
+o29p2="$(post29 'perl -pi -e "s/a/b/" NOTES.md')"
+if [ -z "$o29p2" ]; then ok; else bad "M9 pair: a small file must produce NO warning (got: $o29p2)"; fi
+pass_n=$((pass_n+1))
+printf '%s' "$(python3 -c "print(' '.join(['w']*25))")" > "$d29/NOTES.md"
+o29p3="$(post29 'f=NOTES.md; echo x >> $f')"
+if printf '%s' "$o29p3" | grep -q 'NOTES.md'; then ok; else bad "M9 a variable-named append is caught after the write (got: $o29p3)"; fi
+refuse_n=$((refuse_n+1))
+o29p4="$(je "$d29/NOTES.md" old new | bash "$CSZ29/channel-size-post.sh" 2>&1)"
+if printf '%s' "$o29p4" | grep -q 'NOTES.md'; then ok; else bad "M9 an Edit on an over-stop file is named after the write (got: $o29p4)"; fi
+refuse_n=$((refuse_n+1))
+
+# --- M10/M12/M14 stop-state-check: a real state update, the turn snapshot, no session id
+SCD29="$T/state-check-29"; mkdir -p "$SCD29"; cp "$HOOKS_DIR/stop-state-check.sh" "$SCD29/"
+printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  5\n' > "$SCD29/state-check.conf"
+S29="$T/ssc29-state"
+sr29="$T/myapp-dev29"; mkdir -p "$sr29/state"; git -C "$sr29" init -q -b main; git -C "$sr29" config core.hooksPath /dev/null
+printf '**Current task:** first\n**Next step:** second\n' > "$sr29/state/dev.md"
+echo seed > "$sr29/README.md"; git -C "$sr29" add -A; "${ID[@]}" git -C "$sr29" commit -q -m init
+snap29() { mkdir -p "$S29/turnsnap"; git -C "$sr29" status --porcelain --untracked-files=no > "$S29/turnsnap/$1"; }
+run29() { ssc_json "$sr29" "$1" false "" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/stop-state-check.sh"; }
+snap29 sid29a
+echo more >> "$sr29/README.md"
+printf '   \n' >> "$sr29/state/dev.md"
+o29a="$(run29 sid29a)"
+if printf '%s' "$o29a" | grep -q '"decision":"block"'; then ok; else bad "M10 a whitespace-only append to the state file must still BLOCK (got: $o29a)"; fi
+refuse_n=$((refuse_n+1))
+printf '**Next step:** land the fix\n' >> "$sr29/state/dev.md"
+o29b="$(run29 sid29a)"
+if printf '%s' "$o29b" | grep -q '"decision":"block"'; then bad "M10 pair: a real Next step update must be ALLOWED (got: $o29b)"; else ok; fi
+pass_n=$((pass_n+1))
+git -C "$sr29" add -A; "${ID[@]}" git -C "$sr29" commit -q -m land
+echo dirt >> "$sr29/README.md"          # dirty from a PREVIOUS turn
+snap29 sid29b                            # this turn starts in the already-dirty tree
+o29c="$(run29 sid29b)"
+if printf '%s' "$o29c" | grep -q '"decision":"block"'; then bad "M12 a read-only turn in an already-dirty tree must NOT block (got: $o29c)"; else ok; fi
+pass_n=$((pass_n+1))
+mkdir -p "$S29/turnsnap"; : > "$S29/turnsnap/sid29c"
+o29d="$(run29 sid29c)"
+if printf '%s' "$o29d" | grep -q '"decision":"block"'; then ok; else bad "M12 pair: a turn that started CLEAN and left the tree dirty must BLOCK (got: $o29d)"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$S29/turnsnap/sid29d"
+o29e="$(run29 sid29d)"
+if printf '%s' "$o29e" | grep -q '"decision":"block"'; then bad "M12 with no turn snapshot the gate must WARN, not block (got: $o29e)"; else ok; fi
+pass_n=$((pass_n+1))
+if printf '%s' "$o29e" | grep -qi 'doorman'; then ok; else bad "M12 the no-snapshot note must name doorman.sh (got: $o29e)"; fi
+pass_n=$((pass_n+1))
+: > "$S29/turnsnap/nosid-myapp-dev29"
+o29f="$(ssc_json "$sr29" "" false "" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/stop-state-check.sh")"
+if printf '%s' "$o29f" | grep -q '"decision":"block"'; then ok; else bad "M14 an empty session_id must not switch the state-file job off (got: $o29f)"; fi
+refuse_n=$((refuse_n+1))
+TP29="$T/ssc29-transcript.jsonl"
+printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":9000,"output_tokens":10}}}\n' > "$TP29"
+ssc_json "$sr29" "" false "$TP29" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/stop-state-check.sh" >/dev/null 2>&1
+n29ret="$(ls "$S29/retired" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$n29ret" = "0" ]; then ok; else bad "M14 pair: with no session id no retirement marker may be written (got $n29ret)"; fi
+pass_n=$((pass_n+1))
+DCDS="$T/doorman-snap-conf"; mkdir -p "$DCDS"; cp "$HOOKS_DIR/doorman.sh" "$DCDS/"
+printf 'myapp-dev*  dev  850\n' > "$DCDS/state-check.conf"
+rm -rf "$S29/turnsnap"
+dj "$sr29" sid29g "hello" "" | STATE_CHECK_STATE_DIR="$S29" bash "$DCDS/doorman.sh" >/dev/null 2>&1
+if [ -f "$S29/turnsnap/sid29g" ]; then ok; else bad "M12 doorman.sh must write the turn snapshot stop-state-check.sh reads"; fi
+pass_n=$((pass_n+1))
+
+# --- M11 the rules cap must see a RENAME into the repo root ----------------------------
+rn29="$T/renamecap"; mkdir -p "$rn29/sub"; git -C "$rn29" init -q -b main; git -C "$rn29" config core.hooksPath "$GIT_HOOKS_DIR"
+mkwords 6000 > "$rn29/sub/CLAUDE.md"
+git -C "$rn29" add -A; env HOME="$FAKE_HOME" "${ID[@]}" git -C "$rn29" commit -q -m seed >/dev/null 2>&1
+git -C "$rn29" mv sub/CLAUDE.md CLAUDE.md
+if env HOME="$FAKE_HOME" "${ID[@]}" git -C "$rn29" commit -q -m t >/dev/null 2>&1; then bad "M11 git mv sub/CLAUDE.md CLAUDE.md must be REFUSED by the rules cap"; else ok; fi
+refuse_n=$((refuse_n+1))
+git -C "$rn29" mv CLAUDE.md sub/CLAUDE.md
+echo x > "$rn29/other.txt"; git -C "$rn29" add -A
+if env HOME="$FAKE_HOME" "${ID[@]}" git -C "$rn29" commit -q -m t >/dev/null 2>&1; then ok; else bad "M11 pair: moving a big rules file OUT of the root must pass"; fi
+pass_n=$((pass_n+1))
+
+# --- M13 doorman: a tool result is activity; an undated user/assistant line fails OPEN --
+DCD29="$T/doorman29"; mkdir -p "$DCD29"; cp "$HOOKS_DIR/doorman.sh" "$DCD29/"
+printf 'myapp-dev*  dev  850\n' > "$DCD29/state-check.conf"
+dm29="$T/myapp-dev30"; mkdir -p "$dm29"
+TOOLT29=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime($NOWE - 2*60)))")
+TPE="$T/doorman-tp-e.jsonl"
+cat > "$TPE" <<EOF
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:05Z","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":1}}}
+{"type":"user","timestamp":"$TOOLT29","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"user","timestamp":"$NOWT","message":{"content":"current prompt"}}
+EOF
+dj "$dm29" sidDM29A "current prompt" "$TPE" | STATE_CHECK_STATE_DIR="$T/doorman29-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD29/doorman.sh" >/dev/null 2>&1
+rc29a=$?
+if [ "$rc29a" = 0 ]; then ok; else bad "M13 a tool result 2 min ago is activity: must PASS (got $rc29a)"; fi
+pass_n=$((pass_n+1))
+TPF="$T/doorman-tp-f.jsonl"
+cat > "$TPF" <<EOF
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:05Z","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":1}}}
+{"type":"user","timestamp":"2026-01-01T00:00:10Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"user","timestamp":"$NOWT","message":{"content":"current prompt"}}
+EOF
+dj "$dm29" sidDM29B "current prompt" "$TPF" | STATE_CHECK_STATE_DIR="$T/doorman29-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD29/doorman.sh" >/dev/null 2>&1
+rc29b=$?
+if [ "$rc29b" = 2 ]; then ok; else bad "M13 pair: the newest tool result 70 min old must still REFUSE (got $rc29b)"; fi
+refuse_n=$((refuse_n+1))
+TPG="$T/doorman-tp-g.jsonl"
+cat > "$TPG" <<EOF
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":1}}}
+{"type":"user","timestamp":"$NOWT","message":{"content":"current prompt"}}
+EOF
+dj "$dm29" sidDM29C "current prompt" "$TPG" | STATE_CHECK_STATE_DIR="$T/doorman29-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD29/doorman.sh" >/dev/null 2>&1
+rc29c=$?
+if [ "$rc29c" = 0 ]; then ok; else bad "M13 an assistant line with NO timestamp must fail OPEN, as the header promises (got $rc29c)"; fi
+pass_n=$((pass_n+1))
+
+# --- m15/m16 commit-msg: zero-width, any Claude trailer, prose is not a trailer ---------
+INPUT=""
+ZWSP29="$(printf '\342\200\213')"
+printf 'feat: x\n\nCo-Authored-By: Cla%sude <someone@users.noreply.github.com>\n' "$ZWSP29" > "$T/m29b"
+expect refuse 1 "m15 a zero-width space inside Claude must still be caught" bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29b"
+printf 'feat: x\n\nAssisted-by: Claude Opus 5\n' > "$T/m29c"
+expect refuse 1 "m15 any trailer whose value names Claude must be refused" bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29c"
+printf 'feat: x\n\nReviewed-by: Tester <tester@example.com>\n' > "$T/m29d"
+expect pass 0 "m15 pair: an ordinary trailer must pass" bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29d"
+printf 'docs: explain why we never add Co-Authored-By: Claude lines\n' > "$T/m29e"
+expect pass 0 "m16 a prose mention of the trailer must pass" bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29e"
+printf 'docs: explain the rule\n\nCo-Authored-By: Claude Opus 5\n' > "$T/m29f"
+expect refuse 1 "m16 pair: the same words as a real trailer must be refused" bash "$GIT_HOOKS_DIR/commit-msg" "$T/m29f"
+
+# --- m17 pre-commit: an scp-style git URL is not an email; short names are whole words --
+printf 'clone it with git@%s:user/repo.git\n' github.com > "$pe/scp.txt"   # built at runtime: no literal address in this file
+if petry; then ok; else bad "m17 an scp-style git URL must NOT be read as an email address (got: $(cat "$T/pe-err.txt"))"; fi
+pass_n=$((pass_n+1))
+printf 'write to someone@%s please\n' "$PE_DOM" > "$pe/still-bad.txt"
+if petry; then bad "m17 pair: a real unlisted address must still be refused"; else ok; git -C "$pe" reset -q; rm -f "$pe/still-bad.txt"; fi
+refuse_n=$((refuse_n+1))
+SHORT_HOME="$T/fakehome-short"; mkdir -p "$SHORT_HOME/.claude/hooks"
+cp "$FAKE_HOME/.claude/hooks/backup.conf" "$SHORT_HOME/.claude/hooks/backup.conf"
+printf 'Zeb\nword:Quixote\n' > "$SHORT_HOME/.claude/.redaction-names.local"
+sn29="$T/shortnames"; mkdir -p "$sn29"; git -C "$sn29" init -q -b main; git -C "$sn29" config core.hooksPath "$GIT_HOOKS_DIR"
+sntry() { git -C "$sn29" add -A; env HOME="$SHORT_HOME" "${ID[@]}" git -C "$sn29" commit -q -m t >/dev/null 2>&1; }
+echo seed > "$sn29/seed.txt"; sntry
+echo "the word Zebulon appears here" > "$sn29/a.txt"
+if sntry; then ok; else bad "m17 a listed name under six characters must match only as a WHOLE word"; fi
+pass_n=$((pass_n+1))
+echo "Zeb was here" > "$sn29/b.txt"
+if sntry; then bad "m17 pair: the short name on its own must still be refused"; else ok; git -C "$sn29" reset -q; rm -f "$sn29/b.txt"; fi
+refuse_n=$((refuse_n+1))
+echo "several Quixotes appeared" > "$sn29/c.txt"
+if sntry; then ok; else bad "m17 a word:-marked entry must match only as a whole word"; fi
+pass_n=$((pass_n+1))
+echo "Quixote appeared" > "$sn29/d.txt"
+if sntry; then bad "m17 pair: the word:-marked entry on its own must be refused"; else ok; git -C "$sn29" reset -q; rm -f "$sn29/d.txt"; fi
+refuse_n=$((refuse_n+1))
+
+# --- m19 the channel ceiling must count an ADDED file too ------------------------------
+CEIL29="$T/fakehome-ceil29"; mkdir -p "$CEIL29/.claude/hooks"
+: > "$CEIL29/.claude/.redaction-names.local"
+printf 'LIMIT=20\nNOTES.md\n' > "$CEIL29/.claude/hooks/channel-ceiling.conf"
+cr29="$T/ceil29repo"; mkdir -p "$cr29"; git -C "$cr29" init -q -b main; git -C "$cr29" config core.hooksPath "$GIT_HOOKS_DIR"
+c29try() { git -C "$cr29" add -A >/dev/null 2>&1; env HOME="$CEIL29" "${ID[@]}" git -C "$cr29" commit -q -m t >/dev/null 2>&1; }
+echo seed > "$cr29/README.md"; c29try
+python3 -c "print('\n'.join(['line']*50))" > "$cr29/NOTES.md"
+if c29try; then bad "m19 a brand-new NOTES.md of 50 lines must be refused by the ceiling"; else ok; git -C "$cr29" reset -q; rm -f "$cr29/NOTES.md"; fi
+refuse_n=$((refuse_n+1))
+python3 -c "print('\n'.join(['line']*50))" > "$cr29/NOTES-ARCHIVE-2026-09.md"
+if c29try; then ok; else bad "m19 pair: a new ARCHIVE file is exempt whatever its size"; fi
+pass_n=$((pass_n+1))
+python3 -c "print('\n'.join(['line']*50))" > "$cr29/OTHER.md"
+if c29try; then ok; else bad "m19 pair: a new file outside the conf's list must pass"; fi
+pass_n=$((pass_n+1))
+
+# --- m20 a zero-width character inside a listed name --------------------------------
+printf 'met Zebulon%sQuixote today\n' "$ZWSP29" > "$pr/zw.txt"
+if ptry; then bad "m20 a zero-width character inside a listed name must not hide it"; else ok; git -C "$pr" reset -q; rm -f "$pr/zw.txt"; fi
+refuse_n=$((refuse_n+1))
+printf 'an ord%sinary word is still fine\n' "$ZWSP29" > "$pr/zw2.txt"
+if ptry; then ok; else bad "m20 pair: a zero-width inside an unlisted word must still pass"; fi
+pass_n=$((pass_n+1))
+
+# --- m21 pre-push: a missing toolchain is not a type error -----------------------------
+mkrepo tcmissing "definitely-not-a-real-binary-zzq --noEmit"
+pperr29="$(git -C "$T/tcmissing" push origin main 2>&1 1>/dev/null)"
+if printf '%s' "$pperr29" | grep -qi 'toolchain'; then ok; else bad "m21 a missing toolchain must say so, not 'fix the types' (got: $pperr29)"; fi
+refuse_n=$((refuse_n+1))
+if git -C "$T/tcmissing" push -q origin main 2>/dev/null; then bad "m21 a missing toolchain must still REFUSE the push"; else ok; fi
+refuse_n=$((refuse_n+1))
+mkrepo tctypeerr "exit 1"
+pperr29b="$(git -C "$T/tctypeerr" push origin main 2>&1 1>/dev/null)"
+if printf '%s' "$pperr29b" | grep -qi 'Fix the types'; then ok; else bad "m21 pair: a genuine type failure must still say 'Fix the types' (got: $pperr29b)"; fi
+pass_n=$((pass_n+1))
+
+echo "29b install.sh: a guard needing BOTH jq and python3 is registered only when both are there"
+IH1="$T/inst-home-both"; mkdir -p "$IH1"
+env HOME="$IH1" bash "$REPO29/install.sh" --yes >/dev/null 2>&1
+if grep -q 'block-dangerous-git.sh' "$IH1/.claude/settings.json" 2>/dev/null; then ok; else bad "29b with jq and python3 both present the Bash guards must be registered"; fi
+pass_n=$((pass_n+1))
+if grep -q 'channel-size-post.sh' "$IH1/.claude/settings.json" 2>/dev/null; then ok; else bad "29b the PostToolUse size re-measure must be registered next to the pre hook"; fi
+pass_n=$((pass_n+1))
+IH2="$T/inst-home-nojq"; mkdir -p "$IH2"
+env HOME="$IH2" INSTALL_PRETEND_MISSING=jq bash "$REPO29/install.sh" --yes >/dev/null 2>&1
+if grep -q 'block-dangerous-git.sh' "$IH2/.claude/settings.json" 2>/dev/null; then bad "29b with jq missing, the guards that need BOTH must NOT be registered"; else ok; fi
+refuse_n=$((refuse_n+1))
+if grep -q 'gate-guard.sh' "$IH2/.claude/settings.json" 2>/dev/null; then ok; else bad "29b pair: gate-guard.sh needs only python3, so it must still be registered"; fi
+pass_n=$((pass_n+1))
 
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"

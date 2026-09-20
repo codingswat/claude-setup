@@ -1,6 +1,6 @@
 # This repo — instructions for the Claude Code session reading it
 
-**What this repo is:** a working Claude Code configuration — a rulebook, 13 hook scripts and 3
+**What this repo is:** a working Claude Code configuration — a rulebook, 17 hook scripts and 4
 git hooks, a project template, a glossary and a few skills. Someone has just opened a session
 here because they want it set up on their machine.
 
@@ -15,8 +15,8 @@ assumption, not a constraint.
 Greet them briefly and offer the install. Say plainly what it will touch:
 
 > This will add hook scripts, a project template and some skills under `~/.claude`, and
-> register the hooks (up to nine entries by default, fewer without python3 or jq; up to
-> four more, thirteen in total, if you also turn on the multi-chat coordination group) in
+> register the hooks (up to ten entries by default, fewer without python3 or jq; up to
+> four more, fourteen in total, if you also turn on the multi-chat coordination group) in
 > `~/.claude/settings.json`. Anything it would overwrite gets backed up
 > first, and nothing is deleted. The three sharp-edged or opt-in pieces — the auto-backup
 > hook, the multi-chat coordination group, and the machine-wide git hooks — are off unless

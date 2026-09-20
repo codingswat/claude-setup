@@ -2,11 +2,13 @@
 # Fires on every `git commit`, whatever made it (an agent, a script, or a person at the
 # terminal). Checks, most independently opt-in through their own config file — no config
 # means that check is inert, the safe default for a fresh install:
-#   (1) author identity — enforced only if hooks/backup.conf sets AUTHOR=...; otherwise
-#       this repo hasn't opted in and the check is skipped silently. A repo can also opt
-#       OUT explicitly (a work repo with its own author, on a machine that also runs a
-#       personal backup.conf): `git config --local hooks.identity false` skips this check
-#       silently, same as having no AUTHOR at all.
+#   (1) identity — BOTH the author and the committer, enforced only if hooks/backup.conf
+#       sets AUTHOR=...; otherwise this repo hasn't opted in and the check is skipped
+#       silently. The committer matters as much as the author: `GIT_COMMITTER_NAME=…
+#       git commit` writes that name into the commit object even when the author line is
+#       yours. A repo can also opt OUT explicitly (a work repo with its own author, on a
+#       machine that also runs a personal backup.conf): `git config --local hooks.identity
+#       false` skips this check silently, same as having no AUTHOR at all.
 #   (2) a channel-file insertion ceiling — a shared file several people or sessions
 #       append to (running notes, a decision log, a changelog) should gain only a bounded
 #       number of lines per commit; a much bigger jump usually means two sessions' entries
@@ -15,18 +17,22 @@
 #       patterns — the SAME file hooks/channel-size-guard.sh reads for its own, separate
 #       live-growth check, so a line there may carry extra columns this check ignores; only
 #       the first field (the pattern) matters here. No file means this check never runs.
-#       Modified files only (a brand-new file cannot hold someone else's swept-in text),
-#       and archives (any path containing "ARCHIVE") are exempt. Override for a deliberate
-#       large write, one commit: `SWEEP=1 git commit ...` (this check only) — every use is
-#       logged by hooks/override-ledger.sh, if present.
+#       ADDED and modified files both count (deleting a channel file and re-adding it in
+#       the next commit was otherwise a free way past the ceiling); archives (any path
+#       containing "ARCHIVE") stay exempt. Override for a deliberate large write, one
+#       commit: `SWEEP=1 git commit ...` (this check only) — every use is logged by
+#       hooks/override-ledger.sh, if present.
 #   (3) a root rules file (`CLAUDE.md`, path exactly at the repo top level, never
 #       `*/CLAUDE.md` in a subfolder) is capped by word count on the STAGED blob: 4000
 #       words if the repo's top level is `$HOME/.claude` (your global rulebook), 5750
 #       otherwise (a project rulebook). A rulebook that grows without limit stops being
-#       read. Override, one commit: `RULES_CAP_OK=1 git commit ...`.
+#       read. A RENAME counts as an add (`git mv sub/CLAUDE.md CLAUDE.md` is how a big
+#       file walked in before). Override, one commit: `RULES_CAP_OK=1 git commit ...`.
 #   (4) privacy — runs in EVERY repository, unconditionally, on the ADDED lines of the
 #       staged diff (an old line already in history isn't re-introduced by touching the
-#       file again):
+#       file again), on the staged PATHS themselves, and on the raw bytes of any staged
+#       blob git calls binary (a UTF-16 document has a NUL in every other byte, so it has
+#       no "+" lines at all). What it looks for:
 #         - an absolute home path (`/Users/<name>/` or `/home/<name>/`, macOS and Linux)
 #           whose <name> isn't a known placeholder (node, runner, user, app, USERNAME,
 #           username, you, yourname, example — Docker base images, CI runners and doc
@@ -36,16 +42,34 @@
 #           no file there means privacy hasn't been set up on this machine, so the commit
 #           is REFUSED (fail closed) rather than silently skipping the names check. An
 #           existing file, even an empty one, is enough — it just means no names are
-#           configured yet, so only the home-path and email checks apply;
+#           configured yet, so only the home-path and email checks apply. An entry under
+#           six characters, or one written `word:Name`, matches only as a WHOLE word, so a
+#           short handle doesn't refuse every longer word that contains it;
 #         - an email address whose domain is not on a small built-in allowlist (GitHub's
 #           and Apple's own no-reply domains, plus the RFC 2606 example.* domains) or in
 #           hooks/allowed-email-domains.conf (see
 #           hooks/allowed-email-domains.conf.example, one domain per line, added to the
 #           built-in list) — catches a real personal address before it reaches a public
-#           commit. This half has a safe built-in default and does not fail closed.
-#       Deliberate override, one commit: `PRIVACY_OK=1 git commit ...` (skips all of (4)).
+#           commit. An scp-style git remote (`git@<host>:user/repo.git`) is a URL, not
+#           an address, and is skipped. This half has a safe built-in default and does not
+#           fail closed.
+#       Zero-width characters (U+200B/C/D, U+2060, U+FEFF) are stripped before matching.
+#       Limits, stated plainly: a name SPLIT ACROSS TWO LINES is not caught (the scan is
+#       line by line), and neither is one that is base64- or otherwise encoded — the
+#       `npm run test:privacy`-style full sweep before anything goes public remains the
+#       authority. Deliberate override, one commit: `PRIVACY_OK=1 git commit ...` (skips
+#       all of (4)).
+#
+# git-hooks/pre-merge-commit runs check (4) alone on a merge commit, which no pre-commit
+# hook ever sees; it calls this script back with PRE_COMMIT_PRIVACY_ONLY=1.
+# Tests: hooks/test-hooks.sh (sections 6, 6b, 12, 13, 13b, 19, 24, 29).
 
-# ---- (1) author identity ----
+if [ "${PRE_COMMIT_PRIVACY_ONLY:-0}" = "1" ]; then
+  HOOK_LABEL="${HOOK_LABEL:-pre-commit hook}"
+else
+HOOK_LABEL="pre-commit hook"
+
+# ---- (1) identity: the author AND the committer ----
 if [ "$(git config --local --get hooks.identity 2>/dev/null)" = "false" ]; then
   : # this repo opted out — skip silently
 else
@@ -58,16 +82,20 @@ else
     done < "$CONF"
   fi
   if [ -n "$AUTHOR" ]; then
-    ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null)"
-    case "$ident" in
-      "$AUTHOR"*) ;;
-      *)
-        echo "pre-commit hook: REFUSED — author identity does not match hooks/backup.conf." >&2
-        echo "  want: $AUTHOR" >&2
-        echo "  got:  ${ident%% >*} >" >&2
-        echo "  Per-repo opt-out: git config --local hooks.identity false" >&2
-        exit 1 ;;
-    esac
+    for who in AUTHOR COMMITTER; do
+      ident="$(git var "GIT_${who}_IDENT" 2>/dev/null)"
+      [ -n "$ident" ] || continue      # no readable identity for this role: nothing to judge
+      case "$ident" in
+        "$AUTHOR"*) ;;
+        *)
+          lower="$(printf '%s' "$who" | tr '[:upper:]' '[:lower:]')"
+          echo "pre-commit hook: REFUSED — the $lower identity does not match hooks/backup.conf." >&2
+          echo "  want: $AUTHOR" >&2
+          echo "  got:  ${ident%% >*} >" >&2
+          echo "  Per-repo opt-out: git config --local hooks.identity false" >&2
+          exit 1 ;;
+      esac
+    done
   fi
 fi
 
@@ -101,7 +129,7 @@ if [ -s "$CEILING_CONF" ]; then
         echo "  Reconcile: git diff --cached -- $path   |   deliberate large write: SWEEP=1 git commit ..." >&2
         cfail=1
       fi
-    done < <(git diff --cached --numstat --diff-filter=M)
+    done < <(git diff --cached --numstat --diff-filter=AM)
     [ "$cfail" = 1 ] && exit 1
   fi
 fi
@@ -109,10 +137,10 @@ fi
 # ---- (3) root CLAUDE.md word cap ----
 # Path exactly "CLAUDE.md" at a repo's top level, never a subfolder's "*/CLAUDE.md". The
 # global rulebook ($HOME/.claude, e.g. a config-backup repo whose toplevel IS $HOME/.claude)
-# gets the tighter cap; a project rulebook gets the looser one. RULES_CAP_OK=1 skips this
-# check only.
+# gets the tighter cap; a project rulebook gets the looser one. A rename or copy INTO the
+# root is an add as far as this cap is concerned. RULES_CAP_OK=1 skips this check only.
 if [ "${RULES_CAP_OK:-0}" = "1" ]; then
-  if git diff --cached --name-only --diff-filter=AM | grep -qx 'CLAUDE.md'; then
+  if git diff --cached --name-only --diff-filter=AMRC | grep -qx 'CLAUDE.md'; then
     L="$HOME/.claude/hooks/override-ledger.sh"
     [ -f "$L" ] && bash "$L" RULES_CAP_OK "git commit (pre-commit: the rules-file cap lifted)"
   fi
@@ -126,31 +154,61 @@ else
       echo "pre-commit hook: REFUSED — $path is $words words; the rules file is capped at $cap. Trim it, or, deliberately: RULES_CAP_OK=1 git commit ..." >&2
       exit 1
     fi
-  done < <(git diff --cached --name-only --diff-filter=AM)
+  done < <(git diff --cached --name-only --diff-filter=AMRC)
 fi
+fi   # end of the checks pre-merge-commit skips
 
-# ---- (4) privacy: ADDED lines of the staged diff vs a home path, a listed name, or an
-#          unlisted email domain ----
+# ---- (4) privacy: the ADDED lines, the staged PATHS, and any staged binary blob ----
 [ "${PRIVACY_OK:-}" = "1" ] && exit 0
-python3 - <<'PY' || exit 1
+HOOK_LABEL="$HOOK_LABEL" python3 - <<'PY' || exit 1
 import re, subprocess, sys, os
+
+LABEL = os.environ.get("HOOK_LABEL") or "pre-commit hook"
+ZW = dict.fromkeys(map(ord, "​‌‍⁠﻿"), None)
+def dezw(s):
+    return s.translate(ZW)
 
 names_file = os.path.expanduser("~/.claude/.redaction-names.local")
 if not os.path.isfile(names_file):
-    print(f"pre-commit hook: REFUSED — {names_file} does not exist, so the privacy check's "
+    print(f"{LABEL}: REFUSED — {names_file} does not exist, so the privacy check's "
           "names list is not configured on this machine (fail closed, not open). Create the "
           "file (an empty one is enough to proceed with no names configured), one real name "
           "or handle to guard per line. Deliberate override, one commit: PRIVACY_OK=1 git commit ...",
           file=sys.stderr)
     sys.exit(1)
+# Each entry is (lowercased needle, whole-word-only). A short entry matches only as a whole
+# word — otherwise a three-letter handle refuses every longer word containing it. `word:X`
+# asks for the same treatment explicitly, whatever the length.
 needles = []
 for ln in open(names_file, encoding="utf-8"):
-    s = ln.strip()
-    if s and not s.startswith("#"):
-        needles.append(s.lower())
+    s = dezw(ln).strip()
+    if not s or s.startswith("#"):
+        continue
+    word_only = False
+    if s.lower().startswith("word:"):
+        s = s[5:].strip()
+        word_only = True
+    if not s:
+        continue
+    if len(s) < 6:
+        word_only = True
+    needles.append((s.lower(), word_only))
 
 EXCLUDED = {"node", "runner", "user", "app", "USERNAME", "username", "you", "yourname", "example"}
 home_path = re.compile(r"/(?:Users|home)/([A-Za-z0-9_.-]+)/")
+
+def name_hits(text):
+    low = dezw(text).lower()
+    n = 0
+    for nd, word_only in needles:
+        if word_only:
+            n += len(re.findall(r"(?<![A-Za-z0-9])" + re.escape(nd) + r"(?![A-Za-z0-9])", low))
+        elif nd in low:
+            n += 1
+    return n
+
+def home_hits(text):
+    return sum(1 for m in home_path.finditer(dezw(text)) if m.group(1) not in EXCLUDED)
 
 # Email domains: a small, universal built-in default plus anything the user adds in
 # hooks/allowed-email-domains.conf (one domain per line, # comments allowed). No conf file
@@ -167,12 +225,23 @@ if os.path.isfile(domains_conf):
         if s and not s.startswith("#"):
             ALLOWED_EMAIL_DOMAINS.add(s.lower())
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+# `git@<host>:user/repo.git` — an scp-style remote, not an address. The colon and the
+# slashed path after it are what tell the two apart; "write to someone at example dot com: details" has no
+# slash before the next space and is still judged as an address.
+SCP_RE = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}:[A-Za-z0-9._~-]+/[A-Za-z0-9._~/-]*")
 
-diff = subprocess.run(["git", "diff", "--cached", "-U0", "--no-color"], capture_output=True).stdout
-text = diff.decode("utf-8", "surrogateescape")
-cur_file = None
+def git_bytes(args):
+    return subprocess.run(["git"] + args, capture_output=True).stdout
+
 offenders = {}
 email_offenders = {}
+def add_offender(path, n):
+    if n and path:
+        offenders[path] = offenders.get(path, 0) + n
+
+# --- (a) the ADDED lines of the text diff ---
+text = git_bytes(["diff", "--cached", "-U0", "--no-color"]).decode("utf-8", "surrogateescape")
+cur_file = None
 for line in text.splitlines():
     if line.startswith("+++ "):
         p = line[4:]
@@ -183,31 +252,68 @@ for line in text.splitlines():
     if not line.startswith("+") or line.startswith("+++"):
         continue
     added = line[1:]
-    n = 0
-    low = added.lower()
-    for nd in needles:
-        if nd in low:
-            n += 1
-    for m in home_path.finditer(added):
-        if m.group(1) not in EXCLUDED:
-            n += 1
-    if n and cur_file:
-        offenders[cur_file] = offenders.get(cur_file, 0) + n
+    add_offender(cur_file, name_hits(added) + home_hits(added))
     if cur_file:
+        scp_spans = [m.span() for m in SCP_RE.finditer(added)]
         for m in EMAIL_RE.finditer(added):
+            if any(s <= m.start() and m.end() <= e for s, e in scp_spans):
+                continue
             domain = m.group(1).lower()
             if domain not in ALLOWED_EMAIL_DOMAINS:
                 cnt, _ex = email_offenders.get(cur_file, (0, None))
                 local = m.group(0).split("@")[0]
                 email_offenders[cur_file] = (cnt + 1, f"{(local[:1] or 'x')}***@{domain}")
+
+# --- (b) the staged PATHS themselves: a name used as a filename has no "+" line at all ---
+staged = [p for p in git_bytes(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"])
+          .decode("utf-8", "surrogateescape").split("\0") if p]
+for p in staged:
+    # names only: a staged path is always repo-relative, so it can never BE an absolute
+    # home path, and a repo with a `docs/home/faq/` folder must not be refused for it.
+    n = name_hits(p)
+    if n:
+        offenders[p] = offenders.get(p, 0) + n
+
+# --- (c) staged blobs git calls binary: no "+" lines, so decode the bytes and look ---
+raw = git_bytes(["diff", "--cached", "--numstat", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape")
+fields = raw.split("\0")
+i = 0
+binary_paths = []
+while i < len(fields):
+    rec = fields[i]; i += 1
+    if not rec.strip():
+        continue
+    parts = rec.split("\t")
+    if len(parts) < 3:
+        continue
+    add, dele, inline = parts[0], parts[1], parts[2]
+    if inline:
+        path = inline
+    else:                       # a rename/copy record: old path, then new path
+        path = fields[i + 1] if i + 1 < len(fields) else (fields[i] if i < len(fields) else "")
+        i += 2
+    if add == "-" and dele == "-" and path:
+        binary_paths.append(path)
+for p in binary_paths:
+    blob = git_bytes(["show", ":" + p])[:2_000_000]
+    n = 0
+    for enc in ("utf-8", "utf-16-le", "utf-16-be", "latin-1"):
+        try:
+            t = blob.decode(enc, "ignore")
+        except Exception:
+            continue
+        n += name_hits(t) + home_hits(t)
+    if n:
+        offenders[p] = offenders.get(p, 0) + n
+
 if offenders:
-    print("pre-commit hook: REFUSED — an absolute home path or a listed name is in an ADDED "
-          "line of the staged diff (file -> matches): " + ", ".join(f"{k} -> {v}" for k, v in offenders.items()),
-          file=sys.stderr)
+    print(f"{LABEL}: REFUSED — an absolute home path or a listed name is in an ADDED "
+          "line, a staged file NAME, or a staged binary blob (file -> matches): " +
+          ", ".join(f"{k} -> {v}" for k, v in offenders.items()), file=sys.stderr)
     print("  Remove it, re-stage, commit again. Deliberate override, one commit: PRIVACY_OK=1 git commit ...", file=sys.stderr)
     sys.exit(1)
 if email_offenders:
-    print("pre-commit hook: REFUSED — an email address outside the allowed domains is in an "
+    print(f"{LABEL}: REFUSED — an email address outside the allowed domains is in an "
           "ADDED line of the staged diff (file -> count, one masked example): " +
           ", ".join(f"{k} -> {v[0]} ({v[1]})" for k, v in email_offenders.items()), file=sys.stderr)
     print("  If the domain is legitimate, add it to hooks/allowed-email-domains.conf. "

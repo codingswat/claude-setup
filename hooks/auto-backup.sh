@@ -107,17 +107,52 @@ changed_files() {
   porcelain_paths | tr '\n' ' ' | cut -c1-120
 }
 
-# Secret scan: refuse to commit or push while a changed file contains something that
-# looks like a live secret (an API key, a token, a private key). Fails closed — the
-# backup simply does not run until the secret is gone; nothing here is committed until
-# this check passes, so the next turn retries automatically once it's removed.
+# Secret scan: refuse to commit or push while a changed file contains — or is NAMED with —
+# something that looks like a live secret (an API key, a token, a private key). Fails
+# closed: the backup does not run until the secret is gone, and the next turn retries
+# automatically once it's removed.
+#
+# Two escapes, because a check that holds every backup for ever over a line of
+# documentation is worse than no check:
+#   - a PLACEHOLDER value — one containing `your-`, `example`, `xxxx`, or wrapped in
+#     `<`/`>` — never blocks. A doc showing the SHAPE of a key is not a key.
+#   - `# pragma: allow-secret` anywhere on the same line marks a deliberate fixture (a
+#     test string, a regex example) and skips that line.
+# When the scan does block, the message names the blocking FILE and repeats the pragma, on
+# every turn, so the way out is never something you have to go and look up.
+#
+# Limits, stated plainly: the scan is LINE BY LINE, so a secret split across two lines is
+# not caught, and neither is a base64- or otherwise encoded one. It is a catcher of
+# accidents, not a defence against someone deliberately hiding a key in your config.
 SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|Bearer [A-Za-z0-9._-]{20,}|_TOKEN=[^ ]{16,}|_KEY=[^ ]{16,}|_SECRET=[^ ]{16,}|://[^/ :]+:[^@ ]+@|-----BEGIN [A-Z ]*PRIVATE KEY'
+SECRET_HINT="If a line is a placeholder or a test fixture, put '# pragma: allow-secret' on it (a value containing your-, example, xxxx or <…> is ignored already)."
+is_placeholder() {   # $1 = the matched text, not the whole line
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    *your-*|*example*|*xxxx*|*'<'*|*'>'*) return 0 ;;
+  esac
+  return 1
+}
+# One file -> prints a line number per REAL hit (placeholders and pragma lines dropped).
+file_secret_lines() {
+  local f="$1" ln m full
+  grep -noaE "$SECRET_RE" "$f" 2>/dev/null | while IFS=: read -r ln m; do
+    case "$ln" in ''|*[!0-9]*) continue ;; esac
+    is_placeholder "$m" && continue
+    full="$(sed -n "${ln}p" "$f" 2>/dev/null)"
+    case "$full" in *'pragma: allow-secret'*) continue ;; esac
+    printf '%s\n' "$ln"
+  done
+}
+# A path can BE the secret: `ghp_…​.md` as a filename has no matching line inside it.
+path_has_secret() {
+  printf '%s' "$1" | grep -qE "$SECRET_RE" && ! is_placeholder "$1"
+}
 # Scans a fixed list of file paths (used for the mirror copies, which are never inside
 # `git status`). Returns matching paths, one per line.
 files_have_secret() {
   local hits="" f
   for f in "$@"; do
-    if [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" >/dev/null 2>&1; then
+    if path_has_secret "$f" || { [ -f "$f" ] && [ -n "$(file_secret_lines "$f")" ]; }; then
       hits="${hits:+$hits$'\n'}$f"
     fi
   done
@@ -126,10 +161,12 @@ files_have_secret() {
 secret_scan() {
   local hits
   hits=$(porcelain_paths | while IFS= read -r f; do
-    [ -f "$f" ] && grep -lE "$SECRET_RE" "$f" 2>/dev/null
+    if path_has_secret "$f"; then printf '%s\n' "$f"; continue; fi
+    [ -f "$f" ] || continue
+    [ -n "$(file_secret_lines "$f")" ] && printf '%s\n' "$f"
   done)
   if [ -n "$hits" ]; then
-    warn "$1: possible secret in: $hits — NOT committed, NOT pushed. Remove it; the next turn backs up normally once it's gone."
+    warn "$1: possible secret in: $hits — NOT committed, NOT pushed. Remove it; the next turn backs up normally once it's gone. $SECRET_HINT"
     return 1
   fi
   return 0
@@ -199,7 +236,7 @@ elif git -C "$MIRROR_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # sit — scan the four copies too, same as the config repo above, before they are staged.
   mirror_hits="$(files_have_secret "$MIRROR_DIR/global-copy.md" "$MIRROR_DIR/hook-copy.sh" "$MIRROR_DIR/settings-copy.json" "$MIRROR_DIR/auto-backup-copy.sh")"
   if [ -n "$mirror_hits" ]; then
-    warn "mirror repo: possible secret in: $mirror_hits — NOT committed, NOT pushed. Remove it from the source; the next turn refreshes normally once it's gone."
+    warn "mirror repo: possible secret in: $mirror_hits — NOT committed, NOT pushed. Remove it from the source; the next turn refreshes normally once it's gone. $SECRET_HINT"
     exit 0
   fi
   cd "$MIRROR_DIR" || exit 0

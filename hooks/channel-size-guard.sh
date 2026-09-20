@@ -15,16 +15,25 @@
 # name the file, not its full path. No conf file, or a file with no unit/band/stop columns
 # at all: this guard does nothing — the safe default for a repo with no shared files.
 #
-# Coverage for Bash: the append forms `>>`, a bare `>` (a full rewrite, e.g. `cat > file
-# <<EOF`), `>|`, `tee`/`tee -a`, `sed -i`, `cp` onto the file, `dd of=<file>`, and a
-# python3/python `open(...,'a'|'w')` call naming the file (heredoc body included) — all
-# judged on the file's CURRENT on-disk size, like a plain `>>`. Write/Edit/MultiEdit are
-# judged on the content the tool is about to write.
+# Coverage for Bash, deliberately NARROW: only growth this hook can actually SEE in the
+# command text is refused —
+#   - an append redirect (`>> NOTES.md`),
+#   - `tee -a … NOTES.md`,
+#   - `cat <one or more files> > NOTES.md` (a concatenation INTO the file).
+# Everything else a shell can do to a file passes: `sed -i`, `cp`, `: >`, `dd`, a python
+# `open(...)`, `cat tmp > NOTES.md`'s truncating cousins, a filename held in a variable.
+# Most of those are how a SWEEP is actually written, and refusing them refused the very
+# fix the guard asks for. What catches the rest is hooks/channel-size-post.sh, the
+# PostToolUse companion: it re-measures the file on disk AFTER the call and says loudly
+# that it is over — it cannot undo a write, but nothing gets past it unnoticed.
+# The file name is matched with a word boundary on BOTH sides, so `RELEASE-NOTES.md` is
+# not a `NOTES.md`.
+# Write/Edit/MultiEdit are judged on the content the tool is about to write.
 # Growth is measured in the band's OWN unit (words via `wc -w`, lines via `wc -l`), never
 # bytes; a relative Bash path is resolved against the hook JSON's `.cwd` when given, and
 # left unchecked (noted, not refused) when `.cwd` is absent, rather than refused on a guess;
 # the basename compare is case-insensitive.
-# Tests: hooks/test-hooks.sh.
+# Tests: hooks/test-hooks.sh (sections 22 and 29).
 input="$(cat)"
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"
 CONF="$(dirname "$0")/channel-ceiling.conf"
@@ -97,38 +106,50 @@ case "$tool" in
     cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
     names="$(all_watched_basenames)"
     [ -z "$names" ] && exit 0
-    for b in $names; do
-      bre="$(printf '%s' "$b" | sed 's/\./\\./g')"
-      bpat="${bre}([^A-Za-z0-9_.-]|\$)"
-      hit=0
-      printf '%s' "$cmd" | grep -qiE ">>[^|;&]*${bpat}" && hit=1
-      nodbl="$(printf '%s' "$cmd" | sed 's/>>/@@/g')"
-      printf '%s' "$nodbl" | grep -qiE ">[^|;&]*${bpat}" && hit=1
-      printf '%s' "$cmd" | grep -qiE '>\|[^|;&]*'"${bpat}" && hit=1
-      printf '%s' "$cmd" | grep -qiE "(^|[;&|[:space:]])tee[[:space:]].*${bpat}" && hit=1
-      printf '%s' "$cmd" | grep -qiE "(^|[;&|[:space:]])sed[[:space:]]+-i[^|;&]*${bpat}" && hit=1
-      printf '%s' "$cmd" | grep -qiE "(^|[;&|[:space:]])cp[[:space:]].*${bpat}" && hit=1
-      printf '%s' "$cmd" | grep -qiE "(^|[;&|[:space:]])dd[[:space:]].*of=[^|;&]*${bpat}" && hit=1
-      if printf '%s' "$cmd" | grep -qiE 'python3? ' && printf '%s' "$cmd" | grep -qE 'open\(' \
-         && printf '%s' "$cmd" | grep -qiE "${bpat}" && printf '%s' "$cmd" | grep -qE "['\"](a|w)['\"]"; then hit=1; fi
-      [ "$hit" = 1 ] || continue
-      f="$(printf '%s' "$cmd" | grep -oiE "'[^']*${bre}'|\"[^\"]*${bre}\"|[^ '\"]*${bre}" | head -1 | sed -e "s/^['\"]//" -e "s/['\"]\$//")"
-      case "$f" in
-        /*) resolved="$f" ;;
-        *)
-          cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"
-          if [ -n "$cwd" ]; then resolved="$cwd/$f"
-          else
-            echo "channel-size-guard: NOTE — $b's path in this Bash command ($f) is relative and no cwd was given; size not checked, allowed." >&2
-            continue
-          fi ;;
-      esac
-      while IFS=' ' read -r unit band limit; do
-        [ -z "$unit" ] && continue
-        cur="$(measure "$unit" "$resolved")"
-        [ "$cur" -gt "$limit" ] && refuse "$b" "$cur" "$unit" "$limit"
-        [ "$cur" -gt "$band" ] && warn "$b" "$cur" "$unit" "$band"
-      done <<<"$(bands_for "$b")"
-    done ;;
+    # One segment per command: a growth form only counts against the file it actually
+    # writes to, so `cat NOTES.md >> other.md` reads NOTES.md and is not growth.
+    segs="${cmd//&&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//|/$'\n'}"; segs="${segs//;/$'\n'}"
+    while IFS= read -r seg; do
+      [ -z "$seg" ] && continue
+      for b in $names; do
+        bre="$(printf '%s' "$b" | sed 's/\./\\./g')"
+        nb="(^|[^A-Za-z0-9_.-])${bre}([^A-Za-z0-9_.-]|\$)"
+        target=""
+        case "$seg" in
+          *'>>'*) t="${seg##*>>}"
+                  printf '%s' "$t" | grep -qiE "$nb" && target="$t" ;;
+        esac
+        if [ -z "$target" ] \
+           && printf '%s' "$seg" | grep -qE '(^|[[:space:]])tee([[:space:]]|$)' \
+           && printf '%s' "$seg" | grep -qE '(^|[[:space:]])-a([[:space:]]|$)' \
+           && printf '%s' "$seg" | grep -qiE "$nb"; then target="$seg"; fi
+        if [ -z "$target" ] \
+           && printf '%s' "$seg" | grep -qE '^[[:space:]]*cat[[:space:]]+[^>[:space:]]' \
+           && printf '%s' "$seg" | grep -q '>'; then
+          t="${seg##*>}"
+          printf '%s' "$t" | grep -qiE "$nb" && target="$t"
+        fi
+        [ -n "$target" ] || continue
+        f="$(printf '%s' "$target" | grep -oiE "'[^']*${bre}'|\"[^\"]*${bre}\"|[^ '\"]*${bre}" | head -1 | sed -e "s/^['\"]//" -e "s/['\"]\$//")"
+        [ -n "$f" ] || continue
+        case "$f" in
+          /*) resolved="$f" ;;
+          *)
+            cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"
+            if [ -n "$cwd" ]; then resolved="$cwd/$f"
+            else
+              echo "channel-size-guard: NOTE — $b's path in this Bash command ($f) is relative and no cwd was given; size not checked, allowed. hooks/channel-size-post.sh re-measures it after the write." >&2
+              continue
+            fi ;;
+        esac
+        while IFS=' ' read -r unit band limit; do
+          [ -z "$unit" ] && continue
+          cur="$(measure "$unit" "$resolved")"
+          [ "$cur" -gt "$limit" ] && refuse "$b" "$cur" "$unit" "$limit"
+          [ "$cur" -gt "$band" ] && warn "$b" "$cur" "$unit" "$band"
+        done <<<"$(bands_for "$b")"
+      done
+    done <<<"$segs"
+    ;;
 esac
 exit 0

@@ -21,13 +21,13 @@ through filling in your rulebook afterwards — which is the part that actually 
 
 | Path | What happens |
 |---|---|
-| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Five more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
-| `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
+| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-size-post.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Five more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
+| `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-merge-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/.redaction-names.local` | Created **only if missing**, empty, with a comment explaining its two sections (`[guard]`, `[redact-only]`) — `git-hooks/pre-commit`'s privacy check fails CLOSED (refuses every commit) with no file there at all, so a fresh machine needs at least this to unblock ordinary commits. The installer's closing summary tells you to open it and fill it in |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | The four skills; any skill folder of the same name is left alone |
-| `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), and `Stop` (the helper cost ledger) — up to **nine** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **four** more, so **thirteen** in total with everything on. Everything else in the file is preserved |
+| `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), `PostToolUse` on the same matcher (`channel-size-post.sh`), and `Stop` (the helper cost ledger) — up to **ten** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **four** more, so **fourteen** in total with everything on. Everything else in the file is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
 | git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
 
@@ -40,11 +40,13 @@ folder). Anything that would be overwritten is copied to
 Requires `bash`, and either `node` or `python3` for the settings merge. Claude Code already
 brings Node, so this is almost always satisfied.
 
-Four `PreToolUse` guards (`block-dangerous-git.sh`, `commit-pathspec-guard.sh`,
-`heavy-suite-guard.sh`, `channel-size-guard.sh`) additionally need `jq` **or** `python3` on
-`PATH` — they fail CLOSED (refuse everything) without one, so the installer checks for both
-first and skips registering those four if neither is present, with a warning naming what to
-install. A fifth, `gate-guard.sh`, is different: it degrades safely with no `jq` (a cruder
+Three `PreToolUse` guards (`block-dangerous-git.sh`, `commit-pathspec-guard.sh`,
+`heavy-suite-guard.sh`) additionally need `jq` **and** `python3` on `PATH` — they read the
+tool call with one and normalise the command with the other, and fail CLOSED (refuse
+everything) if either is missing. So the installer registers those three only when **both**
+are present, with a warning naming what to install. The size pair (`channel-size-guard.sh`
+and its `PostToolUse` half `channel-size-post.sh`) needs `jq` alone and is registered
+whenever `jq` is there; without `jq` both are inert, so neither is registered. A fifth, `gate-guard.sh`, is different: it degrades safely with no `jq` (a cruder
 text match instead of a refusal), and with no `python3` it passes every command with a
 one-line warning — it is the one guard allowed to fail OPEN, because it protects no data and
 only enforces a habit about exit codes. The installer still gates it on `python3`, now for
@@ -79,7 +81,8 @@ cp -a ~/.claude/hooks ~/.claude/hooks.backup-$(date +%s) 2>/dev/null
 cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
    hooks/clock-in-context.sh hooks/guard-lib.sh hooks/block-dangerous-git.sh \
    hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/override-ledger.sh \
-   hooks/gate-guard.sh hooks/channel-size-guard.sh hooks/helper-ledger.py \
+   hooks/gate-guard.sh hooks/channel-size-guard.sh hooks/channel-size-post.sh \
+   hooks/helper-ledger.py \
    hooks/channel-provenance-pre.sh hooks/channel-provenance-post.sh hooks/provenance.py \
    hooks/doorman.sh hooks/stop-state-check.sh \
    hooks/test-hooks.sh hooks/test-helper-ledger.sh hooks/test-rules-cap.sh \
@@ -89,7 +92,8 @@ chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
          ~/.claude/hooks/block-dangerous-git.sh \
          ~/.claude/hooks/commit-pathspec-guard.sh ~/.claude/hooks/heavy-suite-guard.sh \
          ~/.claude/hooks/override-ledger.sh ~/.claude/hooks/gate-guard.sh \
-         ~/.claude/hooks/channel-size-guard.sh ~/.claude/hooks/helper-ledger.py \
+         ~/.claude/hooks/channel-size-guard.sh ~/.claude/hooks/channel-size-post.sh \
+         ~/.claude/hooks/helper-ledger.py \
          ~/.claude/hooks/channel-provenance-pre.sh ~/.claude/hooks/channel-provenance-post.sh \
          ~/.claude/hooks/provenance.py ~/.claude/hooks/doorman.sh \
          ~/.claude/hooks/stop-state-check.sh ~/.claude/hooks/test-hooks.sh \
@@ -109,8 +113,10 @@ cp -n hooks/gate-guard.conf.example hooks/channel-ceiling.conf.example \
       ~/.claude/hooks/
 
 # The git hooks proper — copied in and made executable, but inert until step 7:
-cp git-hooks/commit-msg git-hooks/pre-commit git-hooks/pre-push ~/.claude/git-hooks/
-chmod +x ~/.claude/git-hooks/commit-msg ~/.claude/git-hooks/pre-commit ~/.claude/git-hooks/pre-push
+cp git-hooks/commit-msg git-hooks/pre-commit git-hooks/pre-merge-commit git-hooks/pre-push \
+   ~/.claude/git-hooks/
+chmod +x ~/.claude/git-hooks/commit-msg ~/.claude/git-hooks/pre-commit \
+         ~/.claude/git-hooks/pre-merge-commit ~/.claude/git-hooks/pre-push
 ```
 
 The hook scripts are the one thing you *do* want replaced with the current versions — hence
@@ -296,6 +302,10 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
           { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/gate-guard.sh\"" } ] },
       { "matcher": "Write|Edit|MultiEdit|Bash", "hooks": [
           { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/channel-size-guard.sh\"" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Write|Edit|MultiEdit|Bash", "hooks": [
+          { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/channel-size-post.sh\"" } ] }
     ]
   }
 }
@@ -303,8 +313,12 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
 
 `gate-guard.sh` is gated on `python3` (see the note above the "Requires" paragraph): with
 no `python3` it passes everything with a warning, so registering it would cost a subprocess
-per Bash call and catch nothing. Only register it if `python3` is on `PATH`. `channel-size-guard.sh` needs `jq`, but degrades safely (does
-nothing) with neither `jq` nor `python3`, so it can ride along with the other three.
+per Bash call and catch nothing. Only register it if `python3` is on `PATH`. `channel-size-guard.sh` and its `PostToolUse` half
+`channel-size-post.sh` need `jq` only and do nothing at all without it, so register the two
+together whenever `jq` is there. The `PostToolUse` half is what catches growth the
+`PreToolUse` half cannot see in the command text — a filename held in a variable, an `Edit`
+whose one new "word" is 100,000 characters long: it re-measures the file on disk afterwards
+and says loudly that it is over. It cannot undo a write; nothing can, after the fact.
 `override-ledger.sh` (copied in step 1, called by the guards above and by `pre-commit`) is
 not itself registered anywhere — it has no event of its own.
 
@@ -385,8 +399,8 @@ Read this before running it:
 git config --global core.hooksPath ~/.claude/git-hooks
 ```
 
-This makes `commit-msg`, `pre-commit` and `pre-push` (copied in step 1) run in **every
-repository on this machine** — and it **replaces any hooks that repo already has** in its own
+This makes `commit-msg`, `pre-commit`, `pre-merge-commit` and `pre-push` (copied in step 1)
+run in **every repository on this machine** — and it **replaces any hooks that repo already has** in its own
 `.git/hooks/`, silently. That's the sharp edge: only do this if you want it everywhere.
 
 `pre-push` will not type-check a repo unless that repo opts in: without it, a pushed repo's
@@ -396,6 +410,16 @@ just because you cloned or forked it. Opt in per repo with:
 ```bash
 git config --local hooks.typecheck true
 ```
+
+`pre-merge-commit` runs `pre-commit`'s privacy check on a **merge** commit, which no
+`pre-commit` hook ever sees — without it, `git merge --no-ff some-branch` lands every line
+of that branch with no privacy check at all. **Stated plainly: a fast-forward merge cannot
+be hooked.** It writes no commit, so git runs nothing; that is git's design, not a gap in
+this script. It matters less than it sounds: a fast-forward only moves the branch pointer
+onto commits that were themselves made with `git commit`, and each of those already passed
+`pre-commit` when it was written. The case to watch is a merge of commits made on **another
+machine** (a pull, a PR merge) — run the full privacy sweep before any public step rather
+than trusting a hook for that.
 
 `pre-commit` also caps a root `CLAUDE.md` by word count (4000 words if the repo's top level
 is `$HOME/.claude`, 5750 otherwise; override with `RULES_CAP_OK=1 git commit ...`) — a
@@ -446,5 +470,6 @@ them gone entirely: `~/.claude/hooks/clock-in-context.sh`, `owner-card.md`,
 `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,
 `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-provenance-pre.sh`,
 `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`,
-`heavy-suite.conf`, `test-hooks.sh`, `test-helper-ledger.sh`, `test-rules-cap.sh`,
-`.redaction-names.local`, and `~/.claude/git-hooks/{commit-msg,pre-commit,pre-push}`.
+`channel-size-post.sh`, `heavy-suite.conf`, `test-hooks.sh`, `test-helper-ledger.sh`,
+`test-rules-cap.sh`, `.redaction-names.local`, and
+`~/.claude/git-hooks/{commit-msg,pre-commit,pre-merge-commit,pre-push}`.

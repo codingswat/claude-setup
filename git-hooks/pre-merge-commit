@@ -1,0 +1,23 @@
+#!/bin/bash
+# Fires just before git writes a MERGE commit — the one commit no pre-commit hook ever
+# sees. Without this, `git merge --no-ff some-branch` lands every line of that branch in
+# your history with no privacy check at all.
+#
+# It runs git-hooks/pre-commit's privacy check (check 4) and nothing else: the index here
+# already holds the merge RESULT, so `git diff --cached` against the pre-merge HEAD shows
+# exactly the lines the merge is about to add. The identity, channel-ceiling and rules-cap
+# checks are deliberately skipped — a merge's author is git's own, and a merge legitimately
+# carries every line both branches gained.
+#
+# GAP, stated plainly: a FAST-FORWARD merge writes no commit at all, so no hook runs and
+# nothing here can fire. That is not a hole in practice — a fast-forward only moves the
+# branch pointer onto commits that were themselves made through `git commit`, and each of
+# those already passed pre-commit when it was written. A merge of commits made on ANOTHER
+# machine (a pull, a PR merge) is the case to watch: run the full privacy sweep before any
+# public step rather than trusting this hook alone.
+#
+# Override, one merge: `PRIVACY_OK=1 git merge ...` (same word as pre-commit's).
+# Tests: hooks/test-hooks.sh (section 29).
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+[ -x "$HERE/pre-commit" ] || [ -f "$HERE/pre-commit" ] || exit 0
+PRE_COMMIT_PRIVACY_ONLY=1 HOOK_LABEL="pre-merge-commit hook" exec bash "$HERE/pre-commit" "$@"

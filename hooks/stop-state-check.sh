@@ -9,17 +9,26 @@
 #     never blocks the turn — it just leaves the marker doorman.sh checks on the session's
 #     NEXT message. Written once per session id (idempotent): re-running an already-retired
 #     session neither rewrites the marker nor re-appends to the inbox.
-# (2) THE STATE FILE: a turn that leaves changed TRACKED files in the worktree may not end
-#     unless the role's state file (state-check.conf's STATE_FILE pattern, with {role}
-#     substituted) is among the changed files, and that file's "Current task:" / "Next
-#     step:" lines are filled — printed as a block decision so the file gets written now.
-#     Never blocks twice in a row (stop_hook_active). Untracked files never count as
-#     "changed" — a file git doesn't know about yet is not "the paper trail".
+# (2) THE STATE FILE: a turn that CHANGED tracked files may not end unless the role's state
+#     file (state-check.conf's STATE_FILE pattern, with {role} substituted) is among them,
+#     and its "Current task:" / "Next step:" lines are filled AND actually touched by this
+#     turn's diff — printed as a block decision so the file gets written now. Appending a
+#     blank line to the state file is not a handover. Never blocks twice in a row
+#     (stop_hook_active). Untracked files never count as "changed" — a file git doesn't
+#     know about yet is not "the paper trail".
+#     "CHANGED" means changed DURING this turn, not "dirty right now": a read-only turn in
+#     a tree someone left dirty an hour ago has nothing to write down. The comparison is
+#     against the TURN SNAPSHOT hooks/doorman.sh writes when the prompt arrives. With no
+#     snapshot (doorman.sh not registered, or a turn that began before it was) this job
+#     WARNS instead of blocking — refusing to end a turn on a guess is worse than missing
+#     one. Register doorman.sh to get the real check.
+#     This job needs no session id; only job (1) does, because only a marker file is keyed
+#     by one.
 #
 # No hooks/state-check.conf at all, or the working directory's basename matches no line in
 # it: BOTH jobs are off for this session — the safe default for a single-session project
 # with nothing to track. Fails OPEN (exit 0) outside a git repo, or with no readable
-# transcript/cwd/session id.
+# transcript/cwd.
 #
 # Config: hooks/state-check.conf (see hooks/state-check.conf.example; shared with
 # doorman.sh). Test seam: STATE_CHECK_STATE_DIR (where retired/ and inbox/ are written).
@@ -33,8 +42,9 @@ json_esc() {
   printf '%s' "$s"
 }
 tp=$(field transcript_path); cwd=$(field cwd); sid=$(field session_id)
-# An empty or traversal-shaped session id touches no path below.
-case "$sid" in ''|*/*|..*) exit 0;; esac
+# An empty or traversal-shaped session id must touch no path below — but it only disables
+# job (1), the marker file that is keyed by it. Job (2) needs no id and keeps running.
+case "$sid" in *'/'*|..*) sid="";; esac
 active=$(printf '%s' "$input" | /usr/bin/grep -oE '"stop_hook_active"[[:space:]]*:[[:space:]]*(true|false)' | /usr/bin/grep -oE 'true|false' | head -1)
 [ -n "$cwd" ] || cwd="$PWD"
 base=$(basename "$cwd")
@@ -127,12 +137,41 @@ fi
 
 # ---- (2) the state file ----
 git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
-changed=$(git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null | /usr/bin/grep -c .)
+now_state=$(git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null)
+changed=$(printf '%s\n' "$now_state" | /usr/bin/grep -c .)
 [ "$changed" -gt 0 ] || exit 0
+# Did THIS turn change anything? The snapshot doorman.sh took when the prompt arrived says
+# what the tree looked like then; identical now means the turn only read.
+case "$sid" in
+  '') snapkey="nosid-$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')" ;;
+  *)  snapkey="$sid" ;;
+esac
+SNAP="$STATE/turnsnap/$snapkey"
+if [ -f "$SNAP" ]; then
+  if [ "$(cat "$SNAP" 2>/dev/null)" = "$now_state" ]; then exit 0; fi
+else
+  echo "stop-state-check: NOTE — the tree holds $changed changed tracked file(s), but there is no turn snapshot for this session, so this turn may only have READ them. hooks/doorman.sh writes that snapshot on UserPromptSubmit; register it (install.sh's multi-chat group) to turn this note back into a real check."
+  exit 0
+fi
 if [ -n "$(git -C "$cwd" status --porcelain --untracked-files=all -- "$sf" 2>/dev/null)" ]; then
   ct=$(/usr/bin/grep -E '^\*\*Current task:\*\*[[:space:]]*[^[:space:]]' "$cwd/$sf" 2>/dev/null)
   ns=$(/usr/bin/grep -E '^\*\*Next step:\*\*[[:space:]]*[^[:space:]]' "$cwd/$sf" 2>/dev/null)
-  if [ -n "$ct" ] && [ -n "$ns" ]; then exit 0; fi
+  if [ -n "$ct" ] && [ -n "$ns" ]; then
+    # Filled is not enough: the two lines must be what CHANGED. Appending a blank line to
+    # a state file written three turns ago is not a handover. An untracked (brand-new)
+    # state file has no diff to read, and its whole content is new, so it passes here.
+    touched=yes
+    if git -C "$cwd" ls-files --error-unmatch -- "$sf" >/dev/null 2>&1; then
+      if [ -z "$(git -C "$cwd" diff HEAD -- "$sf" 2>/dev/null | /usr/bin/grep -E '^[+-]' | /usr/bin/grep -vE '^(\+\+\+|---)' | /usr/bin/grep -E '\*\*(Current task|Next step):\*\*')" ]; then
+        touched=no
+      fi
+    fi
+    if [ "$touched" = yes ]; then exit 0; fi
+    [ "$active" = "true" ] && { echo "stop-state-check: the state file changed but neither required line moved; not blocking twice."; exit 0; }
+    reason3="stop-state-check: $sf was touched but neither its **Current task:** nor its **Next step:** line changed this turn — whitespace is not a handover. Rewrite both to say where this turn actually got to, then stop."
+    printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason3")"
+    exit 0
+  fi
   [ "$active" = "true" ] && { echo "stop-state-check: the state file's Current task / Next step is still unfilled; not blocking twice."; exit 0; }
   reason2="stop-state-check: $sf changed but is missing a filled **Current task:** or **Next step:** line — a resuming seat cannot pick up from it. Fill both (under 200 words total), then stop."
   printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason2")"

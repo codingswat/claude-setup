@@ -11,6 +11,9 @@
 # is committed counts.
 # Repos with no "typecheck" script, or no package.json at all, are untouched — this hook
 # exits immediately and does nothing.
+# A type-check that could not RUN (the binary it calls is not installed) is refused too,
+# but says so in those words rather than "fix the types" — a missing toolchain and a real
+# type error are different jobs.
 # Gap (stated plainly): `git push --no-verify` skips every pre-push hook, including this
 # one — that is git's own escape hatch, not a flaw in this script.
 # Per-repo opt-in: this hook is machine-wide once step 7 is on, so without an explicit
@@ -40,6 +43,16 @@ for sha in $shas; do
   fi
   if (cd "$tmp" && npm run typecheck --silent >"$tmp.log" 2>&1); then
     rm -rf "$tmp" "$tmp.log"; continue
+  fi
+  # A missing binary is not a type error. Saying "fix the types" when `tsc` was never
+  # installed sends you looking for a bug that isn't there, so the two are told apart by
+  # what the run actually printed.
+  if grep -qE 'command not found|: not found|Cannot find module|is not recognized as' "$tmp.log"; then
+    echo "pre-push hook: REFUSED — the type-check could not RUN on commit ${sha:0:7}: the toolchain is missing (a binary the \"typecheck\" script calls is not installed here). Last lines:" >&2
+    tail -n 30 "$tmp.log" >&2
+    rm -rf "$tmp" "$tmp.log"
+    echo "Install this repo's dependencies (npm install), or turn the check off for this repo: git config hooks.typecheck false. (gap: --no-verify skips this hook; do not use it.)" >&2
+    exit 1
   fi
   echo "pre-push hook: REFUSED — npm run typecheck failed on commit ${sha:0:7} (the commit, not your folder). Last lines:" >&2
   tail -n 30 "$tmp.log" >&2

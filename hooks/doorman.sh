@@ -5,17 +5,23 @@
 #   - stop-state-check.sh already marked this session RETIRED at its context floor, or
 #   - the session has been idle DOORMAN_IDLE_MIN minutes or more (default 40) AND its
 #     context is DOORMAN_CTX_K thousand tokens or more (default 200).
-# "Idle" is measured from the newest transcript line on EITHER side, not just the human's:
-# a session that is still working — still producing assistant messages — must never refuse
-# the next prompt just because the person reading along has been quiet. Only a session that
-# has ITSELF gone quiet, as well as the person, counts as idle.
+# "Idle" is measured from the newest transcript line of ANY kind — your message, a model
+# reply, or a TOOL RESULT. A session forty minutes into one long tool call is working, not
+# idle, and its tool results are the proof; a session still producing assistant messages
+# must never be refused just because the person reading along has been quiet. Only a
+# session where nothing at all has happened counts as idle.
 # A prompt beginning "wake anyway" always passes, forcing this session open regardless.
+# It also writes the TURN SNAPSHOT that hooks/stop-state-check.sh reads at the end of the
+# turn — what the tracked tree looked like when this prompt arrived — so that hook can tell
+# a turn that CHANGED something from a read-only turn in a tree that was already dirty.
 #
 # Applies only when the session's working-directory basename matches a line in
 # hooks/state-check.conf (role = the name that line gives it). No conf file, or no match:
 # inert — the safe default for a single-session project with no roles to track.
-# Fails OPEN with a log line when the transcript cannot be read — a cost guard, not a
-# safety guard.
+# Fails OPEN with a log line when the transcript cannot be read, or when a user/assistant
+# line in it carries no timestamp at all — an undatable line might be seconds old, and a
+# cost guard must never turn "I cannot tell" into "you are idle". This is a cost guard, not
+# a safety guard.
 #
 # Config: hooks/state-check.conf (see hooks/state-check.conf.example; shared with
 # stop-state-check.sh). Test seam: STATE_CHECK_STATE_DIR (where retired/ and inbox/ live),
@@ -45,6 +51,20 @@ fi
 STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
 IDLE_MIN="${DOORMAN_IDLE_MIN:-40}"; CTX_K="${DOORMAN_CTX_K:-200}"
 now_s="${DOORMAN_NOW:-$(date +%s)}"
+
+# The turn snapshot stop-state-check.sh reads. Same key in both scripts: the session id
+# when there is one, otherwise the working folder's own name (sanitised), so a session
+# without an id still gets a snapshot of its own rather than none at all.
+snapkey() {
+  case "$sid" in
+    ''|*/*|..*) printf 'nosid-%s' "$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')" ;;
+    *)          printf '%s' "$sid" ;;
+  esac
+}
+if command -v git >/dev/null 2>&1 && git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  mkdir -p "$STATE/turnsnap" 2>/dev/null \
+    && git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null > "$STATE/turnsnap/$(snapkey)"
+fi
 if printf '%s' "$prompt" | grep -qiE '^[[:space:]]*wake anyway'; then exit 0; fi
 refuse() {
   mkdir -p "$STATE/inbox"
@@ -62,26 +82,29 @@ if [ -n "$ctx_line" ]; then
   ctx_k=$(( (${ci:-0} + ${cc:-0} + ${cr:-0} + 500) / 1000 ))
 fi
 to_epoch() { local e; e=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$1" "+%s" 2>/dev/null); case "$e" in ''|*[!0-9]*) printf '' ;; *) printf '%s' "$e" ;; esac; }
-hs=$(/usr/bin/grep -E '"type"[[:space:]]*:[[:space:]]*"user"' "$tp" | /usr/bin/grep -v '"tool_result"' | /usr/bin/grep -oE '"timestamp"[[:space:]]*:[[:space:]]*"[^"]*"' | /usr/bin/sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' | cut -c1-19 | tail -2)
-n=$(printf '%s\n' "$hs" | /usr/bin/grep -c .); gap_min=""
-if [ "$n" -ge 1 ]; then
-  newest_s=$(to_epoch "$(printf '%s\n' "$hs" | tail -1)"); ref=""
-  # The newest "user" line may just be the prompt now being submitted — within 15s of
-  # "now" — in which case the PREVIOUS one is the real reference point for idle time.
-  if [ -n "$newest_s" ] && [ $((now_s - newest_s)) -le 15 ]; then [ "$n" -ge 2 ] && ref=$(to_epoch "$(printf '%s\n' "$hs" | head -1)"); else ref="$newest_s"; fi
-  [ -n "$ref" ] && gap_min=$(( (now_s - ref) / 60 ))
-fi
-# The caution: idle is the gap since the newest line of EITHER side. A session still
-# producing assistant messages is not idle just because the human has been silent.
-as_line=$(/usr/bin/grep -E '"type"[[:space:]]*:[[:space:]]*"assistant"' "$tp" | /usr/bin/grep -oE '"timestamp"[[:space:]]*:[[:space:]]*"[^"]*"' | /usr/bin/sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' | cut -c1-19 | tail -1)
-assistant_gap_min=""
-if [ -n "$as_line" ]; then
-  as_s=$(to_epoch "$as_line")
-  [ -n "$as_s" ] && assistant_gap_min=$(( (now_s - as_s) / 60 ))
-fi
-if [ -n "$gap_min" ] && [ "$gap_min" -ge "$IDLE_MIN" ] && [ "$ctx_k" -ge "$CTX_K" ]; then
-  if [ -z "$assistant_gap_min" ] || [ "$assistant_gap_min" -ge "$IDLE_MIN" ]; then
-    refuse "stale and heavy (idle $gap_min min, context ${ctx_k}k)"
-  fi
+iso_of() { date -u -r "$1" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%S 2>/dev/null; }
+
+# ACTIVITY = the newest timestamp on ANY user or assistant line, a tool result included.
+# A user/assistant line with no timestamp makes the whole question unanswerable, so the
+# hook passes (the header promises fail open, and an undatable line might be seconds old).
+ua=$(/usr/bin/grep -E '"type"[[:space:]]*:[[:space:]]*"(user|assistant)"' "$tp")
+n_ua=$(printf '%s\n' "$ua" | /usr/bin/grep -c .)
+n_ts=$(printf '%s\n' "$ua" | /usr/bin/grep -c '"timestamp"')
+if [ "$n_ua" -eq 0 ]; then echo "doorman: no user or assistant lines in the transcript — passing (fail open)"; exit 0; fi
+if [ "$n_ts" -lt "$n_ua" ]; then echo "doorman: a transcript line carries no timestamp, so idle time cannot be judged — passing (fail open)"; exit 0; fi
+# The newest line is usually the prompt being submitted right now; anything within 15s of
+# "now" is therefore not evidence of idleness. Timestamps are UTC and fixed width, so the
+# newest one is simply the last in sort order.
+cut_iso=$(iso_of $((now_s - 15)))
+last_iso=$(printf '%s\n' "$ua" \
+  | /usr/bin/grep -oE '"timestamp"[[:space:]]*:[[:space:]]*"[^"]*"' \
+  | /usr/bin/sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' | cut -c1-19 \
+  | /usr/bin/grep -E '^[0-9]{4}-' | awk -v c="$cut_iso" 'c == "" || $0 < c' | sort | tail -1)
+[ -n "$last_iso" ] || exit 0          # everything just happened: not idle
+last_s=$(to_epoch "$last_iso")
+[ -n "$last_s" ] || { echo "doorman: the newest transcript timestamp could not be read — passing (fail open)"; exit 0; }
+gap_min=$(( (now_s - last_s) / 60 ))
+if [ "$gap_min" -ge "$IDLE_MIN" ] && [ "$ctx_k" -ge "$CTX_K" ]; then
+  refuse "stale and heavy (idle $gap_min min, context ${ctx_k}k)"
 fi
 exit 0

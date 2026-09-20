@@ -1,12 +1,65 @@
 #!/bin/bash
 # Fires on every commit on this machine, regardless of which tool made it (an agent, a
-# subagent, a background job, or you typing at the terminal). Refuses a commit whose
-# message carries an AI-attribution trailer, so pushed history reads as your own work.
+# subagent, a background job, or you typing at the terminal) — git runs it for `git merge`
+# too. Refuses a commit whose message, or whose committer identity, carries AI attribution,
+# so pushed history reads as your own work.
+#
+# What counts, and what deliberately does not:
+#   - a TRAILER naming Claude or Anthropic — any key, not just Co-Authored-By
+#     (`Assisted-by: Claude Opus 5` is the same claim wearing a different hat). A trailer
+#     is a `Key: value` line in the message's LAST paragraph, and only when that paragraph
+#     is not also the first one. Prose is not a trailer: a subject line such as
+#     `docs: explain why we never add Co-Authored-By: Claude lines` is a sentence ABOUT
+#     the rule and passes.
+#   - the generated-with signature line (`Generated with … Claude …`), wherever it sits;
+#   - `noreply@anthropic.com` anywhere in the message;
+#   - the COMMITTER identity (`git var GIT_COMMITTER_IDENT`) naming Claude or Anthropic —
+#     `GIT_COMMITTER_NAME=Claude git commit` writes that name into the commit object even
+#     when the author line is yours. No readable committer identity: that half is skipped.
+# Zero-width characters (U+200B/C/D, U+2060, U+FEFF) are stripped before any of this, so
+# `Cla<zero-width>ude` is read as `Claude`. Comment lines (`#`) are dropped, as git drops
+# them itself.
+# Tests: hooks/test-hooks.sh (sections 5 and 29).
 msg_file="$1"
-if grep -qiE 'Co-Authored-By:.*(claude|anthropic)|noreply@anthropic\.com|Generated with .*Claude' "$msg_file"; then
-  echo "commit-msg hook: REFUSED — message carries Claude/Anthropic attribution." >&2
-  echo "Offending line(s):" >&2
-  grep -niE 'Co-Authored-By:.*(claude|anthropic)|noreply@anthropic\.com|Generated with .*Claude' "$msg_file" >&2
+[ -f "$msg_file" ] || exit 0
+
+# Zero-width characters, written as their UTF-8 bytes so this works with any locale.
+ZWSP=$(printf '\342\200\213'); ZWNJ=$(printf '\342\200\214'); ZWJ=$(printf '\342\200\215')
+WJ=$(printf '\342\201\240');   BOM=$(printf '\357\273\277')
+msg="$(LC_ALL=C sed -e "s/$ZWSP//g" -e "s/$ZWNJ//g" -e "s/$ZWJ//g" -e "s/$WJ//g" -e "s/$BOM//g" -e '/^#/d' "$msg_file")"
+
+refuse() {
+  echo "commit-msg hook: REFUSED — $1" >&2
+  [ -n "${2:-}" ] && printf 'Offending line(s):\n%s\n' "$2" >&2
   exit 1
+}
+
+# (a) the generated-with signature, and an Anthropic no-reply address, anywhere.
+hit="$(printf '%s\n' "$msg" | grep -niE 'noreply@anthropic\.com|Generated with .*[Cc]laude')"
+[ -n "$hit" ] && refuse "the message carries Claude/Anthropic attribution." "$hit"
+
+# (b) the trailer block: the LAST paragraph, when it is not also the first one and every
+#     one of its lines is `Key: value`. Anything else is prose and is left alone.
+trailers="$(printf '%s\n' "$msg" | awk '
+  { lines[NR] = $0 }
+  END {
+    n = NR
+    while (n > 0 && lines[n] ~ /^[[:space:]]*$/) n--
+    if (n == 0) exit
+    s = n
+    while (s > 1 && lines[s-1] !~ /^[[:space:]]*$/) s--
+    if (s == 1) exit                       # one paragraph only: subject/body, no trailers
+    for (i = s; i <= n; i++) if (lines[i] !~ /^[A-Za-z][A-Za-z0-9-]*:[ \t]/) exit
+    for (i = s; i <= n; i++) print lines[i]
+  }')"
+if [ -n "$trailers" ]; then
+  thit="$(printf '%s\n' "$trailers" | grep -niE 'claude|anthropic')"
+  [ -n "$thit" ] && refuse "a commit-message trailer names Claude/Anthropic." "$thit"
+fi
+
+# (c) the committer identity, which lands in the commit object beside the author.
+cident="$(git var GIT_COMMITTER_IDENT 2>/dev/null)"
+if [ -n "$cident" ] && printf '%s' "$cident" | grep -qiE 'claude|anthropic'; then
+  refuse "the COMMITTER identity names Claude/Anthropic (${cident%% <*}). Set GIT_COMMITTER_NAME/GIT_COMMITTER_EMAIL, or git config user.name/user.email, to your own."
 fi
 exit 0

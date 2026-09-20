@@ -4,8 +4,8 @@
 # What it touches (and nothing else):
 #   ~/.claude/CLAUDE.md            your standing rulebook (only if you have none)
 #   ~/.claude/hooks/               the hook scripts + their config files
-#   ~/.claude/git-hooks/           commit-msg, pre-commit, pre-push (opt-in to run
-#                                  them machine-wide — see the "git hooks" step)
+#   ~/.claude/git-hooks/           commit-msg, pre-commit, pre-merge-commit, pre-push
+#                                  (opt-in to run them machine-wide — see that step)
 #   ~/.claude/project-template/    starter files for new projects
 #   ~/.claude/skills/              the cherry-picked skills (never overwrites)
 #   ~/.claude/settings.json        adds hook registrations, keeps everything else
@@ -89,6 +89,14 @@ JSONTOOL=""
 command -v node    >/dev/null 2>&1 && JSONTOOL="node"
 [ -z "$JSONTOOL" ] && command -v python3 >/dev/null 2>&1 && JSONTOOL="python3"
 
+# have <binary> — "is it on PATH?", with one test seam: INSTALL_PRETEND_MISSING is a
+# space-separated list of binaries to treat as absent, so hooks/test-hooks.sh can prove
+# the "skip that guard" branch without rebuilding PATH. Empty in every real run.
+have() {
+  case " ${INSTALL_PRETEND_MISSING:-} " in *" $1 "*) return 1 ;; esac
+  command -v "$1" >/dev/null 2>&1
+}
+
 mkdir -p "$DEST/hooks" "$DEST/skills" "$DEST/project-template" "$DEST/git-hooks" || die "cannot create $DEST"
 
 # Copy a hook. $4 = "required" means this hook gets registered in settings.json below —
@@ -120,6 +128,7 @@ copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-
 copy_if_present  "$SRC/hooks/override-ledger.sh"       "$DEST/hooks/override-ledger.sh"       "override-ledger.sh (used by the guards below)" required
 copy_if_present  "$SRC/hooks/gate-guard.sh"            "$DEST/hooks/gate-guard.sh"            "gate-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/channel-size-guard.sh"    "$DEST/hooks/channel-size-guard.sh"    "channel-size-guard.sh (PreToolUse: Write|Edit|MultiEdit|Bash)" required
+copy_if_present  "$SRC/hooks/channel-size-post.sh"     "$DEST/hooks/channel-size-post.sh"     "channel-size-post.sh (PostToolUse: Write|Edit|MultiEdit|Bash)" required
 copy_if_present  "$SRC/hooks/helper-ledger.py"         "$DEST/hooks/helper-ledger.py"         "helper-ledger.py (Stop)" required
 # The multi-chat coordination group (opt-in, step 6 below) — copied unconditionally so the
 # question can be asked, but only registered in settings.json on a yes.
@@ -137,7 +146,7 @@ chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/ho
          "$DEST/hooks/guard-lib.sh" \
          "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
          "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/override-ledger.sh" "$DEST/hooks/gate-guard.sh" \
-         "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/helper-ledger.py" \
+         "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/channel-size-post.sh" "$DEST/hooks/helper-ledger.py" \
          "$DEST/hooks/channel-provenance-pre.sh" "$DEST/hooks/channel-provenance-post.sh" \
          "$DEST/hooks/provenance.py" "$DEST/hooks/doorman.sh" "$DEST/hooks/stop-state-check.sh" \
          "$DEST/hooks/test-hooks.sh" "$DEST/hooks/test-helper-ledger.sh" "$DEST/hooks/test-rules-cap.sh" 2>/dev/null
@@ -203,12 +212,16 @@ else
   warn "heavy-suite.conf.example — not found in this checkout yet, skipped"
 fi
 
-# The three git hooks (commit-msg, pre-commit, pre-push) — copied in always,
-# but they only run in every repo once you opt in at the "git hooks" step below.
-copy_if_present "$SRC/git-hooks/commit-msg" "$DEST/git-hooks/commit-msg" "commit-msg (git hook)"
-copy_if_present "$SRC/git-hooks/pre-commit" "$DEST/git-hooks/pre-commit" "pre-commit (git hook)"
-copy_if_present "$SRC/git-hooks/pre-push"   "$DEST/git-hooks/pre-push"   "pre-push (git hook)"
-chmod +x "$DEST/git-hooks/commit-msg" "$DEST/git-hooks/pre-commit" "$DEST/git-hooks/pre-push" 2>/dev/null
+# The four git hooks (commit-msg, pre-commit, pre-merge-commit, pre-push) — copied in
+# always, but they only run in every repo once you opt in at the "git hooks" step below.
+# pre-merge-commit is pre-commit's privacy check on a MERGE commit, which no pre-commit
+# hook ever sees; it calls pre-commit back, so the two belong together.
+copy_if_present "$SRC/git-hooks/commit-msg"       "$DEST/git-hooks/commit-msg"       "commit-msg (git hook)"
+copy_if_present "$SRC/git-hooks/pre-commit"       "$DEST/git-hooks/pre-commit"       "pre-commit (git hook)"
+copy_if_present "$SRC/git-hooks/pre-merge-commit" "$DEST/git-hooks/pre-merge-commit" "pre-merge-commit (git hook)"
+copy_if_present "$SRC/git-hooks/pre-push"         "$DEST/git-hooks/pre-push"         "pre-push (git hook)"
+chmod +x "$DEST/git-hooks/commit-msg" "$DEST/git-hooks/pre-commit" \
+         "$DEST/git-hooks/pre-merge-commit" "$DEST/git-hooks/pre-push" 2>/dev/null
 
 # --- 2. rulebook -----------------------------------------------------------
 head2 "2. Your standing rulebook (~/.claude/CLAUDE.md)"
@@ -400,13 +413,12 @@ report_hook_result "$res" "the SessionStart hook (clock-in-context.sh)"
 res=$(register_hook "UserPromptSubmit" "$CLOCK_CMD" "" "")
 report_hook_result "$res" "the UserPromptSubmit hook (clock-in-context.sh)"
 
-# The first three PreToolUse guards below all parse the tool-call JSON with jq or python3
-# and fail CLOSED (refuse everything) when neither is on PATH — a silent no-op would be
-# worse. Registering them without either binary present would install guards that refuse
-# every Bash call, so check first and skip the registration instead. channel-size-guard.sh
-# rides along in the same block (see the comment above its own registration below) even
-# though it degrades safely on its own — simpler than a separate check for no real gain.
-if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+# The three PreToolUse guards below use jq to read the tool-call JSON AND python3 to
+# normalise the command, and each one fails CLOSED (refuses everything) when either is
+# missing — a silent no-op would be worse. So they are registered only when BOTH are on
+# PATH: registering them with one of the two missing would install guards that refuse
+# every Bash command on this machine.
+if have jq && have python3; then
   BLOCK_GIT_CMD='/bin/bash "$HOME/.claude/hooks/block-dangerous-git.sh"'
   res=$(register_hook "PreToolUse" "$BLOCK_GIT_CMD" "" "" "Bash")
   report_hook_result "$res" "the PreToolUse hook (block-dangerous-git.sh)"
@@ -418,19 +430,30 @@ if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
   HEAVY_CMD='/bin/bash "$HOME/.claude/hooks/heavy-suite-guard.sh"'
   res=$(register_hook "PreToolUse" "$HEAVY_CMD" "" "" "Bash")
   report_hook_result "$res" "the PreToolUse hook (heavy-suite-guard.sh)"
+else
+  warn "jq and python3 are BOTH needed by block-dangerous-git.sh, commit-pathspec-guard.sh"
+  say  "     and heavy-suite-guard.sh, and one of them is missing — skipping all three."
+  say  "     They fail closed without either, so registering them now would refuse every"
+  say  "     Bash command. Install the missing one, then run this again."
+fi
 
-  # channel-size-guard.sh degrades safely with neither parser (it just does nothing to a
-  # Bash/Write/Edit/MultiEdit call it can't read), so it rides along in this same group for
-  # simplicity rather than needing its own check.
+# The size pair needs jq only, and does nothing at all to a call it cannot read — so it
+# gets its own check rather than riding on the group above. The PostToolUse half is what
+# catches growth the PreToolUse half cannot see in the command text (a filename in a
+# variable, an Edit whose one new "word" is 100,000 characters long): it re-measures the
+# file on disk afterwards and says so loudly. They are registered together, always.
+if have jq; then
   SIZE_CMD='/bin/bash "$HOME/.claude/hooks/channel-size-guard.sh"'
   res=$(register_hook "PreToolUse" "$SIZE_CMD" "" "" "Write|Edit|MultiEdit|Bash")
   report_hook_result "$res" "the PreToolUse hook (channel-size-guard.sh)"
+
+  SIZE_POST_CMD='/bin/bash "$HOME/.claude/hooks/channel-size-post.sh"'
+  res=$(register_hook "PostToolUse" "$SIZE_POST_CMD" "" "" "Write|Edit|MultiEdit|Bash")
+  report_hook_result "$res" "the PostToolUse hook (channel-size-post.sh)"
 else
-  warn "neither jq nor python3 found — skipping the four PreToolUse guards"
-  say  "     (block-dangerous-git.sh, commit-pathspec-guard.sh, heavy-suite-guard.sh,"
-  say  "     channel-size-guard.sh). They fail closed without a parser, so leaving them"
-  say  "     registered here would refuse every Bash command. Install jq or python3, then"
-  say  "     run this again."
+  warn "jq not found — skipping the size pair (channel-size-guard.sh and"
+  say  "     channel-size-post.sh). Both read the tool call with jq and are inert without"
+  say  "     it. Install jq, then run this again."
 fi
 
 # gate-guard.sh is different: unlike the four above, it degrades safely with NO jq (it
@@ -672,7 +695,8 @@ fi
 # --- 8. git hooks, machine-wide (opt-in) ------------------------------------
 head2 "8. Git hooks for every repo on this machine (optional, OFF by default)"
 say "  This sets git's global hooksPath to ~/.claude/git-hooks, so commit-msg,"
-say "  pre-commit and pre-push (copied in step 1) run in EVERY repo on this machine."
+say "  pre-commit, pre-merge-commit and pre-push (copied in step 1) run in EVERY repo on"
+say "  this machine."
 say "  The sharp edge: it REPLACES any hooks a repo already has in its own"
 say "  .git/hooks/ — those stop running the moment this is on."
 if ask "Set git's global core.hooksPath to ~/.claude/git-hooks?" "n"; then
