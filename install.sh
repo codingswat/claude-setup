@@ -9,6 +9,8 @@
 #   ~/.claude/project-template/    starter files for new projects
 #   ~/.claude/skills/              the cherry-picked skills (never overwrites)
 #   ~/.claude/settings.json        adds hook registrations, keeps everything else
+#   ~/.claude/.redaction-names.local   created empty if missing, so the privacy check
+#                                  (git-hooks/pre-commit) has a names list to read at all
 #
 # Anything it would overwrite is copied to ~/.claude/.setup-backup-<timestamp>/
 # first. Nothing of yours is ever deleted (the installer removes only its own empty
@@ -114,11 +116,68 @@ copy_if_present  "$SRC/hooks/clock-in-context.sh"      "$DEST/hooks/clock-in-con
 copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)" required
+copy_if_present  "$SRC/hooks/override-ledger.sh"       "$DEST/hooks/override-ledger.sh"       "override-ledger.sh (used by the guards below)" required
+copy_if_present  "$SRC/hooks/gate-guard.sh"            "$DEST/hooks/gate-guard.sh"            "gate-guard.sh (PreToolUse: Bash)" required
+copy_if_present  "$SRC/hooks/channel-size-guard.sh"    "$DEST/hooks/channel-size-guard.sh"    "channel-size-guard.sh (PreToolUse: Write|Edit|MultiEdit|Bash)" required
 copy_if_present  "$SRC/hooks/helper-ledger.py"         "$DEST/hooks/helper-ledger.py"         "helper-ledger.py (Stop)" required
+# The multi-chat coordination group (opt-in, step 6 below) — copied unconditionally so the
+# question can be asked, but only registered in settings.json on a yes.
+copy_if_present  "$SRC/hooks/channel-provenance-pre.sh"  "$DEST/hooks/channel-provenance-pre.sh"  "channel-provenance-pre.sh (PreToolUse, opt-in)"
+copy_if_present  "$SRC/hooks/channel-provenance-post.sh" "$DEST/hooks/channel-provenance-post.sh" "channel-provenance-post.sh (PostToolUse, opt-in)"
+copy_if_present  "$SRC/hooks/provenance.py"              "$DEST/hooks/provenance.py"              "provenance.py (used by the provenance hooks, opt-in)"
+copy_if_present  "$SRC/hooks/doorman.sh"                 "$DEST/hooks/doorman.sh"                 "doorman.sh (UserPromptSubmit, opt-in)"
+copy_if_present  "$SRC/hooks/stop-state-check.sh"        "$DEST/hooks/stop-state-check.sh"        "stop-state-check.sh (Stop, opt-in)"
 copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.sh"            "test-hooks.sh (run it yourself to check the hooks)"
+# The next two are not hooks — test-hooks.sh runs them as subprocesses and folds their
+# counts into its own RESULT line, so they need to sit alongside it to make that promise true.
+copy_if_present  "$SRC/hooks/test-helper-ledger.sh"    "$DEST/hooks/test-helper-ledger.sh"    "test-helper-ledger.sh (run by test-hooks.sh)"
+copy_if_present  "$SRC/hooks/test-rules-cap.sh"        "$DEST/hooks/test-rules-cap.sh"        "test-rules-cap.sh (run by test-hooks.sh)"
 chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/hooks/clock-in-context.sh" \
          "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
-         "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/helper-ledger.py" "$DEST/hooks/test-hooks.sh" 2>/dev/null
+         "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/override-ledger.sh" "$DEST/hooks/gate-guard.sh" \
+         "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/helper-ledger.py" \
+         "$DEST/hooks/channel-provenance-pre.sh" "$DEST/hooks/channel-provenance-post.sh" \
+         "$DEST/hooks/provenance.py" "$DEST/hooks/doorman.sh" "$DEST/hooks/stop-state-check.sh" \
+         "$DEST/hooks/test-hooks.sh" "$DEST/hooks/test-helper-ledger.sh" "$DEST/hooks/test-rules-cap.sh" 2>/dev/null
+
+# .conf.example files for the new guards — copied as EXAMPLES only, never as a live conf:
+# each guard stays inert until you copy one to its live name yourself and fill it in (the
+# one exception, heavy-suite.conf above, predates this stage). See INSTALL.md.
+for ex in gate-guard.conf.example channel-ceiling.conf.example allowed-email-domains.conf.example \
+          block-dangerous-git.conf.example state-check.conf.example; do
+  copy_if_present "$SRC/hooks/$ex" "$DEST/hooks/$ex" "$ex (example — copy it to enable)"
+done
+
+# The redaction names list — git-hooks/pre-commit's privacy check fails CLOSED (refuses
+# every commit) with none at all, so a fresh machine needs at least an empty one to unblock
+# ordinary commits. Never overwritten once it exists — it's the one file with names in it.
+if [ -f "$DEST/.redaction-names.local" ]; then
+  skip ".redaction-names.local — already present, left untouched"
+else
+  {
+    printf '# ~/.claude/.redaction-names.local — names git-hooks/pre-commit refuses to see in\n'
+    printf '# an ADDED line of a staged commit (an absolute home path is caught separately,\n'
+    printf '# always). One name per line; blank lines and lines starting with # are ignored —\n'
+    printf '# so every line below is a comment and this file has NO names configured yet. An\n'
+    printf '# empty (or comment-only) file like this one is enough to proceed.\n'
+    printf '#\n'
+    printf '# Two sections, for your own reading:\n'
+    printf '#   [guard]        real names/handles that must never reach a public commit —\n'
+    printf '#                  finding one here REFUSES the commit.\n'
+    printf '#   [redact-only]  names you want a heads-up on but would rather flag than hard\n'
+    printf '#                  stop. As shipped, pre-commit enforces every entry the same way\n'
+    printf '#                  (a match refuses the commit either way) — kept as two headings\n'
+    printf '#                  so you can tell them apart if you later split the enforcement.\n'
+    printf '#\n'
+    printf '# Fill in your own real name, handle, or employer below the matching heading —\n'
+    printf '# on its own line, with no leading #. Example (delete the # before using it):\n'
+    printf '#   Jane Example\n'
+    printf '\n# --- [guard] — add names below this line ---\n'
+    printf '\n# --- [redact-only] — add names below this line ---\n'
+  } > "$DEST/.redaction-names.local" \
+    && ok ".redaction-names.local — installed empty, with the two sections explained (fill it in — see \"Next\" below)" \
+    || warn "could not write $DEST/.redaction-names.local"
+fi
 
 # owner-card.md is a template you personalise — copied only if you don't have one.
 if [ -f "$DEST/hooks/owner-card.md" ]; then
@@ -339,10 +398,12 @@ report_hook_result "$res" "the SessionStart hook (clock-in-context.sh)"
 res=$(register_hook "UserPromptSubmit" "$CLOCK_CMD" "" "")
 report_hook_result "$res" "the UserPromptSubmit hook (clock-in-context.sh)"
 
-# The three PreToolUse guards below all parse the tool-call JSON with jq or python3 and
-# fail CLOSED (refuse everything) when neither is on PATH — a silent no-op would be worse.
-# Registering them without either binary present would install three guards that refuse
-# every Bash call, so check first and skip the registration instead.
+# The first three PreToolUse guards below all parse the tool-call JSON with jq or python3
+# and fail CLOSED (refuse everything) when neither is on PATH — a silent no-op would be
+# worse. Registering them without either binary present would install guards that refuse
+# every Bash call, so check first and skip the registration instead. channel-size-guard.sh
+# rides along in the same block (see the comment above its own registration below) even
+# though it degrades safely on its own — simpler than a separate check for no real gain.
 if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
   BLOCK_GIT_CMD='/bin/bash "$HOME/.claude/hooks/block-dangerous-git.sh"'
   res=$(register_hook "PreToolUse" "$BLOCK_GIT_CMD" "" "" "Bash")
@@ -355,11 +416,35 @@ if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
   HEAVY_CMD='/bin/bash "$HOME/.claude/hooks/heavy-suite-guard.sh"'
   res=$(register_hook "PreToolUse" "$HEAVY_CMD" "" "" "Bash")
   report_hook_result "$res" "the PreToolUse hook (heavy-suite-guard.sh)"
+
+  # channel-size-guard.sh degrades safely with neither parser (it just does nothing to a
+  # Bash/Write/Edit/MultiEdit call it can't read), so it rides along in this same group for
+  # simplicity rather than needing its own check.
+  SIZE_CMD='/bin/bash "$HOME/.claude/hooks/channel-size-guard.sh"'
+  res=$(register_hook "PreToolUse" "$SIZE_CMD" "" "" "Write|Edit|MultiEdit|Bash")
+  report_hook_result "$res" "the PreToolUse hook (channel-size-guard.sh)"
 else
-  warn "neither jq nor python3 found — skipping the three PreToolUse guards"
-  say  "     (block-dangerous-git.sh, commit-pathspec-guard.sh, heavy-suite-guard.sh)."
-  say  "     They fail closed without a parser, so leaving them registered here would"
-  say  "     refuse every Bash command. Install jq or python3, then run this again."
+  warn "neither jq nor python3 found — skipping the four PreToolUse guards"
+  say  "     (block-dangerous-git.sh, commit-pathspec-guard.sh, heavy-suite-guard.sh,"
+  say  "     channel-size-guard.sh). They fail closed without a parser, so leaving them"
+  say  "     registered here would refuse every Bash command. Install jq or python3, then"
+  say  "     run this again."
+fi
+
+# gate-guard.sh is different: unlike the four above, it degrades safely with NO jq (it
+# falls back to a cruder text match instead of refusing everything), but it calls python3
+# unconditionally for its real check — with jq present and python3 missing, it would
+# refuse every single Bash command, not just gates. So it needs python3 specifically, not
+# "jq or python3".
+if command -v python3 >/dev/null 2>&1; then
+  GATE_CMD='/bin/bash "$HOME/.claude/hooks/gate-guard.sh"'
+  res=$(register_hook "PreToolUse" "$GATE_CMD" "" "" "Bash")
+  report_hook_result "$res" "the PreToolUse hook (gate-guard.sh)"
+else
+  warn "python3 not found — skipping the PreToolUse hook (gate-guard.sh). It needs"
+  say  "     python3 for its real check; without it, leaving it registered would refuse"
+  say  "     every Bash command, not just the gates it's meant to catch. Install python3,"
+  say  "     then run this again."
 fi
 
 # The helper ledger only reads transcripts and appends TSV rows — never blocks the
@@ -373,10 +458,54 @@ else
   say  "     then run this again, or add it by hand (see INSTALL.md)."
 fi
 
+# --- 6. multi-chat coordination hooks (opt-in) ------------------------------
+head2 "6. Multi-chat coordination hooks (optional, OFF by default)"
+say "  Only useful once more than one Claude Code session works in the same repo at a"
+say "  time. Four hooks, one question:"
+say "    - channel-provenance-pre.sh / -post.sh: record, per session, which lines of a"
+say "      shared file (NOTES, a plan, a changelog) THIS session wrote, so a later commit"
+say "      can't accidentally sweep in another session's uncommitted change. Needs python3"
+say "      — inert without it."
+say "    - doorman.sh: bounces a new prompt to a session already marked retired, or gone"
+say "      idle for a while at a high context, saving the message for the next session"
+say "      instead of losing it."
+say "    - stop-state-check.sh: marks a session retired past a configured context floor,"
+say "      and won't let a turn end having changed tracked files unless that role's own"
+say "      state file is among them."
+say "  All four read one shared config, hooks/state-check.conf (see"
+say "  hooks/state-check.conf.example) — none of it exists yet, so all four stay inert"
+say "  until you write it by hand. Nothing here talks to the network."
+if ask "Register the multi-chat coordination hooks?" "n"; then
+  DOORMAN_CMD='/bin/bash "$HOME/.claude/hooks/doorman.sh"'
+  res=$(register_hook "UserPromptSubmit" "$DOORMAN_CMD" "" "" )
+  report_hook_result "$res" "the UserPromptSubmit hook (doorman.sh)"
+
+  STATECHK_CMD='/bin/bash "$HOME/.claude/hooks/stop-state-check.sh"'
+  res=$(register_hook "Stop" "$STATECHK_CMD" "" "")
+  report_hook_result "$res" "the Stop hook (stop-state-check.sh)"
+
+  if command -v python3 >/dev/null 2>&1; then
+    PROV_PRE_CMD='/bin/bash "$HOME/.claude/hooks/channel-provenance-pre.sh"'
+    res=$(register_hook "PreToolUse" "$PROV_PRE_CMD" "" "" "Write|Edit|MultiEdit|Bash")
+    report_hook_result "$res" "the PreToolUse hook (channel-provenance-pre.sh)"
+
+    PROV_POST_CMD='/bin/bash "$HOME/.claude/hooks/channel-provenance-post.sh"'
+    res=$(register_hook "PostToolUse" "$PROV_POST_CMD" "" "" "Write|Edit|MultiEdit|Bash")
+    report_hook_result "$res" "the PostToolUse hook (channel-provenance-post.sh)"
+  else
+    warn "python3 not found — skipping channel-provenance-pre.sh / -post.sh (they need it;"
+    say  "     doorman.sh and stop-state-check.sh above don't, so those two are still on)."
+  fi
+  say  "  Next: write hooks/state-check.conf (copy state-check.conf.example) to turn any"
+  say  "  of the four on for a real project — every one is inert with no conf."
+else
+  skip "Skipped — all four stay inert (no hooks/state-check.conf, nothing registered)."
+fi
+
 # #9: a backup copy only earns its place if we actually changed the file.
 [ "$ANY_ADDED" = "1" ] || [ "$SETTINGS_PREEXISTED" = "0" ] || rm -f "$BACKUP/settings.json" 2>/dev/null
 
-# --- 6. the backup hook (opt-in) -------------------------------------------
+# --- 7. the backup hook (opt-in) -------------------------------------------
 # The whole design rests on ~/.claude/.gitignore being a strict ALLOWLIST. A
 # printed "please check this yourself" is not a safeguard, so we prove it with
 # git instead: check-ignore applies exactly the rules `git add -A` will apply.
@@ -422,7 +551,7 @@ tracked_leaks_found() {
   [ -n "$TRACKED_LEAKS" ]
 }
 
-head2 "6. Auto-backup of your config (optional, OFF by default)"
+head2 "7. Auto-backup of your config (optional, OFF by default)"
 say "  This commits and PUSHES every change under ~/.claude to a git repo at the"
 say "  end of every turn, without showing you a diff. Useful, but it means your"
 say "  standing instructions live in a repo that must stay PRIVATE."
@@ -536,8 +665,8 @@ else
   skip "Skipped. The Stop hook stays inert until ~/.claude/hooks/backup.conf exists."
 fi
 
-# --- 7. git hooks, machine-wide (opt-in) ------------------------------------
-head2 "7. Git hooks for every repo on this machine (optional, OFF by default)"
+# --- 8. git hooks, machine-wide (opt-in) ------------------------------------
+head2 "8. Git hooks for every repo on this machine (optional, OFF by default)"
 say "  This sets git's global hooksPath to ~/.claude/git-hooks, so commit-msg,"
 say "  pre-commit and pre-push (copied in step 1) run in EVERY repo on this machine."
 say "  The sharp edge: it REPLACES any hooks a repo already has in its own"
@@ -566,9 +695,14 @@ cat <<'NEXT'
   Next, in this order:
     1. Open ~/.claude/CLAUDE.md and fill it in. It is written as a
        fill-in-the-blanks form and explains why each part helps.
-    2. Start a new Claude Code session (hooks load at session start, so an
+    2. Open ~/.claude/.redaction-names.local and add any real names, handles
+       or employer names that must never reach a public commit — it was
+       installed empty (with its two sections explained in its own comments)
+       so the privacy check in git-hooks/pre-commit would have a file to
+       read at all; it can't catch a name you haven't listed.
+    3. Start a new Claude Code session (hooks load at session start, so an
        already-open session will not see them yet).
-    3. Ask Claude: "what process rules are you working under?" — if it can
+    4. Ask Claude: "what process rules are you working under?" — if it can
        list them back, the setup is live.
 
   Optional reading, in the repo you just ran this from:
