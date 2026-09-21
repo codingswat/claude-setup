@@ -1547,6 +1547,86 @@ for c in 'npm run typecheck' 'yarn lint' 'ls'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "D7 pair, shipped example conf, load 25 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSX30/heavy-suite-guard.sh"; done
 
 
+echo "31 confirmation-pass findings (part 4): the size projection, hidden sub-words, wrappers, the ledger"
+REPO31="$(cd "$HOOKS_DIR/.." && pwd -P)"
+
+# --- E1 an Edit/MultiEdit whose DELTA carries the file past its hard stop ---------------
+# The band compare used the file's CURRENT size for an Edit, so a 601-byte insertion into
+# a 1500-byte file with a 2000-byte stop was a WARNING and the file landed at 2100.
+CSZ31="$T/csz31"; mkdir -p "$CSZ31"; cp "$HOOKS_DIR/channel-size-guard.sh" "$CSZ31/"
+printf 'LIMIT=100\nBIG.md bytes 1000 2000\n' > "$CSZ31/channel-ceiling.conf"
+d31="$T/csz31repo"; mkdir -p "$d31"
+python3 -c "import sys;open(sys.argv[1],'w').write('x'*899 + 'M' + 'x'*600)" "$d31/BIG.md"   # 1500 bytes: over band, under stop
+ins31="$(python3 -c "print('y'*601, end='')")"
+INPUT="$(je "$d31/BIG.md" "M" "$ins31")"; expect refuse 2 "E1 an Edit whose delta carries BIG.md past its BYTE hard stop must be REFUSED" bash "$CSZ31/channel-size-guard.sh"
+INPUT="$(jm "$d31/BIG.md" "M" "$ins31")"; expect refuse 2 "E1 the same delta spelled as a MultiEdit must be REFUSED" bash "$CSZ31/channel-size-guard.sh"
+INPUT="$(je "$d31/BIG.md" "$ins31" "M")"; expect pass 0 "E1 pair: the same Edit REMOVING those bytes must be ALLOWED" bash "$CSZ31/channel-size-guard.sh"
+INPUT="$(je "$d31/BIG.md" "M" "MM")"; expect pass 0 "E1 pair: a one-byte growth still inside the band must be ALLOWED" bash "$CSZ31/channel-size-guard.sh"
+w31="$(python3 -c "print(' '.join(['w']*15))")"
+d31w="$T/csz31words"; mkdir -p "$d31w"; printf '%s' "$w31" > "$d31w/NOTES.md"
+INPUT="$(je "$d31w/NOTES.md" "w" "$(python3 -c "print(' '.join(['n']*8))")")"
+expect refuse 2 "E1 the same hole in a WORDS band (15 words, stop 20, +7) must be REFUSED" bash "$CSZ/channel-size-guard.sh"
+INPUT="$(je "$d31w/NOTES.md" "w" "n")"; expect pass 0 "E1 pair: a word-for-word Edit inside the band must be ALLOWED" bash "$CSZ/channel-size-guard.sh"
+
+# --- E2 a hidden SUB-command word: git is plain, its ARGUMENT is a substitution ---------
+for c in 'R=reset; git $R --hard' 'F=--force; git push origin $F' 'git ${SUB} --hard' 'git reset `echo --hard`'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "E2 must refuse, a git argument only the shell can expand: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+for c in 'git commit -m "$msg" file.ts' 'git log --author="$me"' 'git status' 'W=x; $W/bin/lint.sh --fix'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "E2 pair, must allow: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+ex30 refuse 2 "E2 a commit whose SUBCOMMAND comes from a variable must be refused" 'C=commit; git $C -a -m x'
+ex30 refuse 2 "E2 a commit whose PATHSPEC comes from a variable must be refused" 'git commit $paths -m x'
+ex30 pass 0 "E2 pair: a substitution only inside the message still passes" 'git commit -m "$msg" b.txt'
+ex30 pass 0 "E2 pair: a substitution only inside a quoted value still passes" 'git log --author="$me"'
+rm -f "$T/h31-ovl.tsv"; INPUT="$(json_bash 'GITGUARD=1 git $R --hard')"
+expect pass 0 "E2 pair: an approved run of the same command still passes" env OVERRIDE_LEDGER="$T/h31-ovl.tsv" bash "$HOOKS_DIR/block-dangerous-git.sh"
+
+# --- E3 eval / sh -c / bash -c handed something only the shell can expand ----------------
+for c in 'eval "$cmd"' 'eval $cmd' 'sh -c "$CMD"' 'bash -c "$(cat run.sh)"' 'eval `cat run.sh`'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "E3 must refuse, a wrapper handed a substitution: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+for c in 'bash -c '"'"'ls -la'"'"'' 'sh -c '"'"'git status'"'"'' 'eval "git status"' 'bash -c "npm run typecheck"'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "E3 pair, a wrapper handed plain text: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
+
+# --- E4 the ledger records an override only where it actually waived something ----------
+OL31="$T/h31-ovl.tsv"
+rm -f "$OL31"; INPUT="$(json_bash 'GITGUARD=1 true; git push --force')"
+expect refuse 2 "E4 an override in front of a harmless segment must not disarm the force-push" env OVERRIDE_LEDGER="$OL31" bash "$HOOKS_DIR/block-dangerous-git.sh"
+if [ -f "$OL31" ]; then bad "E4 a REFUSED command must leave NO ledger line (that override waived nothing)"; else ok; fi
+refuse_n=$((refuse_n+1))
+rm -f "$OL31"; INPUT="$(json_bash 'GITGUARD=1 git push --force origin main')"
+expect pass 0 "E4 pair: the override in front of the force-push itself still passes" env OVERRIDE_LEDGER="$OL31" bash "$HOOKS_DIR/block-dangerous-git.sh"
+if [ -f "$OL31" ]; then ok; else bad "E4 pair: an honoured override must still write its ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$OL31"; INPUT="$(json_bash 'SUITE_OK=1 true && npm test')"
+expect refuse 2 "E4 the same shape in heavy-suite-guard must still be refused" env OVERRIDE_LEDGER="$OL31" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+if [ -f "$OL31" ]; then bad "E4 heavy-suite: a REFUSED command must leave NO ledger line"; else ok; fi
+refuse_n=$((refuse_n+1))
+rm -f "$OL31"; INPUT="$(json_bash 'SUITE_OK=1 npm test')"
+expect pass 0 "E4 pair: SUITE_OK on the heavy segment itself still passes" env OVERRIDE_LEDGER="$OL31" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+if [ -f "$OL31" ]; then ok; else bad "E4 pair: heavy-suite must still log an honoured SUITE_OK"; fi
+pass_n=$((pass_n+1))
+rm -f "$OL31"
+
+# --- E5 the quoted-text trade-off, stated in INSTALL.md ---------------------------------
+INPUT="$(json_bash 'echo "git reset --hard is dangerous"')"
+expect refuse 2 "E5 the documented trade-off: a command merely QUOTING a dangerous git command is refused" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'echo "git reset --hardly"')"
+expect pass 0 "E5 pair: quoted text that is not a dangerous command still passes" bash "$HOOKS_DIR/block-dangerous-git.sh"
+if grep -qF 'merely quotes a dangerous git command' "$REPO31/INSTALL.md"; then ok; else bad "E5 INSTALL.md must state that quoted text is inspected too"; fi
+pass_n=$((pass_n+1))
+if grep -rlF 'merely quotes a dangerous git command' "$REPO31"/*.md | grep -qv '/INSTALL.md$'; then bad "E5 pair: that sentence belongs in INSTALL.md's own guard description"; else ok; fi
+refuse_n=$((refuse_n+1))
+
+# --- E6 git-hooks/pre-push: the article in front of the role it names --------------------
+autherr31="$(git -C "$T/idauth" push origin main 2>&1 1>/dev/null)"
+if printf '%s' "$autherr31" | grep -q 'has an author'; then ok; else bad "E6 the author refusal must read 'has an author' (got: $autherr31)"; fi
+refuse_n=$((refuse_n+1))
+if printf '%s' "$autherr31" | grep -q 'has a author'; then bad "E6 'has a author' must be gone"; else ok; fi
+pass_n=$((pass_n+1))
+comerr31="$(git -C "$T/idreb" push origin rb 2>&1 1>/dev/null)"
+if printf '%s' "$comerr31" | grep -q 'has a committer'; then ok; else bad "E6 pair: the committer half must still read 'has a committer' (got: $comerr31)"; fi
+pass_n=$((pass_n+1))
+
+
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
 printf '%s\n' "$HL_OUT" | tail -3

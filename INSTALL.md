@@ -317,6 +317,13 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
 }
 ```
 
+`block-dangerous-git.sh` inspects quoted text too, so a command that
+merely quotes a dangerous git command — `echo "git reset --hard is dangerous"` — is
+refused along with the real thing; put that text in a file with an editor instead of
+echoing it. (The
+trade-off is deliberate: reading only unquoted words would let `sh -c "git reset --hard"`
+through, which is the real command wearing quotes.)
+
 `gate-guard.sh` is gated on `python3` (see the note above the "Requires" paragraph): with
 no `python3` it passes everything with a warning, so registering it would cost a subprocess
 per Bash call and catch nothing. Only register it if `python3` is on `PATH`. `channel-size-guard.sh` and its `PostToolUse` half

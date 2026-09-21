@@ -36,6 +36,19 @@
 #                   word instead would refuse honest work (`"$W/bin/lint.sh" --fix`).
 #   has_substituted_git — the same shape in front of `commit`, where the arguments alone
 #                   cannot say what will be committed: that one is refused outright.
+#   substituted_args — the mirror image, and the hole hidden_cmdword leaves open: the
+#                   command word is a plain `git`, but one of its ARGUMENTS comes from a
+#                   variable or a substitution (`R=reset; git $R --hard`). There the
+#                   arguments are exactly what cannot be read, so the shape decides
+#                   nothing and the command is refused. Read on the copy with quoted
+#                   CONTENT blanked, so a substitution inside a quoted message or value
+#                   (`git commit -m "$msg" f.ts`, `git log --author="$me"`) is not a
+#                   substituted argument and still passes.
+#   wrapped_substitution — `eval`/`sh -c`/`bash -c` handed an argument that is itself a
+#                   substitution or a bare variable (`eval "$cmd"`). unwrap can bring an
+#                   inline literal out to the top level; it cannot bring out text that
+#                   does not exist until the shell runs, so that wrapper is refused.
+#                   Checked BEFORE unwrap, on text that still holds the wrapper.
 # A guard that cannot find this file REFUSES the command (fail closed) — never carries on
 # with un-normalised text, which would silently reopen every bypass above.
 # Tests: hooks/test-hooks.sh (sections 28 and 30).
@@ -53,6 +66,8 @@ _IFS = re.compile(r"\$\{IFS\}|\$IFS(?![A-Za-z0-9_])")
 _SEGRE = re.compile(r"&&|\|\||;|\||&|\n")
 _HIDDEN = re.compile(r"(^|[;&|(\n])(\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*)(\$\{?[A-Za-z_][^\s]*|\$\([^()]*\)|[\x60][^\x60]*[\x60])")
 _SUBGIT = re.compile(r"(?:\$\{?[A-Za-z_][^\s]*|\$\([^()]*\)|[\x60][^\x60]*[\x60])\s+(?:-\S+\s+)*commit\b")
+_ANYSUB = re.compile(r"\$\{?[A-Za-z_(0-9]|[\x60]")
+_WRAPARG = re.compile(r"\b(?:eval|(?:bash|sh|zsh)\s+-c)\s+(\"[^\"]*\"|\x27[^\x27]*\x27|[^\s;&|]+)")
 def strip_heredocs(s):
     return _HEREDOC.sub(" HEREDOC ", s)
 def strip_messages(s):
@@ -83,6 +98,22 @@ def has_substituted_git(s):
     return _SUBGIT.search(s) is not None
 def hidden_cmdword(s, standin):
     return _HIDDEN.sub(lambda m: m.group(1) + m.group(2) + standin, s)
+def substituted_args(s, binary):
+    # s: ONE segment with quoted CONTENT already blanked. True when the command word is
+    # `binary` spelled plainly and anything after it is a substitution or a variable.
+    m = re.match(r"\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*" + re.escape(binary) + r"(?:\s|$)", s)
+    if not m:
+        return False
+    return _ANYSUB.search(s[m.end():]) is not None
+def wrapped_substitution(s):
+    # s: the whole command, BEFORE unwrap (the wrapper must still be in the text).
+    for m in _WRAPARG.finditer(s):
+        a = m.group(1)
+        if a[:1] in ("\"", "\x27"):
+            a = a[1:-1]
+        if re.match(r"\s*(?:\$\{?[A-Za-z_(0-9]|[\x60])", a):
+            return True
+    return False
 def _mask(s):
     out = list(s)
     for m in _QUOTED.finditer(s):

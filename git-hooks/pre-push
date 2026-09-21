@@ -49,8 +49,9 @@ if [ "$(git -C "$root" config --local --get hooks.identity 2>/dev/null)" != "fal
   done < "$HOME/.claude/hooks/backup.conf"
 fi
 judge() {   # $1 sha, $2 role, $3 identity
+  art="a"; case "$2" in [aeiouAEIOU]*) art="an" ;; esac   # "an author", "a committer"
   if printf '%s' "$3" | grep -qiE 'claude|anthropic'; then
-    echo "pre-push hook: REFUSED — commit ${1:0:7} has a $2 naming Claude/Anthropic: ${3%% <*}." >&2
+    echo "pre-push hook: REFUSED — commit ${1:0:7} has $art $2 naming Claude/Anthropic: ${3%% <*}." >&2
     echo "  A rebase replays commits without running pre-commit or commit-msg on any of them, and the \`--author=\` flag never reaches the author check either — this is where both are caught." >&2
     echo "  Rewrite with your own identity, e.g.: git rebase -i --exec \"git commit --amend --no-edit --reset-author\" <base>   (gap: --no-verify skips this hook; do not use it.)" >&2
     exit 1

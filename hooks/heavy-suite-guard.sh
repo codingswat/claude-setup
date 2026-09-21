@@ -105,10 +105,15 @@ while IFS=$'\t' read -r flag seg sseg; do
   is_heavy "$seg" && hit=1
   [ "$hit" = 0 ] && [ "$sseg" != "$seg" ] && is_heavy "$sseg" && hit=1
   if [ "$flag" = 1 ]; then
-    # An approved segment, recorded with what it bypassed — logged whether or not this
-    # segment is the heavy one, so every use of the word leaves a line.
-    guard_log_override SUITE_OK "$rawcmd" "heavy suite, load check skipped" \
-      || { guard_refuse_unrecorded "heavy-suite-guard" "SUITE_OK=1"; exit 2; }
+    # An approved segment, recorded with what it bypassed — and ONLY when this segment is
+    # the heavy one. An override in front of a segment that was never going to be refused
+    # waives nothing: `SUITE_OK=1 true && npm test` used to write a ledger line and then
+    # refuse the suite anyway, so the record of approvals held a line for a run that never
+    # happened.
+    if [ "$hit" = 1 ]; then
+      guard_log_override SUITE_OK "$rawcmd" "heavy suite, load check skipped" \
+        || { guard_refuse_unrecorded "heavy-suite-guard" "SUITE_OK=1"; exit 2; }
+    fi
     continue
   fi
   [ "$hit" = 1 ] && { heavy=1; break; }

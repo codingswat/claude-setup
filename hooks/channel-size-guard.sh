@@ -28,7 +28,10 @@
 # that it is over — it cannot undo a write, but nothing gets past it unnoticed.
 # The file name is matched with a word boundary on BOTH sides, so `RELEASE-NOTES.md` is
 # not a `NOTES.md`.
-# Write/Edit/MultiEdit are judged on the content the tool is about to write.
+# Write/Edit/MultiEdit are judged on the content the tool is about to write: a Write on
+# the larger of the file and its new content, an Edit/MultiEdit on the file's current size
+# PLUS the call's own delta (new minus old, summed across a MultiEdit's edits) — what the
+# file will hold after the call, never what it holds now.
 # Growth is measured in the band's OWN unit — words via `wc -w`, lines via `wc -l`, bytes
 # via `wc -c` (a `bytes` band is the exact ceiling hooks/channel-size-post.sh also reads;
 # without one it derives a generous byte bound from the words/lines stop); a relative Bash path is resolved against the hook JSON's `.cwd` when given, and
@@ -82,34 +85,43 @@ case "$tool" in
     while IFS=' ' read -r unit band limit; do
       [ -z "$unit" ] && continue
       cur="$(measure "$unit" "$f")"
-      if [ "$tool" = Write ]; then
-        # if/elif, not a case: bash 3.2 (the macOS system bash) misparses a case pattern
-        # inside $( … ) and the count came back as the script text itself.
-        wnew="$(printf '%s' "$input" | jq -r '.tool_input.content' | { if [ "$unit" = words ]; then wc -w; elif [ "$unit" = bytes ]; then wc -c; else wc -l; fi; } | tr -d ' ')"
-        # judged on the LARGER of the file's current size and the content about to be
-        # written — a small write onto a big file (a genuine sweep) still passes.
-        [ "$wnew" -gt "$cur" ] && cur="$wnew"
-      fi
-      [ "$cur" -le "$band" ] && continue
-      if [ "$cur" -le "$limit" ]; then warn "$b" "$cur" "$unit" "$band"; continue; fi
+      # An Edit/MultiEdit's own DELTA, in the band's unit. It is worked out BEFORE the
+      # band and stop compare, because those must judge what the file will hold AFTER the
+      # call: comparing the file's CURRENT size alone made a 601-byte insertion into a
+      # 1500-byte file with a 2000-byte stop a mere warning, and the file landed at 2100 —
+      # past the stop the guard exists to hold.
+      delta=0
       if [ "$tool" = Edit ]; then
         old_s="$(printf '%s' "$input" | jq -r '.tool_input.old_string // ""')"
         new_s="$(printf '%s' "$input" | jq -r '.tool_input.new_string // ""')"
-        old_n="$(count_str "$unit" "$old_s")"; new_n="$(count_str "$unit" "$new_s")"
-        [ $(( new_n - old_n )) -lt 0 ] && continue
-      elif [ "$tool" = Write ]; then
-        [ "$wnew" -lt "$cur" ] && continue
+        delta=$(( $(count_str "$unit" "$new_s") - $(count_str "$unit" "$old_s") ))
       elif [ "$tool" = MultiEdit ]; then
-        delta=0
         while IFS= read -r ed; do
           [ -z "$ed" ] && continue
           eo="$(printf '%s' "$ed" | jq -r '.old_string // ""')"; en="$(printf '%s' "$ed" | jq -r '.new_string // ""')"
           eon="$(count_str "$unit" "$eo")"; enn="$(count_str "$unit" "$en")"
           delta=$(( delta + enn - eon ))
         done <<<"$(printf '%s' "$input" | jq -c '.tool_input.edits[]')"
+      fi
+      proj="$cur"
+      if [ "$tool" = Write ]; then
+        # if/elif, not a case: bash 3.2 (the macOS system bash) misparses a case pattern
+        # inside $( … ) and the count came back as the script text itself.
+        wnew="$(printf '%s' "$input" | jq -r '.tool_input.content' | { if [ "$unit" = words ]; then wc -w; elif [ "$unit" = bytes ]; then wc -c; else wc -l; fi; } | tr -d ' ')"
+        # judged on the LARGER of the file's current size and the content about to be
+        # written — a small write onto a big file (a genuine sweep) still passes.
+        [ "$wnew" -gt "$cur" ] && proj="$wnew"
+      elif [ "$delta" -gt 0 ]; then
+        proj=$(( cur + delta ))
+      fi
+      [ "$proj" -le "$band" ] && continue
+      if [ "$proj" -le "$limit" ]; then warn "$b" "$proj" "$unit" "$band"; continue; fi
+      if [ "$tool" = Write ]; then
+        [ "$wnew" -lt "$proj" ] && continue
+      else
         [ "$delta" -lt 0 ] && continue
       fi
-      refuse "$b" "$cur" "$unit" "$limit"
+      refuse "$b" "$proj" "$unit" "$limit"
     done <<<"$bands"
     exit 0 ;;
   Bash)

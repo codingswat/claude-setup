@@ -26,13 +26,27 @@
 # `$(which git) clean -f` — is judged by its ARGUMENTS: the hidden word is replaced by
 # `git` and the same patterns run again, so the shape still decides. `$(which git) status`
 # and `$TOOLS/lint.sh --fix` are unaffected.
+# The mirror image is refused instead of judged: a plain `git` whose ARGUMENT comes from a
+# variable or a substitution (`R=reset; git $R --hard`, `git push origin $F`). There the
+# arguments are exactly what cannot be read, so nothing is left to decide on — the command
+# is refused and a plain spelling asked for. A substitution inside a quoted message or
+# value is NOT that: `git commit -m "$msg" f.ts` and `git log --author="$me"` still pass,
+# because the check reads the copy with quoted content blanked.
+# Refused for the same reason, before any of the above: `eval`, `sh -c`, `bash -c` handed
+# an argument that is itself a substitution or a bare variable (`eval "$cmd"`). A wrapper
+# around an inline literal is unwrapped and judged as usual (`sh -c 'git reset --hard'` is
+# still refused, `bash -c 'ls -la'` still passes), but text that does not exist until the
+# shell runs it cannot be unwrapped, and GITGUARD=1 does not waive it: there is nothing to
+# approve until the command is readable.
 # Deliberate, approved run: start the SEGMENT that would be refused with `GITGUARD=1 ` —
 # `echo x && GITGUARD=1 git reset --hard` approves the reset, while
 # `git push --force && GITGUARD=1 true` approves only the `true` and the force-push is
 # still refused. The word is read on text with quoted strings removed, so the token inside
-# a message or a quoted argument does not disarm the guard. Every use is written to
-# hooks/override-ledger.sh with the pattern it bypassed; if that line CANNOT be written
-# (no ledger script, unwritable path) the override is REFUSED, not honoured.
+# a message or a quoted argument does not disarm the guard. Every HONOURED use is written
+# to hooks/override-ledger.sh with the pattern it bypassed; if that line CANNOT be written
+# (no ledger script, unwritable path) the override is REFUSED, not honoured. An override
+# standing in front of a segment that was never going to be refused waives nothing and
+# writes NO line — the ledger records approvals, not the typing of the word.
 # Optional extra check, OFF by default: in a checkout shared by more than one session
 # (a shared dev box, a pair-programming worktree), `git stash` hides EVERY session's
 # uncommitted work, not just the caller's. List the repos where that applies in
@@ -79,18 +93,29 @@ fi
 # the match and the override that could waive it belong to one segment, never to the line:
 #   <override here 0|1> TAB <match copy> TAB <hidden-command-word copy> TAB <blanked copy>
 norm="$(printf '%s' "$rawcmd" | python3 -c "$GUARD_PY_COMMON"'
-s=clean(sys.stdin.read())
+raw=sys.stdin.read()
+# The wrapper check runs BEFORE unwrap: unwrap lifts an inline literal out of
+# `eval "…"` / `sh -c "…"`, but there is nothing to lift out of `eval "$cmd"`.
+pre=normalize_ws(strip_messages(strip_heredocs(raw)))
+wrapsub="1" if wrapped_substitution(pre) else "0"
+s=clean(raw)
 recs=[]
 for seg in segments(s):
     m=strip_quotechars(seg).replace("\n", " ")
     q=blank_quoted(seg).replace("\n", " ")
     flag="1" if override_at_start(q, "GITGUARD") else "0"
-    recs.append(flag + "\t" + m + "\t" + hidden_cmdword(m, "git") + "\t" + q)
-sys.stdout.write(s + "\x01" + strip_quotechars(s) + "\x01" + blank_quoted(s) + "\x01" + "\n".join(recs))')"
+    asub="1" if substituted_args(q, "git") else "0"
+    recs.append(flag + "\t" + m + "\t" + hidden_cmdword(m, "git") + "\t" + q + "\t" + asub)
+sys.stdout.write(s + "\x01" + strip_quotechars(s) + "\x01" + blank_quoted(s) + "\x01" + wrapsub + "\x01" + "\n".join(recs))')"
 guard_parsed "block-dangerous-git" python3 $? "$norm" "$rawcmd"
 SEP=$'\001'
 cmdn="${norm%%$SEP*}"; rest="${norm#*$SEP}"; cmdm="${rest%%$SEP*}"
-rest2="${rest#*$SEP}"; cmdq="${rest2%%$SEP*}"; segrecs="${rest2#*$SEP}"
+rest2="${rest#*$SEP}"; cmdq="${rest2%%$SEP*}"
+rest3="${rest2#*$SEP}"; wrapsub="${rest3%%$SEP*}"; segrecs="${rest3#*$SEP}"
+if [ "$wrapsub" = 1 ]; then
+  echo "block-dangerous-git: REFUSED — this command hands \`eval\`, \`sh -c\` or \`bash -c\` an argument that does not exist until the shell runs it (\`eval \"\$cmd\"\`, \`sh -c \"\$(cat run.sh)\"\`). There is no text for this guard to read, so \`git reset --hard\` inside that variable would pass unseen. Write the git command plainly: git <subcommand> … — or put it in a script file and run that. GITGUARD=1 does NOT waive this one; there is nothing to approve until the command is readable." >&2
+  exit 2
+fi
 
 W='(^|[^a-zA-Z0-9_./-])'                           # `git` as a whole word
 G='( +-[^ ;&|]+( +[^-;&| ][^ ;&|]*)?)*'            # optional global flags, each with one optional value
@@ -135,8 +160,8 @@ seg_is_stash() {   # $1 = the segment with quoted content blanked
   return 1
 }
 
-matched=""; matched_hidden=0; stash_hit=0
-while IFS=$'\t' read -r flag mseg sseg qseg; do
+matched=""; matched_hidden=0; stash_hit=0; argsub_hit=0
+while IFS=$'\t' read -r flag mseg sseg qseg asub; do
   [ -n "$flag" ] || continue
   segmatch=""; hidden=0
   for p in "${patterns[@]}"; do
@@ -149,15 +174,24 @@ while IFS=$'\t' read -r flag mseg sseg qseg; do
   fi
   segstash=0
   if [ -z "$segmatch" ] && seg_is_stash "$qseg"; then segstash=1; fi
+  segargsub=0
+  if [ -z "$segmatch" ] && [ "$segstash" = 0 ] && [ "$asub" = 1 ]; then segargsub=1; fi
   if [ "$flag" = 1 ]; then
-    # An approved segment, recorded with WHAT it bypassed.
+    # An approved segment, recorded with WHAT it bypassed — and ONLY when it bypassed
+    # something. An override standing in front of a segment where nothing was going to be
+    # refused waives nothing, so it writes no ledger line: `GITGUARD=1 true; git push
+    # --force` used to log "no dangerous pattern matched" and then refuse the push, so the
+    # record of approvals held a line for an act that was never approved and never ran.
     if [ "$segstash" = 1 ]; then why="git stash in a checkout listed in block-dangerous-git.conf"
-    else why="${segmatch:-no dangerous pattern matched}"; fi
+    elif [ "$segargsub" = 1 ]; then why="a git argument produced by a substitution"
+    elif [ -n "$segmatch" ]; then why="$segmatch"
+    else continue; fi
     guard_log_override GITGUARD "$rawcmd" "$why" || { guard_refuse_unrecorded "block-dangerous-git" "GITGUARD=1"; exit 2; }
     continue
   fi
   if [ -n "$segmatch" ]; then matched="$segmatch"; matched_hidden="$hidden"; break; fi
   if [ "$segstash" = 1 ]; then stash_hit=1; break; fi
+  if [ "$segargsub" = 1 ]; then argsub_hit=1; break; fi
 done <<<"$segrecs"
 
 if [ -n "$matched" ] && [ "$matched_hidden" = 1 ]; then
@@ -166,6 +200,10 @@ if [ -n "$matched" ] && [ "$matched_hidden" = 1 ]; then
 fi
 if [ -n "$matched" ]; then
   echo "block-dangerous-git: REFUSED — the command matches '$matched' (irreversible git actions need an explicit yes). Name the target, scope and consequence, get the go-ahead, then run it as: GITGUARD=1 <command>" >&2
+  exit 2
+fi
+if [ "$argsub_hit" = 1 ]; then
+  echo "block-dangerous-git: REFUSED — an ARGUMENT of this git command comes from a variable or a substitution (\`\$R\`, \`\${R}\`, \`\$(…)\`, backticks), so what git will be told to do cannot be read before it runs: \`R=reset; git \$R --hard\` is a hard reset no pattern can see. Write the git command plainly: git <subcommand> <arguments> … A substitution inside a quoted message or value (git commit -m \"\$msg\" f.ts, git log --author=\"\$me\") is fine and is not what this refuses. Once approved: GITGUARD=1 <command>" >&2
   exit 2
 fi
 if [ "$stash_hit" = 1 ]; then

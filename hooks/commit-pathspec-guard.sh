@@ -11,6 +11,10 @@
 #   - a commit whose `git` is produced by substitution — `` `echo git` commit ``,
 #     `$(which git) commit`: no pattern can see a binary that does not exist until the
 #     shell runs it, so the command is refused and a plain `git commit <paths>` asked for
+#   - the mirror image: a plain `git` whose ARGUMENT is a substitution — `C=commit; git $C
+#     -a -m x`, `git commit $paths -m x`. The arguments are what this guard reads, so it
+#     refuses rather than judge text it does not have. A substitution inside a quoted
+#     message or value (`-m "$msg"`, `--author="$me"`) is blanked first and still passes
 #   - a commit whose FOLDER cannot be worked out: `cd "$HOME/x" && git commit NOTES.md`
 #     (only the shell can expand that target), or a path that is no git repository. The
 #     whole guard reads that folder's index, so an unknown folder means an unjudged commit
@@ -151,6 +155,12 @@ for seg in segments(s):
     # plain `git`.
     if has_substituted_git(blank_quoted(seg)) and not (repo and linked(repo)):
         finish("REFUSE_SUBST")
+    # The mirror image: a plain `git` whose SUBCOMMAND or PATHSPEC is a variable —
+    # `C=commit; git $C -a -m x`, `git commit $paths -m x`. The arguments are what this
+    # guard reads, so when they only exist once the shell runs, nothing can be judged.
+    # A substitution inside a quoted message or value is blanked out first and still passes.
+    if substituted_args(blank_quoted(seg), "git") and not (repo and linked(repo)):
+        finish("REFUSE_ARGSUB")
     if toks[0]=="cd" and len(toks)>1:
         t=toks[1]
         if any(ch in t for ch in UNRESOLVABLE):
@@ -218,6 +228,8 @@ case "$verdict" in
     echo "commit-pathspec-guard: REFUSED — a whole-tree pathspec (\`.\`, \`*\`, \`..\`, \`/\`, \`:/\`, or the repo root itself) commits every change under it — the same sweep as -a. Name your files: git commit <paths> -m …" >&2; exit 2 ;;
   REFUSE_SUBST)
     echo "commit-pathspec-guard: REFUSED — the git binary in this commit comes from a substitution (\`\$(…)\` or backticks), so what it will actually commit cannot be read before it runs. Write it as a plain: git commit <paths> -m …" >&2; exit 2 ;;
+  REFUSE_ARGSUB)
+    echo "commit-pathspec-guard: REFUSED — an argument of this git command comes from a variable or a substitution (\`\$C\`, \`\${C}\`, \`\$(…)\`, backticks), so the subcommand and the paths it would commit cannot be read before it runs — \`C=commit; git \$C -a -m x\` is a whole-index sweep no pattern can see. Write it plainly: git commit <paths> -m …   (a substitution inside a quoted message or value, like -m \"\$msg\", is fine)" >&2; exit 2 ;;
   REFUSE_CD)
     echo "commit-pathspec-guard: REFUSED — this commit runs in a folder this guard cannot work out (a \`cd\` whose target only the shell can expand, such as \`cd \"\$HOME/x\"\`, or a path that is not a git repository), so what it would commit cannot be read. Write the folder out in full, or run the commit from that folder: git -C /full/path commit <paths> -m …" >&2; exit 2 ;;
   REFUSE_PSF)
