@@ -20,8 +20,40 @@
 # your model's real context window, so a session still has room to write its state file and
 # hand off cleanly before it runs out.
 #
-# A working directory whose basename matches no line here is untouched by either guard.
+# A folder whose name matches no line here is untouched by either guard. The name matched is the
+# git TOPLEVEL folder's (a chat opened in a subfolder of a seat's worktree matches the same line),
+# both as written and after lower-casing and cutting at the first digit ("myapp-dev-3" also reads
+# "myapp-dev", so "myapp-dev*" and "myapp-dev" both match it).
+#
+# <role-name> may be the word auto: the role is then read from the folder name itself — lower-cased,
+# cut at the first digit, trailing hyphen dropped ("myapp-planner-3" -> "myapp-planner") — and any
+# ROLE_ALIAS line below renames it. Example row:   myapp-*  auto  800
+#
+# More optional key lines (each one line, anywhere in the file; all defaults below are
+# illustrative — pick numbers for your own model and habits):
+#   ROLE_ALIAS <folder-role> <role>   read the folder-derived role "<folder-role>" as "<role>"
+#                                      e.g.  ROLE_ALIAS myapp-planner planner
+#   WRAPUP_K <n>          at the first turn end past <n> thousand tokens, ask the chat to finish,
+#                          land, update its state file and say it is ready to retire. Default 600.
+#   WRAPUP_ROLES <r> ...  which roles get that wrap-up ("*" = every role). Default: the dev seats
+#                          of MULTI-CHAT-ROLES.md: dev senior junior designer senior-dev junior-dev
+#   TELL_GROWTH_K <n>     a turn that grew the context by <n> thousand or more with no helper
+#                          (Agent/Workflow) launched leaves a one-line nudge for the next prompt. Default 30.
+#   TELL_EXEMPT_ROLES <r> ...   roles that never get that nudge. Default none.
+#   UNATTENDED_UNTIL <path>     the unattended-run file: ONE line, an end time in epoch seconds.
+#                          While that time is in the future the wrap-up is skipped (an overnight run
+#                          nobody is watching). A missing, garbled or past file is a normal run.
+#                          Default ~/.claude/state/unattended-until (a leading ~/ is expanded).
+#                          Nothing in this kit writes the file. To set it by hand for 8 hours:
+#                            echo $(( $(date +%s) + 8*3600 )) > ~/.claude/state/unattended-until
+#                          and to end the run early:  rm ~/.claude/state/unattended-until
 STATE_FILE docs/state/{role}.md
 myapp-planner*   planner   500
 myapp-*          dev       850
 myapp            root      850
+# ROLE_ALIAS myapp-planner planner
+# WRAPUP_K 600
+# WRAPUP_ROLES dev senior junior designer senior-dev junior-dev
+# TELL_GROWTH_K 30
+# TELL_EXEMPT_ROLES planner advisor
+# UNATTENDED_UNTIL ~/.claude/state/unattended-until

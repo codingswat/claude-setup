@@ -1,38 +1,64 @@
 #!/bin/bash
 # stop-state-check.sh — Stop hook, paired with doorman.sh (same UserPromptSubmit-side
-# hook, same config file). Two independent jobs, each gated on hooks/state-check.conf
-# matching the session's working-directory NAME to a role:
+# hook, same config file). Jobs, each gated on hooks/state-check.conf matching the session's
+# folder to a role (the git TOPLEVEL folder's name, so a chat opened in a subfolder of a
+# seat's folder matches too):
 #
 # (1) RETIRE: once the session's context is at or over that role's configured floor (in
-#     thousands of tokens), write state/retired/<session_id> and append a note to
-#     state/inbox/<role>.md naming the worktree and any uncommitted TRACKED files. This
-#     never blocks the turn — it just leaves the marker doorman.sh checks on the session's
-#     NEXT message. Written once per session id (idempotent): re-running an already-retired
-#     session neither rewrites the marker nor re-appends to the inbox.
-# (2) THE STATE FILE: a turn that CHANGED tracked files may not end unless the role's state
-#     file (state-check.conf's STATE_FILE pattern, with {role} substituted) is among them,
-#     and its "Current task:" / "Next step:" lines are filled AND actually touched by this
-#     turn's diff — printed as a block decision so the file gets written now. Appending a
-#     blank line to the state file is not a handover. Never blocks twice in a row
-#     (stop_hook_active). Untracked files never count as "changed" — a file git doesn't
-#     know about yet is not "the paper trail".
-#     "CHANGED" means changed DURING this turn, not "dirty right now": a read-only turn in
-#     a tree someone left dirty an hour ago has nothing to write down. The comparison is
-#     against the TURN SNAPSHOT hooks/doorman.sh writes when the prompt arrives. With no
-#     snapshot (doorman.sh not registered, or a turn that began before it was) this job
-#     WARNS instead of blocking — refusing to end a turn on a guess is worse than missing
-#     one. Register doorman.sh to get the real check.
-#     This job needs no session id; only job (1) does, because only a marker file is keyed
-#     by one.
+#     thousands of tokens), write state/retired/<session_id> (plus its companion
+#     state/retired-compacts/<session_id>, the count of compact boundaries at that moment;
+#     a marker without its companion counts as absent and is written again) and append a
+#     note to state/inbox/<role>.md naming the worktree and any uncommitted TRACKED files.
+#     This never blocks the turn — it just leaves the marker doorman.sh checks on the
+#     session's NEXT message. Written once per session id (idempotent). The one-line
+#     RETIRED sentence goes to STDERR, never stdout: a Stop hook's stdout is read as a
+#     decision only when the WHOLE of it starts with "{", so a sentence printed first
+#     silently dropped the state-file block below on the same turn.
+# (2) THE STATE FILE: a turn that CHANGED the repo may not end unless the role's state
+#     file (state-check.conf's STATE_FILE pattern, with {role} substituted) changed too, and
+#     its FIRST "**Current task:**" and FIRST "**Next step:**" lines are filled AND differ
+#     from what they were when the turn began — printed as a block decision so the file gets
+#     written now. A prose mention of a marker, or a second marker line appended below the
+#     real one, is not the line moving. Never blocks twice in a row (stop_hook_active).
+#     Untracked files never count as "changed".
+#     "CHANGED" means changed DURING this turn, not "dirty right now": the comparison is
+#     against the TURN SNAPSHOT hooks/doorman.sh writes when the prompt arrives — four
+#     tab-separated fields: HEAD, the state file's hash, a hash of `git diff HEAD` (the
+#     CONTENT of every tracked change, so a second edit to an already-dirty file is seen),
+#     and a hash of the state file's two marker lines. A turn that only COMMITTED moves HEAD
+#     and is caught; a turn that changed nothing passes even in a tree left dirty an hour
+#     ago. With no snapshot (doorman.sh not registered, or a turn that began before it was)
+#     this job WARNS instead of blocking — refusing to end a turn on a guess is worse than
+#     missing one. A snapshot that is a symlink is never followed (skipped, one stderr note).
+#     This job needs no session id; only the marker-file jobs do, because those files are
+#     keyed by one. State file and every git call are resolved from the git toplevel.
+# (3) THE WRAP-UP: at the FIRST Stop past WRAPUP_K thousand tokens (conf key, default 600,
+#     illustrative) in a role listed in WRAPUP_ROLES (default: the dev seats; "*" = every role),
+#     block once, after job (2) had nothing to say (one Stop output, never two JSON objects),
+#     telling the seat to finish the task in hand, land it, update the state file and say it is
+#     ready to retire. Never on the forced second stop, never while an unattended run is on
+#     (guard-lib.sh's unattended_run_active), once per session ($STATE/wrapup-fired/<sid>,
+#     which also tells clock-in-context.sh to swap its fullness line for the wrap-up words).
+# (4) THE HELPER TELL: a turn that grew the context by TELL_GROWTH_K thousand or more (default
+#     30, illustrative) with no Agent/Workflow launched leaves one line in $STATE/tell/<sid>;
+#     doorman.sh shows it at the next passing prompt, then deletes it. Roles in
+#     TELL_EXEMPT_ROLES never get it. The growth is measured from $STATE/turn-start/<sid>
+#     (the context size doorman.sh wrote at the prompt, and this hook rewrites at every Stop).
+# (5) SCHEDULED PROMPTS: the session's cron/loop prompts, from the Stop input's
+#     session_crons[].prompt, are written to $STATE/crons/<sid> (needs jq; without jq this is
+#     skipped silently) so a later prompt hook can tell a fired schedule from a typed message.
+#     Rewritten at every Stop; an empty list removes the file.
+# Every state file this hook writes is skipped when its path (or its folder) is a symlink.
 #
-# No hooks/state-check.conf at all, or the working directory's basename matches no line in
-# it: BOTH jobs are off for this session — the safe default for a single-session project
-# with nothing to track. Fails OPEN (exit 0) outside a git repo, or with no readable
-# transcript/cwd.
+# No hooks/state-check.conf at all, or the folder matches no line in it: EVERY job is off for this
+# session — the safe default for a single-session project with nothing to track. Fails OPEN
+# (exit 0) outside a git repo, with no readable transcript/cwd, or when hooks/guard-lib.sh (the
+# shared conf reader) is missing (one stderr note).
 #
 # Config: hooks/state-check.conf (see hooks/state-check.conf.example; shared with
-# doorman.sh). Test seam: STATE_CHECK_STATE_DIR (where retired/ and inbox/ are written).
-# Tests: hooks/test-hooks.sh.
+# doorman.sh). Test seam: STATE_CHECK_STATE_DIR (where the marker folders are written).
+# Portable: no `shasum`, `stat -f` or `tail -r`; every hash comes from git itself.
+# Tests: hooks/test-hooks.sh (sections 25, 29 and "refresh 2026-09-29 (c2a)").
 input=$(cat 2>/dev/null); [ -z "$input" ] && exit 0
 field() { printf '%s' "$input" | /usr/bin/sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1; }
 json_esc() {
@@ -43,35 +69,40 @@ json_esc() {
 }
 tp=$(field transcript_path); cwd=$(field cwd); sid=$(field session_id)
 # An empty or traversal-shaped session id must touch no path below — but it only disables
-# job (1), the marker file that is keyed by it. Job (2) needs no id and keeps running.
+# the jobs keyed by it (the marker files). Job (2) needs no id and keeps running.
 case "$sid" in *'/'*|..*) sid="";; esac
 active=$(printf '%s' "$input" | /usr/bin/grep -oE '"stop_hook_active"[[:space:]]*:[[:space:]]*(true|false)' | /usr/bin/grep -oE 'true|false' | head -1)
 [ -n "$cwd" ] || cwd="$PWD"
-base=$(basename "$cwd")
 
-# ---- role + floor lookup (hooks/state-check.conf; see .conf.example) ----
-CONF="$(dirname "$0")/state-check.conf"
-STATE_FILE_PATTERN="docs/state/{role}.md"
-role=""; floor_k=""
-if [ -f "$CONF" ]; then
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*) continue;; esac
-    case "$line" in
-      STATE_FILE\ *) STATE_FILE_PATTERN="${line#STATE_FILE }"; continue;;
-    esac
-    set -- $line
-    pat="$1"; r="$2"; fk="$3"
-    case "$fk" in ''|*[!0-9]*) continue;; esac   # a non-numeric floor: skip this line, not the file
-    [ -n "$pat" ] && [ -n "$r" ] || continue
-    case "$base" in $pat) role="$r"; floor_k="$fk"; break;; esac
-  done < "$CONF"
+# ---- role + floor lookup: guard-lib.sh's state_conf_read (hooks/state-check.conf) ----
+_lib="$(dirname "$0")/guard-lib.sh"
+# shellcheck disable=SC1090
+[ -r "$_lib" ] && . "$_lib" 2>/dev/null
+if ! command -v state_conf_read >/dev/null 2>&1; then
+  echo "stop-state-check: guard-lib.sh (the shared conf reader) is missing beside this hook — doing nothing." >&2
+  exit 0
 fi
-[ -n "$role" ] || exit 0   # no config, or this folder matches nothing in it: inert
-floor_k=$((10#$floor_k))
-sf="${STATE_FILE_PATTERN//'{role}'/$role}"
+CONF="$(dirname "$0")/state-check.conf"
+state_conf_read "$cwd" "$CONF" || exit 0   # no config, or this folder matches nothing in it: inert
+role="$STC_ROLE"; floor_k=$((10#$STC_FLOOR_K)); top="$STC_TOP"; base="$STC_BASE"
+sf="${STC_STATE_FILE//'{role}'/$role}"
 STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
 
-# ---- (1) retire past the floor ----
+# safe_state_file <dir> <name> — true only when neither the folder nor the file is a symlink.
+safe_state_file() { [ ! -L "$STATE/$1" ] && [ ! -L "$STATE/$1/$2" ]; }
+
+# ---- (5) register the session's scheduled prompts (needs jq; silently skipped without it) ----
+if [ -n "$sid" ] && command -v jq >/dev/null 2>&1 && safe_state_file crons "$sid"; then
+  _cron_lines=$(printf '%s' "$input" | jq -c '(.session_crons // [])[]?.prompt | select(type=="string") | gsub("^\\s+|\\s+$";"") | select(length>0)' 2>/dev/null)
+  if [ -n "$_cron_lines" ]; then
+    mkdir -p "$STATE/crons" 2>/dev/null && printf '%s\n' "$_cron_lines" > "$STATE/crons/$sid" 2>/dev/null
+  else
+    rm -f "$STATE/crons/$sid" 2>/dev/null
+  fi
+fi
+
+# ---- (1) retire past the floor, and (4) the helper tell ----
+ctx_k=""
 if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
   # The whole transcript is scanned (not just a tail) so one long tool result earlier in
   # the file can never push the real, most-recent usage line out of a byte-limited window.
@@ -80,13 +111,58 @@ if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
     cf() { printf '%s' "$ctx_line" | /usr/bin/grep -oE "\"$1\"[[:space:]]*:[[:space:]]*[0-9]+" | /usr/bin/tail -1 | /usr/bin/sed -E 's/.*:[[:space:]]*([0-9]+)/\1/'; }
     ci=$(cf input_tokens); cc=$(cf cache_creation_input_tokens); cr=$(cf cache_read_input_tokens)
     ctx_k=$(( (${ci:-0} + ${cc:-0} + ${cr:-0} + 500) / 1000 ))
+
+    # (4) the helper tell. Growth = ctx_k now minus the size doorman.sh wrote at the prompt.
+    # "A helper launched this turn" = an Agent or Workflow tool_use after the last top-level
+    # user line whose "origin" kind is human or peer (a tool result is also a top-level user
+    # line but carries no origin). No such prompt line found: the turn's start cannot be
+    # located, so no tell rather than scanning the whole file (one old Agent call would silence
+    # every later turn). The tell never goes to stdout (see the header): it is a file.
+    snap_start="$STATE/turn-start/$sid"
+    if [ -f "$snap_start" ] && ! [ -L "$snap_start" ] && ! [ -L "$STATE/turn-start" ]; then
+      start_k=$(head -1 "$snap_start" 2>/dev/null)
+      case "$start_k" in ''|*[!0-9]*) start_k="";; esac
+      tell_exempt=0
+      _exempt_lc=$(printf ' %s ' "$STC_TELL_EXEMPT" | tr 'A-Z\t' 'a-z ')
+      case "$_exempt_lc" in *" $(printf '%s' "$role" | tr 'A-Z' 'a-z') "*) tell_exempt=1;; esac
+      if [ -n "$start_k" ] && [ "$tell_exempt" = 0 ]; then
+        growth_k=$(( ctx_k - 10#$start_k ))
+        if [ "$growth_k" -ge "$STC_TELL_K" ]; then
+          last_prompt_line=$(/usr/bin/grep -nE '"type"[[:space:]]*:[[:space:]]*"user".*"origin"[[:space:]]*:[[:space:]]*\{[[:space:]]*"kind"[[:space:]]*:[[:space:]]*"(human|peer)"' "$tp" 2>/dev/null | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
+          if [ -n "$last_prompt_line" ]; then
+            agent_count=$(/usr/bin/tail -n "+$((last_prompt_line+1))" "$tp" 2>/dev/null | /usr/bin/grep '"type":"tool_use"' 2>/dev/null | /usr/bin/grep -cE '"name"[[:space:]]*:[[:space:]]*"(Agent|Workflow)"' 2>/dev/null)
+            [ -n "$agent_count" ] || agent_count=0
+            if [ "$agent_count" = 0 ] && safe_state_file tell "$sid"; then
+              mkdir -p "$STATE/tell" 2>/dev/null
+              printf '%s\n' "$growth_k" > "$STATE/tell/$sid" 2>/dev/null
+            fi
+          fi
+        fi
+      fi
+    fi
+    # Rewrite the turn-start size with THIS turn's end size (a turn that began without a prompt
+    # hook — a wake, a peer message — is still measured from where the last turn ended).
+    if [ ! -L "$snap_start" ] && [ ! -L "$STATE/turn-start" ]; then
+      mkdir -p "$STATE/turn-start" 2>/dev/null
+      printf '%s\n' "$ctx_k" > "$snap_start" 2>/dev/null
+    fi
+
+    # (1) retire.
     if [ "$ctx_k" -ge "$floor_k" ]; then
       mkdir -p "$STATE/retired"
-      if [ ! -e "$STATE/retired/$sid" ]; then
+      # Idempotent: an already-retired sid with its companion is neither rewritten nor re-appended
+      # to the inbox. A marker without a companion counts as absent; a symlinked companion is
+      # removed and written as a real file, never written through.
+      if [ ! -e "$STATE/retired/$sid" ] || [ ! -e "$STATE/retired-compacts/$sid" ] || [ -L "$STATE/retired-compacts/$sid" ]; then
+        if [ ! -L "$STATE/retired-compacts" ]; then
+          mkdir -p "$STATE/retired-compacts" 2>/dev/null
+          [ -L "$STATE/retired-compacts/$sid" ] && rm -f "$STATE/retired-compacts/$sid" 2>/dev/null
+          { /usr/bin/grep -cE '"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' "$tp" 2>/dev/null || true; } | head -1 > "$STATE/retired-compacts/$sid" 2>/dev/null
+        fi
         dirty_files=""; gitrc=1
         if command -v git >/dev/null 2>&1; then
           _dirtyraw="$STATE/.dirty-tmp.$$"
-          git -c core.quotepath=false -C "$cwd" status --porcelain -z --untracked-files=no > "$_dirtyraw" 2>/dev/null
+          git -c core.quotepath=false -C "$top" status --porcelain -z --untracked-files=no > "$_dirtyraw" 2>/dev/null
           gitrc=$?
           if [ "$gitrc" = 0 ]; then
             # Parse the NUL-separated entries directly — never load the whole blob into a
@@ -113,71 +189,112 @@ if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
         fi
         {
           printf '%s %s %sk\n' "$(date '+%Y-%m-%d %H:%M')" "$role" "$ctx_k"
-          printf 'worktree %s\n' "$cwd"
+          printf 'worktree %s\n' "$top"
           if [ "$gitrc" != 0 ]; then
             printf 'dirty list unavailable (git failed)\n'
           elif [ -n "$dirty_files" ]; then
             printf '%s\n' "$dirty_files"
           fi
         } > "$STATE/retired/$sid"
-        if [ "$gitrc" != 0 ]; then
+        # A symlinked inbox file, or a symlinked inbox/ folder, is never followed: it could point at
+        # /dev/stdout and put this record on stdout ahead of a decision JSON. Skipped with a note.
+        inbox_path="$STATE/inbox/$role.md"
+        if [ -L "$STATE/inbox" ] || [ -L "$inbox_path" ]; then
+          echo "stop-state-check: inbox path is a symlink; skipping the retirement inbox record" >&2
+        elif [ "$gitrc" != 0 ]; then
           mkdir -p "$STATE/inbox"
           printf '\n## %s — to the %s (session %s; RETIRED, dirty list unavailable)\n\nWorktree %s: dirty list unavailable (git failed)\n' \
-            "$(date '+%Y-%m-%d %H:%M')" "$role" "${sid:-?}" "$cwd" >> "$STATE/inbox/$role.md"
+            "$(date '+%Y-%m-%d %H:%M')" "$role" "${sid:-?}" "$top" >> "$inbox_path"
         elif [ -n "$dirty_files" ]; then
           mkdir -p "$STATE/inbox"
           printf '\n## %s — to the %s (session %s; RETIRED with uncommitted tracked changes)\n\nFiles in %s:\n%s\n' \
-            "$(date '+%Y-%m-%d %H:%M')" "$role" "${sid:-?}" "$cwd" "$dirty_files" >> "$STATE/inbox/$role.md"
+            "$(date '+%Y-%m-%d %H:%M')" "$role" "${sid:-?}" "$top" "$dirty_files" >> "$inbox_path"
         fi
       fi
-      echo "stop-state-check: this $role is RETIRED at ${ctx_k}k (floor ${floor_k}k) — a fresh $role should start from $sf and the inbox."
+      # STDERR, not stdout (see the header): stdout is reserved for a decision JSON. On exit 0 this
+      # only reaches the debug log; the doorman's refusal at the next message is what the seat sees.
+      echo "stop-state-check: this $role is RETIRED at ${ctx_k}k (floor ${floor_k}k) — a fresh $role should start from $sf and the inbox." >&2
     fi
   fi
 fi
 
+# ---- (3) the wrap-up: called ONLY where job (2) has decided not to print its own block ----
+# Prints the ONE wrap-up block (returns 0) the first time this fires for the session; every other
+# time (already fired, a role not listed, under the point, the forced second stop, an unattended
+# run) it prints nothing and returns 1.
+maybe_stop_wrapup() {
+  [ "$active" = "true" ] && return 1
+  [ -n "$sid" ] || return 1
+  [ -n "$ctx_k" ] && [ "$ctx_k" -ge "$STC_WRAPUP_K" ] || return 1
+  local _roles _r
+  _roles=$(printf ' %s ' "$STC_WRAPUP_ROLES" | tr 'A-Z\t' 'a-z ')
+  _r=$(printf '%s' "$role" | tr 'A-Z' 'a-z')
+  case "$_roles" in *" * "*|*" $_r "*) ;; *) return 1 ;; esac
+  unattended_run_active "$CONF" && return 1
+  { [ -e "$STATE/wrapup-fired/$sid" ] || [ -L "$STATE/wrapup-fired/$sid" ] || [ -L "$STATE/wrapup-fired" ]; } && return 1
+  mkdir -p "$STATE/wrapup-fired" 2>/dev/null
+  printf '%s\n' "$STC_WRAPUP_K" > "$STATE/wrapup-fired/$sid" 2>/dev/null
+  local wreason="stop-state-check: this $role is past its ${STC_WRAPUP_K}k wrap-up point — finish the task in hand, land it, update $sf, and say it is ready to retire."
+  printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$wreason")"
+  return 0
+}
+# Every "job (2) has nothing to block" exit goes through here.
+pass_exit() { maybe_stop_wrapup; exit 0; }
+
 # ---- (2) the state file ----
-git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
-now_state=$(git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null)
-changed=$(printf '%s\n' "$now_state" | /usr/bin/grep -c .)
-[ "$changed" -gt 0 ] || exit 0
-# Did THIS turn change anything? The snapshot doorman.sh took when the prompt arrived says
-# what the tree looked like then; identical now means the turn only read.
+git -C "$top" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 case "$sid" in
   '') snapkey="nosid-$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')" ;;
   *)  snapkey="$sid" ;;
 esac
 SNAP="$STATE/turnsnap/$snapkey"
-if [ -f "$SNAP" ]; then
-  if [ "$(cat "$SNAP" 2>/dev/null)" = "$now_state" ]; then exit 0; fi
-else
-  echo "stop-state-check: NOTE — the tree holds $changed changed tracked file(s), but there is no turn snapshot for this session, so this turn may only have READ them. hooks/doorman.sh writes that snapshot on UserPromptSubmit; register it (install.sh's multi-chat group) to turn this note back into a real check."
-  exit 0
+snap_ok=0
+if [ -L "$SNAP" ] || [ -L "$STATE/turnsnap" ]; then
+  echo "stop-state-check: the turn snapshot path is a symlink; not following it" >&2
+elif [ -f "$SNAP" ]; then
+  snap_line=$(head -1 "$SNAP" 2>/dev/null)
+  case "$snap_line" in *$'\t'*$'\t'*$'\t'*) snap_ok=1 ;; esac   # anything not four fields is an old-format file: no snapshot
+  IFS=$'\t' read -r snap_head snap_sf snap_tree snap_mk <<<"$snap_line"
 fi
-if [ -n "$(git -C "$cwd" status --porcelain --untracked-files=all -- "$sf" 2>/dev/null)" ]; then
-  ct=$(/usr/bin/grep -E '^\*\*Current task:\*\*[[:space:]]*[^[:space:]]' "$cwd/$sf" 2>/dev/null)
-  ns=$(/usr/bin/grep -E '^\*\*Next step:\*\*[[:space:]]*[^[:space:]]' "$cwd/$sf" 2>/dev/null)
+changed=$(git -C "$top" status --porcelain --untracked-files=no 2>/dev/null | /usr/bin/grep -c .)
+
+if [ "$snap_ok" = 1 ]; then
+  cur_head=$(git -C "$top" rev-parse HEAD 2>/dev/null); cur_head="${cur_head:-none}"
+  cur_tree=$(git -C "$top" diff --no-ext-diff --no-textconv HEAD 2>/dev/null | git -C "$top" hash-object --stdin 2>/dev/null); cur_tree="${cur_tree:-none}"
+  cur_sf=none; cur_mk=none
+  if [ -f "$top/$sf" ]; then
+    cur_sf=$(git -C "$top" hash-object -- "$top/$sf" 2>/dev/null); cur_sf="${cur_sf:-none}"
+    cur_mk=$({ /usr/bin/grep -m1 -E '^\*\*Current task:\*\*' "$top/$sf" 2>/dev/null; /usr/bin/grep -m1 -E '^\*\*Next step:\*\*' "$top/$sf" 2>/dev/null; } | git -C "$top" hash-object --stdin 2>/dev/null); cur_mk="${cur_mk:-none}"
+  fi
+  # Nothing moved this turn (HEAD and every tracked change's content): pass, whatever was dirty before.
+  if [ "$cur_head" = "$snap_head" ] && [ "$cur_tree" = "$snap_tree" ]; then pass_exit; fi
+  if [ "$cur_sf" = "$snap_sf" ]; then
+    [ "$active" = "true" ] && { maybe_stop_wrapup; echo "stop-state-check: the state file is still untouched; not blocking twice."; exit 0; }
+    reason="stop-state-check: this turn changed the repo (a commit and/or the working tree) in $base but $sf did not change since the turn started. Rewrite $sf now (under 200 words — current task, next step, open questions, what must not be repeated), then stop."
+    printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason")"
+    exit 0
+  fi
+  # The resume half: a fresh seat picks up from the FIRST two marker lines, so a state file that
+  # changed but left either empty is not a state file. -m1: the first occurrence is the canonical one.
+  ct=$(/usr/bin/grep -m1 -E '^\*\*Current task:\*\*[[:space:]]*[^[:space:]]' "$top/$sf" 2>/dev/null)
+  ns=$(/usr/bin/grep -m1 -E '^\*\*Next step:\*\*[[:space:]]*[^[:space:]]' "$top/$sf" 2>/dev/null)
   if [ -n "$ct" ] && [ -n "$ns" ]; then
-    # Filled is not enough: the two lines must be what CHANGED. Appending a blank line to
-    # a state file written three turns ago is not a handover. An untracked (brand-new)
-    # state file has no diff to read, and its whole content is new, so it passes here.
-    touched=yes
-    if git -C "$cwd" ls-files --error-unmatch -- "$sf" >/dev/null 2>&1; then
-      if [ -z "$(git -C "$cwd" diff HEAD -- "$sf" 2>/dev/null | /usr/bin/grep -E '^[+-]' | /usr/bin/grep -vE '^(\+\+\+|---)' | /usr/bin/grep -E '\*\*(Current task|Next step):\*\*')" ]; then
-        touched=no
-      fi
-    fi
-    if [ "$touched" = yes ]; then exit 0; fi
-    [ "$active" = "true" ] && { echo "stop-state-check: the state file changed but neither required line moved; not blocking twice."; exit 0; }
-    reason3="stop-state-check: $sf was touched but neither its **Current task:** nor its **Next step:** line changed this turn — whitespace is not a handover. Rewrite both to say where this turn actually got to, then stop."
+    # Filled is not enough: the two first lines must be what CHANGED since the turn began. Compared
+    # by their hash in the snapshot, so a prose mention or an appended duplicate marker line, which
+    # leave the first lines alone, do not count.
+    if [ "$cur_mk" != "$snap_mk" ]; then pass_exit; fi
+    [ "$active" = "true" ] && { maybe_stop_wrapup; echo "stop-state-check: the state file changed but neither required line moved; not blocking twice."; exit 0; }
+    reason3="stop-state-check: $sf changed but neither its **Current task:** nor its **Next step:** line moved since the turn started — a whitespace or unrelated edit is not a handover. Rewrite both to say where this turn actually got to, then stop."
     printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason3")"
     exit 0
   fi
-  [ "$active" = "true" ] && { echo "stop-state-check: the state file's Current task / Next step is still unfilled; not blocking twice."; exit 0; }
+  [ "$active" = "true" ] && { maybe_stop_wrapup; echo "stop-state-check: the state file's Current task / Next step is still unfilled; not blocking twice."; exit 0; }
   reason2="stop-state-check: $sf changed but is missing a filled **Current task:** or **Next step:** line — a resuming seat cannot pick up from it. Fill both (under 200 words total), then stop."
   printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason2")"
   exit 0
 fi
-[ "$active" = "true" ] && { echo "stop-state-check: the state file is still untouched; not blocking twice."; exit 0; }
-reason="stop-state-check: this turn leaves $changed changed tracked file(s) in $base but $sf is untouched. Rewrite $sf now (under 200 words — current task, next step, open questions, what must not be repeated), then stop."
-printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason")"
+
+# --- no usable turn snapshot: warn, never block on a guess ---
+[ "$changed" -gt 0 ] || pass_exit
+maybe_stop_wrapup || echo "stop-state-check: NOTE — the tree holds $changed changed tracked file(s), but there is no turn snapshot for this session, so this turn may only have READ them. hooks/doorman.sh writes that snapshot on UserPromptSubmit; register it (install.sh's multi-chat group) to turn this note back into a real check."
 exit 0

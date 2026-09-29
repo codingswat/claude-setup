@@ -212,3 +212,117 @@ guard_log_override() {
 guard_refuse_unrecorded() {
   echo "$1: REFUSED — the $2 override could not be recorded in the override ledger (hooks/override-ledger.sh is missing, or its ledger file cannot be written), so it is NOT honoured. Fix the ledger path (OVERRIDE_LEDGER, or ~/.claude/ledgers/), then run the command again." >&2
 }
+
+# ---- the multi-chat group's shared readers (hooks/state-check.conf) -------------------------
+# Used by stop-state-check.sh and doorman.sh (the opt-in multi-chat group); the PreToolUse guards
+# never call them. All three read the ONE conf file, hooks/state-check.conf, beside this file
+# (or the path passed as the last argument). Tests: hooks/test-hooks.sh, "refresh 2026-09-29 (c2a)".
+
+# The conf file beside this library.
+_stc_conf_default() {
+  local d="${BASH_SOURCE[0]%/*}"
+  [ "$d" = "${BASH_SOURCE[0]}" ] && d="."
+  printf '%s/state-check.conf' "$d"
+}
+
+# _hook_role_norm FOLDER-NAME — lower-case it, cut at the first digit, drop trailing hyphens, and
+# keep only file-name-safe characters (the result names files under the state folder).
+_hook_role_norm() {
+  local b
+  b=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  b="${b%%[0-9]*}"
+  while [ "${b%-}" != "$b" ]; do b="${b%-}"; done
+  printf '%s' "$b" | tr -c 'a-z0-9._-' '_'
+}
+
+# hook_role_from_cwd CWD [CONF] — the role of the chat opened in CWD, printed on stdout; exit 1 when
+# the folder name leaves nothing. Read from the git TOPLEVEL folder's name (a chat opened in a
+# subfolder of a seat's folder reads the same role as one at its top; not a git folder: CWD itself),
+# lower-cased, cut at the first digit ("myapp-planner-3" -> "myapp-planner"), trailing hyphen
+# dropped. Aliases come from state-check.conf lines "ROLE_ALIAS <name> <role>" (name compared after
+# the same cut), so "ROLE_ALIAS myapp-planner planner" reads that folder as "planner".
+hook_role_from_cwd() {
+  local cwd="$1" conf="${2:-$(_stc_conf_default)}" top base role kw a b
+  top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
+  base="$(basename "${top:-$cwd}")"
+  role=$(_hook_role_norm "$base")
+  [ -n "$role" ] || return 1
+  if [ -r "$conf" ]; then
+    while read -r kw a b _ || [ -n "$kw" ]; do
+      if [ "$kw" = ROLE_ALIAS ] && [ -n "$b" ] && [ "$(_hook_role_norm "$a")" = "$role" ]; then role="$b"; break; fi
+    done < "$conf"
+  fi
+  printf '%s' "$role"
+}
+
+# _stc_unattended_file CONF — the unattended-run file path: "UNATTENDED_UNTIL <path>" in the conf
+# (a leading ~/ or $HOME/ is expanded), default ~/.claude/state/unattended-until.
+_stc_unattended_file() {
+  local conf="$1" f="$HOME/.claude/state/unattended-until" kw v
+  if [ -r "$conf" ]; then
+    while read -r kw v _ || [ -n "$kw" ]; do
+      [ "$kw" = UNATTENDED_UNTIL ] && [ -n "$v" ] && f="$v"
+    done < "$conf"
+  fi
+  case "$f" in '~/'*) f="$HOME/${f#\~/}" ;; '$HOME/'*) f="$HOME/${f#\$HOME/}" ;; esac
+  printf '%s' "$f"
+}
+
+# unattended_run_active [CONF] — exit 0 only while an unattended run is on: the file (see above)
+# holds ONE line, an end time in epoch seconds, and that time is still in the future. A missing,
+# empty, garbled or past file is a normal run (exit 1). It suppresses only the wrap-up; nothing
+# here writes the file — a person or a script of your own does (see state-check.conf.example).
+unattended_run_active() {
+  local f end
+  f=$(_stc_unattended_file "${1:-$(_stc_conf_default)}")
+  [ -f "$f" ] || return 1
+  end=$(head -1 "$f" 2>/dev/null)
+  case "$end" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(date +%s)" -lt "$((10#$end))" ]
+}
+
+# state_conf_read CWD [CONF] — read state-check.conf for the chat opened in CWD. Sets STC_TOP (git
+# toplevel, else CWD), STC_BASE (its folder name), and the settings below, then returns 0 when a
+# conf row matched this folder, 1 when there is no conf or no row matches (the group is then off
+# for this chat). Rows: "<folder-glob> <role|auto> <floor-k>", matched against the toplevel folder's
+# name AS WRITTEN and against its normalised role name (lower, cut at the first digit); the first
+# match wins; "auto" reads the role with hook_role_from_cwd. Key lines, anywhere in the file:
+#   STATE_FILE <path>        ({role} filled in)        default docs/state/{role}.md
+#   WRAPUP_K <n>             wrap-up point, thousands  default 600 (illustrative)
+#   WRAPUP_ROLES <r> <r>...  who is wrapped up ("*" = every role)   default: the dev seats
+#   TELL_GROWTH_K <n>        helper-tell threshold, thousands       default 30 (illustrative)
+#   TELL_EXEMPT_ROLES <r>... roles never given the helper tell      default none
+#   UNATTENDED_UNTIL <path>  see unattended_run_active
+#   ROLE_ALIAS <a> <b>       see hook_role_from_cwd
+STC_DEV_ROLES="dev senior junior designer senior-dev junior-dev"
+state_conf_read() {
+  local cwd="$1" conf="${2:-$(_stc_conf_default)}" line kw pat r fk rest top norm
+  STC_ROLE=""; STC_FLOOR_K=""; STC_STATE_FILE="docs/state/{role}.md"
+  STC_WRAPUP_K=600; STC_WRAPUP_ROLES="$STC_DEV_ROLES"; STC_TELL_K=30; STC_TELL_EXEMPT=""
+  top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
+  STC_TOP="${top:-$cwd}"; STC_BASE="$(basename "$STC_TOP")"
+  norm=$(_hook_role_norm "$STC_BASE")
+  [ -r "$conf" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    read -r kw pat r fk rest <<<"$line"
+    case "$kw" in
+      STATE_FILE) STC_STATE_FILE="${line#STATE_FILE }"; continue ;;
+      WRAPUP_K) case "$pat" in ''|*[!0-9]*) ;; *) STC_WRAPUP_K=$((10#$pat)) ;; esac; continue ;;
+      TELL_GROWTH_K) case "$pat" in ''|*[!0-9]*) ;; *) STC_TELL_K=$((10#$pat)) ;; esac; continue ;;
+      WRAPUP_ROLES) STC_WRAPUP_ROLES="${line#WRAPUP_ROLES}"; continue ;;
+      TELL_EXEMPT_ROLES) STC_TELL_EXEMPT="${line#TELL_EXEMPT_ROLES}"; continue ;;
+      UNATTENDED_UNTIL|ROLE_ALIAS) continue ;;
+    esac
+    [ -z "$STC_ROLE" ] || continue                       # first matching row wins; keys keep being read
+    read -r pat r fk rest <<<"$line"
+    case "$fk" in ''|*[!0-9]*) continue ;; esac          # a non-numeric floor: skip this row, not the file
+    [ -n "$pat" ] && [ -n "$r" ] || continue
+    if [ "$STC_BASE" = "$pat" ] || { case "$STC_BASE" in $pat) true ;; *) false ;; esac; } \
+       || { [ -n "$norm" ] && case "$norm" in $pat) true ;; *) false ;; esac; }; then
+      if [ "$r" = auto ]; then r=$(hook_role_from_cwd "$cwd" "$conf") || continue; fi
+      STC_ROLE="$r"; STC_FLOOR_K="$fk"
+    fi
+  done < "$conf"
+  [ -n "$STC_ROLE" ]
+}

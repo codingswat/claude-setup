@@ -824,7 +824,7 @@ if ledger_has "$WL" RULES_CAP_OK; then ok; else bad "git-hooks/pre-commit: RULES
 pass_n=$((pass_n+1))
 
 echo "25 hooks/stop-state-check.sh: the per-role context floor and the state-file requirement"
-SCD="$T/state-check-conf"; mkdir -p "$SCD"; cp "$HOOKS_DIR/stop-state-check.sh" "$SCD/"
+SCD="$T/state-check-conf"; mkdir -p "$SCD"; cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/guard-lib.sh"  "$SCD/"
 printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  5\n' > "$SCD/state-check.conf"
 scr="$T/myapp-dev1"; mkdir -p "$scr/state"; git -C "$scr" init -q -b main; git -C "$scr" config core.hooksPath /dev/null
 echo seed > "$scr/README.md"; git -C "$scr" add -A; "${ID[@]}" git -C "$scr" commit -q -m init
@@ -832,7 +832,7 @@ ssc_json() { python3 -c 'import json,sys;print(json.dumps({"cwd":sys.argv[1],"se
 # The state-file job only blocks when it can see that THIS turn changed something — the
 # turn snapshot hooks/doorman.sh writes when the prompt arrives (see section 29's M12).
 # Taken here with the tree still clean, so the change below is this turn's.
-mkdir -p "$T/ssc-state/turnsnap"; git -C "$scr" status --porcelain --untracked-files=no > "$T/ssc-state/turnsnap/sidX"
+mkdir -p "$T/ssc-state/turnsnap"; printf '%s\t%s\t%s\t%s\n' "$(git -C "$scr" rev-parse HEAD)" none "$(git -C "$scr" diff HEAD | git -C "$scr" hash-object --stdin)" none > "$T/ssc-state/turnsnap/sidX"
 echo more >> "$scr/README.md"
 outss1="$(ssc_json "$scr" sidX false "" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh")"
 if printf '%s' "$outss1" | grep -q '"decision":"block"'; then ok; else bad "stop-state-check.sh: a changed tracked file with the state file untouched must be BLOCKED; got '$outss1'"; fi
@@ -846,14 +846,14 @@ pass_n=$((pass_n+1))
 echo "25b hooks/stop-state-check.sh: retirement past the role's context floor"
 TP25="$T/ssc-transcript.jsonl"
 printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":8000,"output_tokens":10}}}\n' > "$TP25"
-outss3="$(ssc_json "$scr" sidRET25 false "$TP25" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh")"
+outss3="$(ssc_json "$scr" sidRET25 false "$TP25" | STATE_CHECK_STATE_DIR="$T/ssc-state" bash "$SCD/stop-state-check.sh" 2>&1)"   # the RETIRED sentence is on stderr since c2a (A42)
 if printf '%s' "$outss3" | grep -q 'RETIRED at 8k'; then ok; else bad "stop-state-check.sh: context over the role's floor must RETIRE the session; got '$outss3'"; fi
 pass_n=$((pass_n+1))
 [ -f "$T/ssc-state/retired/sidRET25" ] && ok || bad "stop-state-check.sh: retirement must write state/retired/<session_id>"
 pass_n=$((pass_n+1))
 
 echo "25c hooks/stop-state-check.sh: no hooks/state-check.conf at all is INERT"
-SCD2="$T/state-check-noconf"; mkdir -p "$SCD2"; cp "$HOOKS_DIR/stop-state-check.sh" "$SCD2/"
+SCD2="$T/state-check-noconf"; mkdir -p "$SCD2"; cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/guard-lib.sh"  "$SCD2/"
 scr2="$T/myapp-dev2"; mkdir -p "$scr2"; git -C "$scr2" init -q -b main; git -C "$scr2" config core.hooksPath /dev/null
 echo seed > "$scr2/README.md"; git -C "$scr2" add -A; "${ID[@]}" git -C "$scr2" commit -q -m init
 echo more >> "$scr2/README.md"
@@ -862,7 +862,7 @@ if [ -z "$outss4" ]; then ok; else bad "stop-state-check.sh: no conf file must b
 pass_n=$((pass_n+1))
 
 echo "26 hooks/doorman.sh: refuses a RETIRED session and a genuinely idle+heavy one; passes a fresh one"
-DCD="$T/doorman-conf"; mkdir -p "$DCD"; cp "$HOOKS_DIR/doorman.sh" "$DCD/"
+DCD="$T/doorman-conf"; mkdir -p "$DCD"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCD/"
 printf 'myapp-dev*  dev  850\n' > "$DCD/state-check.conf"
 dm="$T/myapp-dev3"; mkdir -p "$dm"
 dj() { python3 -c 'import json,sys;print(json.dumps({"cwd":sys.argv[1],"session_id":sys.argv[2],"prompt":sys.argv[3],"transcript_path":sys.argv[4]}))' "$1" "$2" "$3" "$4"; }
@@ -907,7 +907,7 @@ if [ "$rcD" = 2 ]; then ok; else bad "doorman.sh: BOTH sides quiet 70min with hi
 refuse_n=$((refuse_n+1))
 
 echo "26c hooks/doorman.sh: no hooks/state-check.conf at all is INERT"
-DCD2="$T/doorman-noconf"; mkdir -p "$DCD2"; cp "$HOOKS_DIR/doorman.sh" "$DCD2/"
+DCD2="$T/doorman-noconf"; mkdir -p "$DCD2"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCD2/"
 dj "$dm" sidDM-E hello "" | bash "$DCD2/doorman.sh" >/dev/null 2>&1
 rcE=$?
 if [ "$rcE" = 0 ]; then ok; else bad "doorman.sh: no conf file must be INERT (always pass), got $rcE"; fi
@@ -1219,13 +1219,17 @@ if printf '%s' "$o29p4" | grep -q 'NOTES.md'; then ok; else bad "M9 an Edit on a
 refuse_n=$((refuse_n+1))
 
 # --- M10/M12/M14 stop-state-check: a real state update, the turn snapshot, no session id
-SCD29="$T/state-check-29"; mkdir -p "$SCD29"; cp "$HOOKS_DIR/stop-state-check.sh" "$SCD29/"
+SCD29="$T/state-check-29"; mkdir -p "$SCD29"; cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/guard-lib.sh"  "$SCD29/"
 printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  5\n' > "$SCD29/state-check.conf"
 S29="$T/ssc29-state"
 sr29="$T/myapp-dev29"; mkdir -p "$sr29/state"; git -C "$sr29" init -q -b main; git -C "$sr29" config core.hooksPath /dev/null
 printf '**Current task:** first\n**Next step:** second\n' > "$sr29/state/dev.md"
 echo seed > "$sr29/README.md"; git -C "$sr29" add -A; "${ID[@]}" git -C "$sr29" commit -q -m init
-snap29() { mkdir -p "$S29/turnsnap"; git -C "$sr29" status --porcelain --untracked-files=no > "$S29/turnsnap/$1"; }
+snap29() {   # the turn snapshot in the format doorman.sh writes: HEAD, state-file hash, hash of `git diff HEAD`, hash of the marker lines
+  local sfh=none mk=none
+  if [ -f "$sr29/state/dev.md" ]; then sfh=$(git -C "$sr29" hash-object "$sr29/state/dev.md"); mk=$({ grep -m1 -E '^\*\*Current task:\*\*' "$sr29/state/dev.md"; grep -m1 -E '^\*\*Next step:\*\*' "$sr29/state/dev.md"; } | git -C "$sr29" hash-object --stdin); fi
+  mkdir -p "$S29/turnsnap"; printf '%s\t%s\t%s\t%s\n' "$(git -C "$sr29" rev-parse HEAD)" "$sfh" "$(git -C "$sr29" diff HEAD | git -C "$sr29" hash-object --stdin)" "$mk" > "$S29/turnsnap/$1"
+}
 run29() { ssc_json "$sr29" "$1" false "" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/stop-state-check.sh"; }
 snap29 sid29a
 echo more >> "$sr29/README.md"
@@ -1233,7 +1237,7 @@ printf '   \n' >> "$sr29/state/dev.md"
 o29a="$(run29 sid29a)"
 if printf '%s' "$o29a" | grep -q '"decision":"block"'; then ok; else bad "M10 a whitespace-only append to the state file must still BLOCK (got: $o29a)"; fi
 refuse_n=$((refuse_n+1))
-printf '**Next step:** land the fix\n' >> "$sr29/state/dev.md"
+sed 's/^\*\*Next step:\*\* second$/**Next step:** land the fix/' "$sr29/state/dev.md" > "$sr29/state/dev.md.new" && mv "$sr29/state/dev.md.new" "$sr29/state/dev.md"   # the FIRST Next step line itself moves (an appended second one no longer counts: c2a A41)
 o29b="$(run29 sid29a)"
 if printf '%s' "$o29b" | grep -q '"decision":"block"'; then bad "M10 pair: a real Next step update must be ALLOWED (got: $o29b)"; else ok; fi
 pass_n=$((pass_n+1))
@@ -1243,7 +1247,9 @@ snap29 sid29b                            # this turn starts in the already-dirty
 o29c="$(run29 sid29b)"
 if printf '%s' "$o29c" | grep -q '"decision":"block"'; then bad "M12 a read-only turn in an already-dirty tree must NOT block (got: $o29c)"; else ok; fi
 pass_n=$((pass_n+1))
-mkdir -p "$S29/turnsnap"; : > "$S29/turnsnap/sid29c"
+sfh29=$(git -C "$sr29" hash-object "$sr29/state/dev.md"); mk29=$({ grep -m1 -E '^\*\*Current task:\*\*' "$sr29/state/dev.md"; grep -m1 -E '^\*\*Next step:\*\*' "$sr29/state/dev.md"; } | git -C "$sr29" hash-object --stdin)
+# a turn that started with a CLEAN tree (the empty diff's hash), HEAD as it is now
+mkdir -p "$S29/turnsnap"; printf '%s\t%s\t%s\t%s\n' "$(git -C "$sr29" rev-parse HEAD)" "$sfh29" "$(: | git -C "$sr29" hash-object --stdin)" "$mk29" > "$S29/turnsnap/sid29c"
 o29d="$(run29 sid29c)"
 if printf '%s' "$o29d" | grep -q '"decision":"block"'; then ok; else bad "M12 pair: a turn that started CLEAN and left the tree dirty must BLOCK (got: $o29d)"; fi
 refuse_n=$((refuse_n+1))
@@ -1253,7 +1259,7 @@ if printf '%s' "$o29e" | grep -q '"decision":"block"'; then bad "M12 with no tur
 pass_n=$((pass_n+1))
 if printf '%s' "$o29e" | grep -qi 'doorman'; then ok; else bad "M12 the no-snapshot note must name doorman.sh (got: $o29e)"; fi
 pass_n=$((pass_n+1))
-: > "$S29/turnsnap/nosid-myapp-dev29"
+cp "$S29/turnsnap/sid29c" "$S29/turnsnap/nosid-myapp-dev29"
 o29f="$(ssc_json "$sr29" "" false "" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/stop-state-check.sh")"
 if printf '%s' "$o29f" | grep -q '"decision":"block"'; then ok; else bad "M14 an empty session_id must not switch the state-file job off (got: $o29f)"; fi
 refuse_n=$((refuse_n+1))
@@ -1263,7 +1269,7 @@ ssc_json "$sr29" "" false "$TP29" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/st
 n29ret="$(ls "$S29/retired" 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$n29ret" = "0" ]; then ok; else bad "M14 pair: with no session id no retirement marker may be written (got $n29ret)"; fi
 pass_n=$((pass_n+1))
-DCDS="$T/doorman-snap-conf"; mkdir -p "$DCDS"; cp "$HOOKS_DIR/doorman.sh" "$DCDS/"
+DCDS="$T/doorman-snap-conf"; mkdir -p "$DCDS"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCDS/"
 printf 'myapp-dev*  dev  850\n' > "$DCDS/state-check.conf"
 rm -rf "$S29/turnsnap"
 dj "$sr29" sid29g "hello" "" | STATE_CHECK_STATE_DIR="$S29" bash "$DCDS/doorman.sh" >/dev/null 2>&1
@@ -1283,7 +1289,7 @@ if env HOME="$FAKE_HOME" "${ID[@]}" git -C "$rn29" commit -q -m t >/dev/null 2>&
 pass_n=$((pass_n+1))
 
 # --- M13 doorman: a tool result is activity; an undated user/assistant line fails OPEN --
-DCD29="$T/doorman29"; mkdir -p "$DCD29"; cp "$HOOKS_DIR/doorman.sh" "$DCD29/"
+DCD29="$T/doorman29"; mkdir -p "$DCD29"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCD29/"
 printf 'myapp-dev*  dev  850\n' > "$DCD29/state-check.conf"
 dm29="$T/myapp-dev30"; mkdir -p "$dm29"
 TOOLT29=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime($NOWE - 2*60)))")
@@ -2252,6 +2258,337 @@ INPUT="$(jb2 "python3 -c \"open('NOTES.md','a').write('x')\"" "$CSF/small")"; ex
 INPUT="$(jb2 "python3 -c \"print(open('NOTES.md').read())\"" "$CSF/r")"; expect pass 0 "A26 pair: a python READ of an over-stop file is allowed" bash "$CSF/channel-size-guard.sh"
 INPUT="$(jb2 "python3 -c \"open('proof-notes.md','a').write('x')\"" "$CSF/r")"; expect pass 0 "A26 pair: a python append to a look-alike file is allowed" bash "$CSF/channel-size-guard.sh"
 INPUT="$(jb2 "sed -i '' '5,\$d' NOTES.md" "$CSF/r")"; expect pass 0 "A26 deferred forms stay allowed (M8): sed -i, a sweep, on an over-stop file" bash "$CSF/channel-size-guard.sh"
+
+echo "refresh 2026-09-29 (c2a): opt-in multi-chat group, the end-of-turn check and its prompt-time helpers (A03 A04 A40 A41 A42 A43 A44 A45 A46 A47 A48 A69 A70 A71)"
+C2="$T/c2a"; HK="$C2/hk"; mkdir -p "$HK"
+cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HK/"
+# The role names below are plain words plus digits built into FOLDER names at run time.
+c2_conf() { local l; { printf 'STATE_FILE state/{role}.md\n'; for l in "$@"; do printf '%s\n' "$l"; done; } > "$HK/state-check.conf"; }
+c2_repo() {   # <dir> [role]: a git repo with a filled state file state/<role>.md, a README, a file two folders down
+  local d="$1" r="${2:-dev}"
+  mkdir -p "$d/state" "$d/sub/deep"; git -C "$d" init -q -b main; git -C "$d" config core.hooksPath /dev/null
+  printf '**Current task:** first\n**Next step:** second\n' > "$d/state/$r.md"; echo seed > "$d/README.md"; echo x > "$d/sub/deep/f.txt"
+  git -C "$d" add -A; "${ID[@]}" git -C "$d" commit -q -m init
+}
+c2_tp() {   # <file> <K> [agent]: a transcript whose newest usage line sums to K thousand tokens, after a human-origin prompt line
+  local f="$1" k="$2"
+  printf '{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"go"}}\n' > "$f"
+  [ "${3:-}" = agent ] && printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Agent","input":{}}]}}\n' >> "$f"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":%d,"output_tokens":5}}}\n' $(( (k - 1) * 1000 )) >> "$f"
+}
+c2_sj() {   # <cwd> <sid> <active> <transcript> [crons-json-array]: the Stop hook's stdin
+  python3 -c 'import json,sys
+d={"cwd":sys.argv[1],"session_id":sys.argv[2],"stop_hook_active":sys.argv[3]=="true","transcript_path":sys.argv[4]}
+if len(sys.argv)>5: d["session_crons"]=[{"prompt":p} for p in json.loads(sys.argv[5])]
+print(json.dumps(d))' "$@"
+}
+c2_stop() {   # <cwd> <sid> <active> <transcript> [crons]: run the Stop hook against $S; stdout -> $C2/out, stderr -> $C2/err
+  c2_sj "$@" | STATE_CHECK_STATE_DIR="$S" bash "$HK/stop-state-check.sh" > "$C2/out" 2> "$C2/err"; C2_RC=$?
+}
+c2_prompt() {   # <cwd> <sid> [transcript] [prompt]: run the prompt hook against $S; stdout -> $C2/pout, rc in $C2_PRC
+  dj "$1" "$2" "${4:-hello}" "${3:-}" | STATE_CHECK_STATE_DIR="$S" bash "$HK/doorman.sh" > "$C2/pout" 2> "$C2/perr"; C2_PRC=$?
+}
+c2_chk() { local kind="$1" label="$2"; shift 2; if "$@"; then ok; else bad "$label"; fi; if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+has() { grep -q -- "$1" "$2"; }
+nothas() { ! grep -q -- "$1" "$2"; }
+isjson() { python3 -c 'import json,sys;json.loads(sys.stdin.read())' < "$1" 2>/dev/null; }
+starts_brace() { [ "$(head -c1 "$1")" = "{" ]; }
+role_of() { ( . "$HK/guard-lib.sh"; hook_role_from_cwd "$1" "${2:-$HK/state-check.conf}" ); }
+eq() { [ "$1" = "$2" ]; }
+SENT="$C2/sentinel"; NOW=$(date +%s)
+
+echo "  A42 the RETIRED sentence goes to stderr: it must never sit ahead of a state-file block on stdout"
+S="$C2/s-a42"; R="$C2/myapp-dev1"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  5'; c2_tp "$C2/tp-a42" 8
+c2_prompt "$R" a42; echo more >> "$R/README.md"
+c2_stop "$R" a42 false "$C2/tp-a42"
+c2_chk refuse "A42 retire + state-file block on one turn: stdout is exactly one decision JSON" isjson "$C2/out"
+c2_chk refuse "A42 the block is the state-file one and stdout starts with {" starts_brace "$C2/out"
+c2_chk refuse "A42 the state-file block names the untouched state file" has 'state/dev.md did not change' "$C2/out"
+c2_chk pass "A42 pair: the RETIRED sentence is still said, on stderr" has 'RETIRED at 8k' "$C2/err"
+c2_chk pass "A42 pair: the RETIRED sentence is not on stdout" nothas 'RETIRED' "$C2/out"
+c2_chk pass "A42 pair: the retirement marker is still written" test -f "$S/retired/a42"
+
+echo "  A03 the role reader: git toplevel folder name, lower-cased, cut at the first digit, trailing hyphen dropped, aliases from the conf"
+c2_conf 'myapp-dev*  dev  850'
+R="$C2/myapp-dev3"; c2_repo "$R"
+c2_chk refuse "A03 a chat opened two folders down reads the toplevel folder's role (myapp-dev3 -> myapp-dev)" eq "$(role_of "$R/sub/deep")" "myapp-dev"
+mkdir -p "$C2/MyApp-Dev-7x"
+c2_chk pass "A03 pair: not a git folder -> its own name; lower-cased, cut at the first digit, hyphen dropped (MyApp-Dev-7x)" eq "$(role_of "$C2/MyApp-Dev-7x")" "myapp-dev"
+c2_conf 'myapp-dev*  dev  850' 'ROLE_ALIAS myapp-dev dev'
+c2_chk refuse "A03 a ROLE_ALIAS line in the conf renames the derived role" eq "$(role_of "$R/sub")" "dev"
+c2_conf 'myapp-dev*  dev  850'
+c2_chk pass "A03 pair: without the alias line the role is the derived name" eq "$(role_of "$R/sub")" "myapp-dev"
+mkdir -p "$C2/42"
+role_of "$C2/42" >/dev/null 2>&1; c2_chk pass "A03 a folder name that is only digits gives no role (exit 1)" eq "$?" "1"
+S="$C2/s-a03"; c2_conf 'myapp-dev*  dev  850'
+c2_prompt "$R/sub/deep" a03; echo more >> "$R/README.md"
+c2_chk refuse "A03 the prompt hook run from a subfolder still writes the turn snapshot" test -s "$S/turnsnap/a03"
+c2_stop "$R/sub/deep" a03 false ""
+c2_chk refuse "A03 a Stop from a subfolder of a matching seat folder is judged (state file untouched: block)" has '"decision":"block"' "$C2/out"
+O="$C2/other-2"; c2_repo "$O"; c2_prompt "$O/sub/deep" a03b; echo more >> "$O/README.md"; c2_stop "$O/sub/deep" a03b false ""
+c2_chk pass "A03 pair: a subfolder of a folder the conf does not name stays inert" test ! -s "$C2/out"
+c2_conf 'myapp-dev3  dev  850'
+c2_prompt "$R" a03c; echo more >> "$R/README.md"; c2_stop "$R" a03c false ""
+c2_chk refuse "A03 a conf glob written WITH the digit still matches the folder as written (myapp-dev3)" has '"decision":"block"' "$C2/out"
+AR="$C2/autoapp-Senior-2"; c2_repo "$AR" senior; c2_conf 'autoapp-*  auto  850' 'ROLE_ALIAS autoapp-senior senior'
+S="$C2/s-a03d"; c2_prompt "$AR" a03d; echo more >> "$AR/README.md"; c2_stop "$AR" a03d false ""
+c2_chk refuse "A03 role 'auto' + ROLE_ALIAS: the state file is state/senior.md" has 'state/senior.md did not change' "$C2/out"
+c2_conf 'autoapp-*  auto  850'
+c2_prompt "$AR" a03e; echo more2 >> "$AR/README.md"; c2_stop "$AR" a03e false ""
+c2_chk pass "A03 pair: 'auto' without an alias uses the derived name (state/autoapp-senior.md)" has 'state/autoapp-senior.md did not change' "$C2/out"
+HK2="$C2/hk-nolib"; mkdir -p "$HK2"; cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/doorman.sh" "$HK2/"; printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  850\n' > "$HK2/state-check.conf"
+c2_sj "$R" a03f false "" | STATE_CHECK_STATE_DIR="$S" bash "$HK2/stop-state-check.sh" > "$C2/out" 2> "$C2/err"; rcl=$?
+c2_chk pass "A03 the Stop hook without guard-lib.sh beside it does nothing and says so on stderr (fail open)" bash -c "[ $rcl = 0 ] && [ ! -s '$C2/out' ] && grep -q guard-lib '$C2/err'"
+dj "$R" a03g hello "" | STATE_CHECK_STATE_DIR="$S" bash "$HK2/doorman.sh" > "$C2/out" 2> "$C2/err"; rcl=$?
+c2_chk pass "A03 the prompt hook without guard-lib.sh beside it passes (exit 0) and says so on stderr" bash -c "[ $rcl = 0 ] && grep -q guard-lib '$C2/err'"
+
+echo "  A04 the unattended-run reader: one file, an end time in epoch seconds; missing, garbled or past is a normal run"
+UF="$C2/unatt"; c2_conf "UNATTENDED_UNTIL $UF"
+ua() { ( . "$HK/guard-lib.sh"; unattended_run_active "$HK/state-check.conf" ); }
+echo $((NOW + 3600)) > "$UF"; ua; c2_chk refuse "A04 an end time in the future: the run is unattended (exit 0)" eq "$?" "0"
+echo $((NOW - 3600)) > "$UF"; ua; c2_chk pass "A04 an end time in the past: a normal run (exit 1)" eq "$?" "1"
+echo "tomorrow" > "$UF"; ua; c2_chk pass "A04 a garbled file: a normal run" eq "$?" "1"
+: > "$UF"; ua; c2_chk pass "A04 an empty file: a normal run" eq "$?" "1"
+rm -f "$UF"; ua; c2_chk pass "A04 a missing file: a normal run" eq "$?" "1"
+printf '%s\n%s\n' $((NOW + 3600)) 5 > "$UF"; ua; c2_chk refuse "A04 only the first line counts" eq "$?" "0"
+c2_conf 'myapp-dev*  dev  850'; mkdir -p "$HOME/.claude/state"; echo $((NOW + 3600)) > "$HOME/.claude/state/unattended-until"
+ua; c2_chk refuse "A04 no conf key: the default file is under ~/.claude/state/" eq "$?" "0"
+rm -f "$HOME/.claude/state/unattended-until"; ua; c2_chk pass "A04 pair: default file removed: normal run" eq "$?" "1"
+c2_conf 'UNATTENDED_UNTIL ~/.claude/state/u2'; echo $((NOW + 3600)) > "$HOME/.claude/state/u2"
+ua; c2_chk refuse "A04 a leading ~/ in the conf path is expanded" eq "$?" "0"; rm -f "$HOME/.claude/state/u2"
+
+echo "  A45 the wrap-up: the first Stop past WRAPUP_K in a listed role, once, never twice in one Stop output"
+R="$C2/myapp-dev4"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a45"
+c2_tp "$C2/tp600" 600; c2_tp "$C2/tp599" 599
+c2_prompt "$R" w1; c2_stop "$R" w1 false "$C2/tp600"
+c2_chk refuse "A45 first Stop at 600k in a dev role, nothing else to say: the wrap-up block" has 'wrap-up point' "$C2/out"
+c2_chk refuse "A45 the wrap-up block is one decision JSON" isjson "$C2/out"
+c2_chk refuse "A45 it leaves the once-per-session marker" test -f "$S/wrapup-fired/w1"
+c2_stop "$R" w1 false "$C2/tp600"
+c2_chk pass "A45 pair: the second Stop of the same session says nothing" test ! -s "$C2/out"
+c2_prompt "$R" w2; c2_stop "$R" w2 true "$C2/tp600"
+c2_chk pass "A45 pair: never on the forced second stop (stop_hook_active)" test ! -s "$C2/out"
+c2_chk pass "A45 pair: and that forced stop leaves no marker" test ! -f "$S/wrapup-fired/w2"
+c2_prompt "$R" w3; c2_stop "$R" w3 false "$C2/tp599"
+c2_chk pass "A45 pair: 599k is under the point: nothing" test ! -s "$C2/out"
+c2_conf 'myapp-dev*  docs  850'; c2_prompt "$R" w4; c2_stop "$R" w4 false "$C2/tp600"
+c2_chk pass "A45 pair: a role not in WRAPUP_ROLES (docs) gets no wrap-up" test ! -s "$C2/out"
+c2_conf 'myapp-dev*  docs  850' 'WRAPUP_ROLES *'; c2_prompt "$R" w5; c2_stop "$R" w5 false "$C2/tp600"
+c2_chk refuse "A45 WRAPUP_ROLES * reaches every role" has 'wrap-up point' "$C2/out"
+c2_conf 'myapp-dev*  docs  850' 'WRAPUP_ROLES Docs qa'; c2_prompt "$R" w5b; c2_stop "$R" w5b false "$C2/tp600"
+c2_chk refuse "A45 WRAPUP_ROLES names are matched case-insensitively" has 'wrap-up point' "$C2/out"
+c2_tp "$C2/tp300" 300; c2_tp "$C2/tp299" 299
+c2_conf 'myapp-dev*  dev  850' 'WRAPUP_K 300'; c2_prompt "$R" w6; c2_stop "$R" w6 false "$C2/tp300"
+c2_chk refuse "A45 WRAPUP_K 300: a 300k chat is wrapped up" has '300k wrap-up point' "$C2/out"
+c2_prompt "$R" w7; c2_stop "$R" w7 false "$C2/tp299"
+c2_chk pass "A45 pair: WRAPUP_K 300: 299k is not" test ! -s "$C2/out"
+c2_conf 'myapp-dev*  dev  850' "UNATTENDED_UNTIL $C2/unatt2"; echo $((NOW + 3600)) > "$C2/unatt2"
+c2_prompt "$R" w8; c2_stop "$R" w8 false "$C2/tp600"
+c2_chk pass "A45 an unattended run on: no wrap-up" test ! -s "$C2/out"
+c2_chk pass "A45 an unattended run on: no marker either" test ! -f "$S/wrapup-fired/w8"
+c2_prompt "$R" w8b; echo more >> "$R/README.md"; c2_stop "$R" w8b false "$C2/tp600"
+c2_chk refuse "A45 the unattended run suppresses ONLY the wrap-up: the state-file block still fires" has 'state/dev.md did not change' "$C2/out"
+git -C "$R" checkout -q -- README.md
+echo $((NOW - 3600)) > "$C2/unatt2"; c2_prompt "$R" w9; c2_stop "$R" w9 false "$C2/tp600"
+c2_chk refuse "A45 an expired unattended file is a normal run: wrap-up" has 'wrap-up point' "$C2/out"
+c2_conf 'myapp-dev*  dev  850'; c2_prompt "$R" w10; echo more >> "$R/README.md"; c2_stop "$R" w10 false "$C2/tp600"
+c2_chk refuse "A45 the state-file block comes first: at 600k with the state file untouched the ONE output is that block" has 'state/dev.md did not change' "$C2/out"
+c2_chk refuse "A45 ... and it is a single JSON object, not two" isjson "$C2/out"
+c2_chk pass "A45 ... and no wrap-up marker was spent on it" test ! -f "$S/wrapup-fired/w10"
+git -C "$R" checkout -q -- README.md
+
+echo "  A40 the turn snapshot (HEAD, state-file hash, content hash of the tracked diff): a commit-only turn is caught, a second edit is seen, a turn that changed nothing passes"
+R="$C2/myapp-dev5"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a40"
+c2_prompt "$R" c1; echo more >> "$R/README.md"; "${ID[@]}" git -C "$R" commit -q -am "commit only"
+c2_stop "$R" c1 false ""
+c2_chk refuse "A40 a turn that only COMMITTED (tree clean at the end) with the state file untouched is blocked" has 'did not change since the turn started' "$C2/out"
+c2_prompt "$R" c2; c2_stop "$R" c2 false ""
+c2_chk pass "A40 pair: a turn that changed nothing passes" test ! -s "$C2/out"
+echo one >> "$R/README.md"; c2_prompt "$R" c3; echo two >> "$R/README.md"; c2_stop "$R" c3 false ""
+c2_chk refuse "A40 a second edit of an already-dirty file is seen (same path, new content)" has '"decision":"block"' "$C2/out"
+c2_prompt "$R" c4; c2_stop "$R" c4 false ""
+c2_chk pass "A40 pair: an already-dirty tree and a read-only turn: pass" test ! -s "$C2/out"
+c2_prompt "$R" c5; echo newfile > "$R/scratch.txt"; c2_stop "$R" c5 false ""
+c2_chk pass "A40 pair: a turn that only created an UNTRACKED file is not a change" test ! -s "$C2/out"; rm -f "$R/scratch.txt"
+c2_prompt "$R" c6; sed 's/^\*\*Next step:\*\* second$/**Next step:** shipped/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"; echo three >> "$R/README.md"; "${ID[@]}" git -C "$R" commit -q -am "work and state"
+c2_stop "$R" c6 false ""
+c2_chk pass "A40 pair: a commit-only turn that also moved the state file's Next step passes" test ! -s "$C2/out"
+c2_prompt "$R" c7; echo four >> "$R/README.md"; "${ID[@]}" git -C "$R" commit -q -am more
+printf 'M  README.md\n' > "$S/turnsnap/c7"; echo dirty >> "$R/README.md"
+c2_stop "$R" c7 false ""
+c2_chk pass "A40 an old-format (single text line) snapshot counts as no snapshot: no block" nothas '"decision"' "$C2/out"
+c2_chk pass "A40 ... and the note says there is no turn snapshot" has 'no turn snapshot' "$C2/out"
+echo five >> "$R/README.md"; rm -f "$S/turnsnap/c8"; c2_stop "$R" c8 false ""
+c2_chk pass "A40 no snapshot at all: still a note, never a block" has 'no turn snapshot' "$C2/out"
+git -C "$R" checkout -q -- README.md 2>/dev/null
+c2_prompt "$R" ""; c2_chk refuse "A40 the prompt hook with no session id writes a snapshot under a folder-name key" test -s "$S/turnsnap/nosid-myapp-dev5"
+
+echo "  A71 the writer half: the prompt hook writes four tab-separated fields the Stop hook compares against"
+R="$C2/myapp-dev6"; c2_repo "$R"; S="$C2/s-a71"; c2_prompt "$R" s71
+snapline="$(cat "$S/turnsnap/s71" 2>/dev/null)"
+c2_chk refuse "A71 the snapshot is four tab-separated fields" bash -c "[ \"\$(printf '%s' '$snapline' | awk -F'\t' '{print NF}')\" = 4 ]"
+c2_chk pass "A71 field 1 is HEAD" eq "$(printf '%s' "$snapline" | cut -f1)" "$(git -C "$R" rev-parse HEAD)"
+c2_chk pass "A71 field 2 is the state file's hash" eq "$(printf '%s' "$snapline" | cut -f2)" "$(git -C "$R" hash-object "$R/state/dev.md")"
+c2_chk pass "A71 field 3 is the hash of the tracked diff (a clean tree: the empty hash)" eq "$(printf '%s' "$snapline" | cut -f3)" "$(: | git -C "$R" hash-object --stdin)"
+echo more >> "$R/README.md"; c2_prompt "$R" s71b; snapline2="$(cat "$S/turnsnap/s71b")"
+c2_chk refuse "A71 the tracked diff's hash moves when a tracked file changes" bash -c "[ '$(printf '%s' "$snapline" | cut -f3)' != '$(printf '%s' "$snapline2" | cut -f3)' ]"
+git -C "$R" checkout -q -- README.md; rm -f "$R/state/dev.md"; git -C "$R" rm -q --cached state/dev.md 2>/dev/null; c2_prompt "$R" s71c
+c2_chk pass "A71 no state file: its two hashes read none" bash -c "[ \"\$(cut -f2 '$S/turnsnap/s71c')\" = none ] && [ \"\$(cut -f4 '$S/turnsnap/s71c')\" = none ]"
+
+echo "  A41 the FIRST Current task / Next step lines are canonical; a prose mention or a second marker line is not a handover"
+R="$C2/myapp-dev7"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a41"
+c2_prompt "$R" m1; echo edit >> "$R/README.md"; echo 'as the **Current task:** line above says' >> "$R/state/dev.md"
+c2_stop "$R" m1 false ""
+c2_chk refuse "A41 a prose mention of the marker appended to the state file is not the line moving" has 'neither its' "$C2/out"
+git -C "$R" checkout -q -- .
+c2_prompt "$R" m2; echo edit >> "$R/README.md"; echo '**Next step:** an appended duplicate' >> "$R/state/dev.md"
+c2_stop "$R" m2 false ""
+c2_chk refuse "A41 a second **Next step:** line appended below the real one is not the line moving" has 'neither its' "$C2/out"
+git -C "$R" checkout -q -- .
+c2_prompt "$R" m3; echo edit >> "$R/README.md"; sed 's/^\*\*Next step:\*\* second$/**Next step:** reviewed/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"
+c2_stop "$R" m3 false ""
+c2_chk pass "A41 pair: the FIRST Next step line rewritten passes" test ! -s "$C2/out"
+git -C "$R" checkout -q -- .
+c2_prompt "$R" m4; echo edit >> "$R/README.md"; sed 's/^\*\*Current task:\*\* first$/**Current task:**/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"
+c2_stop "$R" m4 false ""
+c2_chk refuse "A41 a first Current task line emptied: 'missing a filled' block" has 'missing a filled' "$C2/out"
+git -C "$R" checkout -q -- .
+sed 's/^\*\*Next step:\*\* second$/**Next step:** carried over/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"
+c2_prompt "$R" m5; echo edit >> "$R/README.md"; printf '   \n' >> "$R/state/dev.md"
+c2_stop "$R" m5 false ""
+c2_chk refuse "A41 a state file already dirty at turn start: a whitespace-only append is still not a handover" has 'neither its' "$C2/out"
+git -C "$R" checkout -q -- .
+
+echo "  A46 the state file and every git call are resolved from the git toplevel, never the raw folder"
+R="$C2/myapp-dev8"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a46"
+c2_prompt "$R/sub/deep" t1; echo edit >> "$R/README.md"; sed 's/^\*\*Next step:\*\* second$/**Next step:** done from below/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"
+c2_stop "$R/sub/deep" t1 false ""
+c2_chk pass "A46 a Stop from two folders down finds the toplevel state file and passes" test ! -s "$C2/out"
+git -C "$R" checkout -q -- .
+c2_prompt "$R/sub/deep" t2; echo edit >> "$R/README.md"; c2_stop "$R/sub/deep" t2 false ""
+c2_chk refuse "A46 pair: from two folders down with the state file untouched: blocked, naming the toplevel path" has 'state/dev.md did not change' "$C2/out"
+git -C "$R" checkout -q -- .
+
+echo "  A43 a symlink is never followed: inbox, its folder, turn-start, tell, the turn snapshot"
+R="$C2/myapp-dev9"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  5'; S="$C2/s-a43"; c2_tp "$C2/tp8" 8
+echo keep > "$SENT"; mkdir -p "$S/inbox"; ln -s "$SENT" "$S/inbox/dev.md"; echo edit >> "$R/README.md"
+c2_stop "$R" l1 false "$C2/tp8"
+c2_chk refuse "A43 a symlinked inbox file: the target is left untouched" eq "$(cat "$SENT")" "keep"
+c2_chk refuse "A43 ... and the hook says it skipped the record" has 'symlink' "$C2/err"
+S="$C2/s-a43b"; c2_stop "$R" l2 false "$C2/tp8"
+c2_chk pass "A43 pair: a plain inbox gets the retirement record" has 'RETIRED with uncommitted tracked changes' "$S/inbox/dev.md"
+S="$C2/s-a43c"; mkdir -p "$C2/inboxtarget" "$S"; ln -s "$C2/inboxtarget" "$S/inbox"
+c2_stop "$R" l3 false "$C2/tp8"
+c2_chk refuse "A43 a symlinked inbox FOLDER: nothing written into its target" test -z "$(ls -A "$C2/inboxtarget")"
+S="$C2/s-a43d"; mkdir -p "$S/turn-start"; ln -s "$SENT" "$S/turn-start/l4"
+c2_stop "$R" l4 false "$C2/tp8"
+c2_chk refuse "A43 a symlinked turn-start/<sid> is not written through" eq "$(cat "$SENT")" "keep"
+c2_conf 'myapp-dev*  dev  850'; c2_tp "$C2/tp140" 140
+S="$C2/s-a43e"; mkdir -p "$S/turn-start" "$S/tell"; echo 100 > "$S/turn-start/l5"; ln -s "$SENT" "$S/tell/l5"
+c2_stop "$R" l5 false "$C2/tp140"
+c2_chk refuse "A43 a symlinked tell/<sid> is not written through, though a tell was due" eq "$(cat "$SENT")" "keep"
+S="$C2/s-a43f"; mkdir -p "$S/turnsnap"; printf '%s\t%s\t%s\t%s\n' "$(git -C "$R" rev-parse HEAD)" none "$(: | git -C "$R" hash-object --stdin)" none > "$C2/goodsnap"; ln -s "$C2/goodsnap" "$S/turnsnap/l6"
+c2_stop "$R" l6 false ""
+c2_chk refuse "A43 a symlinked turn snapshot is not followed (it would have blocked)" nothas '"decision"' "$C2/out"
+c2_chk refuse "A43 ... and the hook says so" has 'symlink' "$C2/err"
+git -C "$R" checkout -q -- .
+S="$C2/s-a43g"; mkdir -p "$S/turn-start" "$S/tell" "$S/turnsnap"; ln -s "$SENT" "$S/turn-start/l7"; ln -s "$SENT" "$S/turnsnap/l7"; ln -s "$SENT" "$S/tell/l7"
+c2_prompt "$R" l7 "$C2/tp140"
+c2_chk refuse "A43 the prompt hook writes through none of turn-start, turnsnap (sentinel intact)" eq "$(cat "$SENT")" "keep"
+c2_chk refuse "A43 the prompt hook neither shows nor deletes a symlinked tell" bash -c "[ -L '$S/tell/l7' ] && ! grep -q 'helper tell' '$C2/pout'"
+
+echo "  A44 the helper tell (Stop half): a big turn with no helper leaves a one-line file, never stdout"
+R="$C2/myapp-dev10"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a44"
+mkdir -p "$S/turn-start"; echo 100 > "$S/turn-start/h1"; c2_stop "$R" h1 false "$C2/tp140"
+c2_chk refuse "A44 140k now, 100k at turn start, no helper launched: the tell file holds the growth" eq "$(cat "$S/tell/h1" 2>/dev/null)" "40"
+c2_chk refuse "A44 the tell never goes to stdout" test ! -s "$C2/out"
+c2_tp "$C2/tp140a" 140 agent; echo 100 > "$S/turn-start/h2"; c2_stop "$R" h2 false "$C2/tp140a"
+c2_chk pass "A44 pair: an Agent launched this turn: no tell" test ! -e "$S/tell/h2"
+c2_tp "$C2/tp120" 120; echo 100 > "$S/turn-start/h3"; c2_stop "$R" h3 false "$C2/tp120"
+c2_chk pass "A44 pair: 20k of growth is under the threshold: no tell" test ! -e "$S/tell/h3"
+c2_stop "$R" h4 false "$C2/tp140"
+c2_chk pass "A44 pair: no turn-start snapshot: no tell" test ! -e "$S/tell/h4"
+c2_conf 'myapp-dev*  dev  850' 'TELL_EXEMPT_ROLES Dev qa'; echo 100 > "$S/turn-start/h5"; c2_stop "$R" h5 false "$C2/tp140"
+c2_chk pass "A44 pair: an exempt role (matched case-insensitively): no tell" test ! -e "$S/tell/h5"
+c2_conf 'myapp-dev*  dev  850' 'TELL_GROWTH_K 50'; echo 100 > "$S/turn-start/h6"; c2_stop "$R" h6 false "$C2/tp140"
+c2_chk pass "A44 pair: TELL_GROWTH_K 50 with 40k of growth: no tell" test ! -e "$S/tell/h6"
+c2_conf 'myapp-dev*  dev  850' 'TELL_GROWTH_K 40'; echo 100 > "$S/turn-start/h7"; c2_stop "$R" h7 false "$C2/tp140"
+c2_chk refuse "A44 TELL_GROWTH_K 40 with 40k of growth (inclusive): tell" test -e "$S/tell/h7"
+c2_conf 'myapp-dev*  dev  850'; c2_stop "$R" h8 false "$C2/tp140"
+c2_chk refuse "A44 the Stop hook rewrites the turn-start size with this turn's end size" eq "$(cat "$S/turn-start/h1")" "140"
+printf '{"type":"assistant","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":139000,"output_tokens":5}}}\n' > "$C2/tp-noprompt"; echo 100 > "$S/turn-start/h9"
+c2_stop "$R" h9 false "$C2/tp-noprompt"
+c2_chk pass "A44 pair: no human/peer prompt line to anchor the turn: no tell" test ! -e "$S/tell/h9"
+
+echo "  A69 the tell's reader half and the turn-start size: the prompt hook shows the tell once, only on a passing prompt"
+R="$C2/myapp-dev11"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a69"; mkdir -p "$S/tell" "$S/retired"
+echo 41 > "$S/tell/p1"; c2_prompt "$R" p1
+c2_chk refuse "A69 a passing prompt shows the tell (stdout, with the number)" has 'context by 41k' "$C2/pout"
+c2_chk refuse "A69 ... and deletes it" test ! -e "$S/tell/p1"
+c2_prompt "$R" p1
+c2_chk pass "A69 pair: the next prompt shows nothing" nothas 'helper tell' "$C2/pout"
+echo 42 > "$S/tell/p2"; echo "2026-01-01 00:00 dev 900k" > "$S/retired/p2"; c2_prompt "$R" p2
+c2_chk refuse "A69 a HELD prompt (retired session, exit 2) does not show the tell" bash -c "[ $C2_PRC = 2 ] && ! grep -q 'helper tell' '$C2/pout'"
+c2_chk refuse "A69 ... and leaves it for the next prompt that passes" test -f "$S/tell/p2"
+rm -f "$S/retired/p2"; c2_prompt "$R" p2
+c2_chk refuse "A69 the survivor shows once the prompt passes" has 'context by 42k' "$C2/pout"
+echo abc > "$S/tell/p3"; c2_prompt "$R" p3
+c2_chk pass "A69 pair: a garbled tell file shows nothing" nothas 'helper tell' "$C2/pout"
+echo 43 > "$S/tell/other"; c2_prompt "$R" p4
+c2_chk pass "A69 pair: another session's tell is not shown" nothas 'helper tell' "$C2/pout"
+c2_prompt "$R" p5 "$C2/tp140"
+c2_chk refuse "A69 the prompt hook writes the turn-start size (140k transcript -> 140)" eq "$(cat "$S/turn-start/p5" 2>/dev/null)" "140"
+c2_prompt "$R" "../x" "$C2/tp140"
+c2_chk pass "A69 pair: a traversal-shaped session id writes no turn-start file" test ! -e "$S/x"
+c2_prompt "$C2/nowhere-dir" p6
+c2_chk pass "A69 pair: a folder the conf does not name: the prompt hook is inert" bash -c "[ $C2_PRC = 0 ] && [ ! -s '$C2/pout' ]"
+
+echo "  A47 scheduled prompts are registered from the Stop input (needs jq; skipped silently without it)"
+R="$C2/myapp-dev12"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a47"
+c2_stop "$R" k1 false "" '["  check the build  ","second one"]'
+c2_chk refuse "A47 the session's cron prompts land in crons/<sid>, one per line, trimmed" eq "$(cat "$S/crons/k1" 2>/dev/null | tr '\n' '|')" '"check the build"|"second one"|'
+c2_stop "$R" k1 false "" '[]'
+c2_chk pass "A47 pair: an empty list removes the file" test ! -e "$S/crons/k1"
+NOJQ="$C2/nojq"; mkdir -p "$NOJQ"; for tl in bash git head tail tr date mkdir rm cat cut sed grep awk sort dirname basename wc xargs env python3 find; do p="$(command -v $tl 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOJQ/$tl"; done
+c2_chk pass "A47 (setup) the no-jq PATH really has no jq" bash -c "! PATH='$NOJQ' command -v jq >/dev/null 2>&1"
+c2_sj "$R" k2 false "" '["x"]' | PATH="$NOJQ" STATE_CHECK_STATE_DIR="$S" bash "$HK/stop-state-check.sh" > "$C2/out" 2> "$C2/err"; rc=$?
+c2_chk pass "A47 without jq: nothing written, no refusal, no noise" bash -c "[ $rc = 0 ] && [ ! -e '$S/crons/k2' ] && [ ! -s '$C2/out' ] && [ ! -s '$C2/err' ]"
+mkdir -p "$S/crons"; ln -s "$SENT" "$S/crons/k3"; c2_stop "$R" k3 false "" '["y"]'
+c2_chk refuse "A47 a symlinked crons/<sid> is not written through" eq "$(cat "$SENT")" "keep"
+
+echo "  A48 retirement writes retired-compacts/<sid>; a marker without its companion counts as absent"
+R="$C2/myapp-dev13"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  5'; S="$C2/s-a48"
+c2_tp "$C2/tp-cmp" 8; printf '{"type":"system","subtype":"compact_boundary"}\n{"type":"system","subtype":"compact_boundary"}\n' >> "$C2/tp-cmp"
+c2_stop "$R" r1 false "$C2/tp-cmp"
+c2_chk refuse "A48 the companion holds the compact-boundary count at retirement (2)" eq "$(cat "$S/retired-compacts/r1" 2>/dev/null)" "2"
+echo more >> "$R/README.md"; c2_stop "$R" r1 false "$C2/tp-cmp"
+c2_chk pass "A48 pair: a marker WITH its companion is not rewritten (no second inbox record for a dirty tree)" test ! -e "$S/inbox/dev.md"
+mkdir -p "$S/retired"; echo "old marker" > "$S/retired/r2"
+c2_stop "$R" r2 false "$C2/tp-cmp"
+c2_chk refuse "A48 a marker with no companion is rewritten (companion now exists)" test -f "$S/retired-compacts/r2"
+c2_chk refuse "A48 ... and the old marker text is replaced" nothas 'old marker' "$S/retired/r2"
+mkdir -p "$S/retired"; echo "old" > "$S/retired/r3"; ln -s "$SENT" "$S/retired-compacts/r3"
+c2_stop "$R" r3 false "$C2/tp-cmp"
+c2_chk refuse "A48 a symlinked companion is replaced by a real file, the link target untouched" bash -c "[ ! -L '$S/retired-compacts/r3' ] && [ -f '$S/retired-compacts/r3' ] && [ \"\$(cat '$SENT')\" = keep ]"
+
+echo "  A70 the wrap-up words in the always-on fullness line: read-only, only when the group's marker is there"
+WS="$C2/s-a70"; mkdir -p "$WS/wrapup-fired"; echo 600 > "$WS/wrapup-fired/c1s"
+c1_tr "$TRC" human:1 usage:1:650
+c1_fire "A70 marker + 650k typed prompt: the wrap-up words replace the fullness line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up: open a fresh chat'
+c1_quiet "A70 ... and the plain fullness ask is gone" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'open your reply with one line on how full'
+c1_fire "A70 pair: NO group installed (no marker): the plain fullness line is unchanged" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$C2/no-group")" 'open your reply with one line on how full'
+c1_quiet "A70 pair: NO group installed: no wrap-up words" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$C2/no-group")" 'wrapping up'
+c1_tr "$TRC" human:1 usage:1:550
+c1_fire "A70 pair: marker but the chat is under the marker's point (550k < 600k): the plain line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'open your reply with one line on how full'
+c1_tr "$TRC" human:1 usage:1:650
+mkdir -p "$WS/open"; : > "$WS/open/c1s"
+c1_quiet "A70 pair: a later hook's own wrap-up marker (open/<sid>) already says it: no second wrap-up line here" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up'
+rm -rf "$WS/open"; rm -f "$WS/wrapup-fired/c1s"; ln -s "$SENT" "$WS/wrapup-fired/c1s"
+c1_quiet "A70 pair: a symlinked marker is not read" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up'
+rm -f "$WS/wrapup-fired/c1s"; echo 600 > "$WS/wrapup-fired/c1s"
+c1_quiet "A70 pair: a machine prompt gets neither line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '<task-notification>x</task-notification>')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up'
+c1_quiet "A70 pair: a helper's own transcript gets neither line" "$(c1_run "$(c1_in UserPromptSubmit "$C1/subagents/agent-1.jsonl" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up'
+echo "keep" > "$SENT"
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?

@@ -11,13 +11,25 @@
 # must never be refused just because the person reading along has been quiet. Only a
 # session where nothing at all has happened counts as idle.
 # A prompt beginning "wake anyway" always passes, forcing this session open regardless.
-# It also writes the TURN SNAPSHOT that hooks/stop-state-check.sh reads at the end of the
-# turn — what the tracked tree looked like when this prompt arrived — so that hook can tell
-# a turn that CHANGED something from a read-only turn in a tree that was already dirty.
+# It also writes, at every prompt, what hooks/stop-state-check.sh reads at the end of the turn:
+#   - the TURN SNAPSHOT $STATE/turnsnap/<key>, one line of four tab-separated fields — HEAD,
+#     the state file's hash, a hash of `git diff HEAD` (the content of every tracked change),
+#     and a hash of the state file's two first marker lines ("none" for what is absent) — so
+#     that hook can tell a turn that CHANGED something (a commit-only turn, a second edit of an
+#     already-dirty file) from a read-only turn in a tree that was already dirty. Hashes come
+#     from git itself (portable: no shasum). Untracked files never enter it. The format is
+#     pinned by the round-trip case in hooks/test-hooks.sh (c2a): stop-state-check.sh compares
+#     against these very fields.
+#   - the context size $STATE/turn-start/<sid> (thousands of tokens, from the newest usage line),
+#     the base the helper tell measures growth from.
+# It also SHOWS the helper tell $STATE/tell/<sid> that stop-state-check.sh left (one line on
+# stdout, which reaches the model), and deletes it — but only on a prompt that PASSES: a held
+# prompt (exit 2) leaves it for the next one that does. Symlinked state files are never followed.
 #
-# Applies only when the session's working-directory basename matches a line in
-# hooks/state-check.conf (role = the name that line gives it). No conf file, or no match:
-# inert — the safe default for a single-session project with no roles to track.
+# Applies only when the session's git TOPLEVEL folder name matches a line in
+# hooks/state-check.conf (role = the name that line gives it; see guard-lib.sh's state_conf_read).
+# No conf file, no match, or no guard-lib.sh beside this hook: inert — the safe default for a
+# single-session project with no roles to track.
 # Fails OPEN with a log line when the transcript cannot be read, or when a user/assistant
 # line in it carries no timestamp at all — an undatable line might be seconds old, and a
 # cost guard must never turn "I cannot tell" into "you are idle". This is a cost guard, not
@@ -32,21 +44,19 @@ field() { printf '%s' "$input" | /usr/bin/sed -n "s/.*\"$1\"[[:space:]]*:[[:spac
 tp=$(field transcript_path); cwd=$(field cwd); sid=$(field session_id)
 prompt=$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)
 [ -n "$cwd" ] || cwd="$PWD"
-base=$(basename "$cwd")
 
-# ---- role lookup (hooks/state-check.conf; see .conf.example — shared with stop-state-check.sh) ----
-CONF="$(dirname "$0")/state-check.conf"
-role=""
-if [ -f "$CONF" ]; then
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in ''|'#'*|STATE_FILE\ *) continue;; esac
-    set -- $line
-    pat="$1"; r="$2"
-    [ -n "$pat" ] && [ -n "$r" ] || continue
-    case "$base" in $pat) role="$r"; break;; esac
-  done < "$CONF"
+# ---- role lookup: guard-lib.sh's state_conf_read (hooks/state-check.conf; shared with stop-state-check.sh) ----
+_lib="$(dirname "$0")/guard-lib.sh"
+# shellcheck disable=SC1090
+[ -r "$_lib" ] && . "$_lib" 2>/dev/null
+if ! command -v state_conf_read >/dev/null 2>&1; then
+  echo "doorman: guard-lib.sh (the shared conf reader) is missing beside this hook — doing nothing." >&2
+  exit 0
 fi
-[ -n "$role" ] || exit 0   # no config, or this folder matches nothing in it: inert
+CONF="$(dirname "$0")/state-check.conf"
+state_conf_read "$cwd" "$CONF" || exit 0   # no config, or this folder matches nothing in it: inert
+role="$STC_ROLE"; top="$STC_TOP"; base="$STC_BASE"
+sf="${STC_STATE_FILE//'{role}'/$role}"
 
 STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
 IDLE_MIN="${DOORMAN_IDLE_MIN:-40}"; CTX_K="${DOORMAN_CTX_K:-200}"
@@ -61,10 +71,39 @@ snapkey() {
     *)          printf '%s' "$sid" ;;
   esac
 }
-if command -v git >/dev/null 2>&1 && git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if command -v git >/dev/null 2>&1 && git -C "$top" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+   && [ ! -L "$STATE/turnsnap" ] && [ ! -L "$STATE/turnsnap/$(snapkey)" ]; then
+  # Four fields, the format stop-state-check.sh reads (see the header). The same commands run there.
+  _s_head=$(git -C "$top" rev-parse HEAD 2>/dev/null); _s_head="${_s_head:-none}"
+  _s_tree=$(git -C "$top" diff --no-ext-diff --no-textconv HEAD 2>/dev/null | git -C "$top" hash-object --stdin 2>/dev/null); _s_tree="${_s_tree:-none}"
+  _s_sf=none; _s_mk=none
+  if [ -f "$top/$sf" ]; then
+    _s_sf=$(git -C "$top" hash-object -- "$top/$sf" 2>/dev/null); _s_sf="${_s_sf:-none}"
+    _s_mk=$({ /usr/bin/grep -m1 -E '^\*\*Current task:\*\*' "$top/$sf" 2>/dev/null; /usr/bin/grep -m1 -E '^\*\*Next step:\*\*' "$top/$sf" 2>/dev/null; } | git -C "$top" hash-object --stdin 2>/dev/null); _s_mk="${_s_mk:-none}"
+  fi
   mkdir -p "$STATE/turnsnap" 2>/dev/null \
-    && git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null > "$STATE/turnsnap/$(snapkey)"
+    && printf '%s\t%s\t%s\t%s\n' "$_s_head" "$_s_sf" "$_s_tree" "$_s_mk" > "$STATE/turnsnap/$(snapkey)" 2>/dev/null
 fi
+# The helper tell (see the header): read now, shown and deleted only when this prompt PASSES.
+tell_k=""; tell_path=""
+case "$sid" in
+  ''|*/*|..*) : ;;
+  *) tell_path="$STATE/tell/$sid"
+     if [ -f "$tell_path" ] && [ ! -L "$tell_path" ] && [ ! -L "$STATE/tell" ]; then
+       tell_k=$(head -1 "$tell_path" 2>/dev/null)
+       case "$tell_k" in ''|*[!0-9]*) tell_k="" ;; esac
+     fi ;;
+esac
+doorman_finish() {
+  local rc=$?
+  trap - EXIT
+  if [ "$rc" = 0 ] && [ -n "$tell_k" ]; then
+    printf 'helper tell: your last turn grew the context by %sk tokens with no helper launched — long reads, test runs and searches belong to a subagent (a short-lived helper chat that reports back).\n' "$tell_k"
+    rm -f "$tell_path" 2>/dev/null
+  fi
+  exit "$rc"
+}
+trap doorman_finish EXIT
 if printf '%s' "$prompt" | grep -qiE '^[[:space:]]*wake anyway'; then exit 0; fi
 refuse() {
   mkdir -p "$STATE/inbox"
@@ -80,6 +119,14 @@ if [ -n "$ctx_line" ]; then
   cf() { printf '%s' "$ctx_line" | /usr/bin/grep -oE "\"$1\"[[:space:]]*:[[:space:]]*[0-9]+" | /usr/bin/tail -1 | /usr/bin/sed -E 's/.*:[[:space:]]*([0-9]+)/\1/'; }
   ci=$(cf input_tokens); cc=$(cf cache_creation_input_tokens); cr=$(cf cache_read_input_tokens)
   ctx_k=$(( (${ci:-0} + ${cc:-0} + ${cr:-0} + 500) / 1000 ))
+  # The size this turn starts from, for the helper tell (never through a symlink).
+  case "$sid" in
+    ''|*/*|..*) : ;;
+    *) if [ ! -L "$STATE/turn-start" ] && [ ! -L "$STATE/turn-start/$sid" ]; then
+         mkdir -p "$STATE/turn-start" 2>/dev/null
+         printf '%s\n' "$ctx_k" > "$STATE/turn-start/$sid" 2>/dev/null
+       fi ;;
+  esac
 fi
 to_epoch() { local e; e=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$1" "+%s" 2>/dev/null); case "$e" in ''|*[!0-9]*) printf '' ;; *) printf '%s' "$e" ;; esac; }
 iso_of() { date -u -r "$1" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%S 2>/dev/null; }

@@ -37,6 +37,14 @@
 #    reply to open with how full the chat is; when the chat has also been idle CONTEXT_STALE_MIN
 #    (default 60) minutes or more — you AND the model — it adds "this wake re-read the whole
 #    chat" (the prompt cache lives about an hour). Both numbers are illustrative defaults.
+#    WRAP-UP WORDS (read-only; only where the opt-in multi-chat group is installed): once hooks/
+#    stop-state-check.sh has written $STATE/wrapup-fired/<session_id> (its first line is the wrap-up
+#    point in thousands of tokens), the fullness line is REPLACED by the wrap-up words for as long as
+#    the context stays at or over that point — unless $STATE/open/<session_id> exists (a later prompt
+#    hook's own wrap-up note already says it). This file never writes the marker and knows no roles
+#    or thresholds: no group installed, no marker, nothing changes. An unattended run needs no check
+#    here — the Stop hook writes no marker while one is on. $STATE = STATE_CHECK_STATE_DIR, default
+#    ~/.claude/state/state-check.
 # 6. BACKUP WATCHDOG (typed prompt only, and only where hooks/backup.conf exists — the backup
 #    is opt-in): one line when the settings repo has changes uncommitted for over
 #    WATCHDOG_MINUTES (default 60; the OLDEST changed file's age) or commits not pushed.
@@ -86,6 +94,7 @@ fi
 input=$(cat 2>/dev/null)
 tp=$(printf '%s' "$input" | /usr/bin/sed -n 's/.*"transcript_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 event=$(printf '%s' "$input" | /usr/bin/sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+sid=$(printf '%s' "$input" | /usr/bin/sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 printf 'Clock (this machine): %s (%s for file entries)\n' "$(date '+%Y-%m-%d %l:%M %p' | tr -s ' ')" "$(date '+%H:%M')"
 
 # The current prompt, classified once. Only a UserPromptSubmit has one; a missing or empty
@@ -264,7 +273,18 @@ CONTEXT_NOTE_K="${CONTEXT_NOTE_K:-400}"; case "$CONTEXT_NOTE_K" in ''|*[!0-9]*) 
 CONTEXT_STALE_MIN="${CONTEXT_STALE_MIN:-60}"; case "$CONTEXT_STALE_MIN" in ''|*[!0-9]*) CONTEXT_STALE_MIN=60 ;; esac
 if [ "$typed_prompt" = 1 ] && [ "$helper" = 0 ] && [ -n "$ctx_k" ] && [ "$ctx_k" -ge "$((10#$CONTEXT_NOTE_K))" ]; then
   note="This chat has used about ${ctx_k}k tokens of context — open your reply with one line on how full this chat is."
-  if [ -n "$gap_min" ] && [ "$gap_min" -ge "$((10#$CONTEXT_STALE_MIN))" ]; then
+  # The wrap-up words replace it once the Stop hook's marker says the wrap-up point was reached (read-only).
+  _wu=0
+  case "$sid" in ''|*/*|..*) ;; *)
+    _STC="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
+    if [ -f "$_STC/wrapup-fired/$sid" ] && [ ! -L "$_STC/wrapup-fired/$sid" ] && [ ! -L "$_STC/wrapup-fired" ] && [ ! -e "$_STC/open/$sid" ]; then
+      _wuk=$(head -1 "$_STC/wrapup-fired/$sid" 2>/dev/null)
+      case "$_wuk" in ''|*[!0-9]*) ;; *) [ "$ctx_k" -ge "$((10#$_wuk))" ] && _wu=1 ;; esac
+    fi ;;
+  esac
+  if [ "$_wu" = 1 ]; then
+    note="This chat has used about ${ctx_k}k tokens of context and is past its wrap-up point — wrapping up: open a fresh chat for new work."
+  elif [ -n "$gap_min" ] && [ "$gap_min" -ge "$((10#$CONTEXT_STALE_MIN))" ]; then
     # the newest assistant line's time: the last 1 MB first, the whole file only when that holds none
     _as=""
     for _w in 1048576 0; do
