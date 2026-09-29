@@ -21,9 +21,14 @@
 #     as an exact ceiling if you write one.
 # A conf pattern with a slash matches the file's repo-relative path, one without matches the bare
 # name — the same reading as channel-size-guard.sh (A28; the header there says it in full).
-# Never blocks, never changes anything, always exits 0. No jq, no conf file, or no file it
-# can resolve: silent.
-# Tests: hooks/test-hooks.sh (section 29).
+# Never blocks and never changes anything. A file over its stop makes it exit 2 with the reason on
+# stderr: for a PostToolUse hook Claude Code shows that to the model (the tool has already run, so
+# nothing is undone or blocked) — at exit 0 the message went nowhere (refresh 2026-09-29 M6). Anything
+# else, including no jq, no conf file, or no file it can resolve: silent, exit 0.
+# Conf lines are split with globbing OFF (`set -f`) so `*/NOTES.md` stays a pattern (M5).
+# Tests: hooks/test-hooks.sh (section 29, "attack fixes (2)" M5/M6).
+set -f
+WARNED=0
 command -v jq >/dev/null 2>&1 || exit 0
 input="$(cat 2>/dev/null)"; [ -z "$input" ] && exit 0
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)"
@@ -84,9 +89,11 @@ byte_ceiling() { # unit stop -> the derived byte ceiling for that band
 }
 loud() { # file current unit stop band
   echo "channel-size-guard (after the write): WARNING — $1 is now $2 $3, over its HARD STOP ($4 $3). This hook runs AFTER the write, so nothing was undone: sweep it down to $5 $3 now (move the resolved entries to an archive). Until you do, the next visible append to it is refused." >&2
+  WARNED=1
 }
 loud_bytes() { # file bytes ceiling unit stop
   echo "channel-size-guard (after the write): WARNING — $1 is now $2 bytes, over the byte ceiling ($3, derived from its $5-$4 hard stop). A file can sit under a word count and still be enormous — one huge 'word', a pasted blob. Sweep it now; this hook runs after the write and undoes nothing." >&2
+  WARNED=1
 }
 
 check_file() { # absolute or cwd-relative path
@@ -141,4 +148,5 @@ $b"
       done <<<"$(printf '%s' "$resolved" | sort -u)"
     done ;;
 esac
+[ "$WARNED" = 1 ] && exit 2
 exit 0

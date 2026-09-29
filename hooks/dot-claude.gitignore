@@ -13,11 +13,5 @@
 !project-template/**
 !skills/
 !skills/**
-# Memory notes (per-project facts Claude saves across sessions) — but not
-# the session transcripts that live next to them under projects/.
-!projects/
-projects/*
-!projects/*/
-projects/*/*
-!projects/*/memory/
-!projects/*/memory/**
+# Memory notes under projects/ are NOT backed up: their folder names carry your home path, which
+# the privacy check in git-hooks/pre-commit refuses (see INSTALL.md). projects/ stays ignored whole.

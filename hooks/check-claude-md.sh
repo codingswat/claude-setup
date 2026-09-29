@@ -54,13 +54,15 @@ done < <(cat "$ROOTS_CONF" 2>/dev/null)
 # CLAUDE.md? The projects-root folder's OWN CLAUDE.md never counts as a project's — a shared
 # rules file (or a link to one) can sit there, and counting it would mean the new-project
 # interview never fires. The root test comes BEFORE the file test on purpose.
-# Tests: hooks/test-hooks.sh, "refresh 2026-09-29 (c1)" A33.
+# A project's rules file is ./CLAUDE.md or ./.claude/CLAUDE.md.
+# Tests: hooks/test-hooks.sh, "refresh 2026-09-29 (c1)" A33; "attack fixes (2)" M13.
 found=""
 if [ -n "$root" ]; then
   dir="$cwd"
   while :; do
     [ "$dir" = "$root" ] && break
-    if [ -f "$dir/CLAUDE.md" ]; then found="yes"; break; fi
+    # Claude Code also loads <project>/.claude/CLAUDE.md as the project's rules (M13).
+    if [ -f "$dir/CLAUDE.md" ] || [ -f "$dir/.claude/CLAUDE.md" ]; then found="yes"; break; fi
     dir=$(dirname "$dir")
   done
 fi

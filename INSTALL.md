@@ -239,6 +239,8 @@ git check-ignore -v .credentials.json projects/x/session.jsonl shell-snapshots/s
 
 Every one of those paths must come back as ignored.
 
+Claude's per-project **memory notes** (`projects/*/memory/`) are deliberately **not** backed up: their folder names carry your home path, which the privacy check in `git-hooks/pre-commit` refuses.
+
 **Second, keep the backup repo private.** It holds your AI's standing instructions. So does
 the optional mirror folder, which receives a copy of `settings.json`.
 
@@ -256,7 +258,11 @@ of every turn, so anything that could write into it would otherwise get to run s
 on your machine for free.
 
 `MIRROR_DIR` is optional — a folder that gets readable copies of your config, useful if you
-work in a context that can't see `~/.claude`. Leave it empty to skip that step.
+work in a context that can't see `~/.claude`. Leave it empty to skip that step. The copies are
+committed and pushed **only when the mirror's repo is on its expected branch** (`MIRROR_BRANCH=main`
+by default; add that line to the conf for another branch) **and holds no unpushed commit of yours**
+— otherwise the step touches nothing and leaves a notice, printed at your next typed prompt
+(`~/.claude/state/state-check/notices/`), so a half-done feature branch is never pushed for you.
 
 **Without `backup.conf` the hook does nothing at all**, so registering it early is harmless.
 Register it the same way as step 4, under `"Stop"` instead of `"SessionStart"`, with the
@@ -515,7 +521,9 @@ checks need `hooks/auto-backup.sh` installed beside `git-hooks/`, which the inst
 is `$HOME/.claude`, 5750 otherwise; override with `RULES_CAP_OK=1 git commit ...`) — a
 rulebook that grows without limit stops being read.
 
-To undo:
+If you already had a global `core.hooksPath`, the installer saves it in
+`~/.claude/.setup-prev-hookspath` first and prints an undo line that puts it back. To undo (with
+none saved, this is the line; with one saved, restore it with `git config --global core.hooksPath <the saved value>`):
 
 ```bash
 git config --global --unset core.hooksPath
@@ -568,7 +576,7 @@ To turn off just the multi-chat coordination group, remove its five `hooks` entr
 `~/.claude/settings.json` (or simplest: never create `~/.claude/hooks/state-check.conf` —
 all of them stay inert without it).
 
-To turn off the git hooks step: `git config --global --unset core.hooksPath` — the files stay
+To turn off the git hooks step: `git config --global --unset core.hooksPath` (or, if the installer saved an earlier value in `~/.claude/.setup-prev-hookspath`, set it back to that) — the files stay
 at `~/.claude/git-hooks/`, just unwired from every repo. The new files themselves, if you want
 them gone entirely: `~/.claude/hooks/clock-in-context.sh`, `owner-card.md`,
 `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,

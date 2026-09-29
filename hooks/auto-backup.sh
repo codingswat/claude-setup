@@ -29,6 +29,7 @@
 # Settings come from ~/.claude/hooks/backup.conf, written by install.sh:
 #   AUTHOR=your-handle <you@example.com>     # required
 #   MIRROR_DIR=/some/folder                  # optional; empty = skip step 2
+#   MIRROR_BRANCH=main                       # optional; the ONLY branch step 2 may push (default main)
 # No conf file means this hook is NOT configured, and it does nothing at all.
 # That is the safe default: an unconfigured backup hook must never guess at a
 # repo to push your config into.
@@ -39,10 +40,27 @@
 CLAUDE_DIR="$HOME/.claude"
 CONF="$CLAUDE_DIR/hooks/backup.conf"
 
-warn() { printf 'auto-backup hook: %s\n' "$1"; }
+# Every refusal or failure below is ALSO written to a pending-notice file, because a Stop hook's
+# stdout at exit 0 is not something the model or the person reads. The always-on
+# hooks/clock-in-context.sh prints that file at the next typed prompt and deletes it.
+# NOTICE FORMAT (one file per source, plain text, replaced on the next run's first notice):
+#   $STATE_CHECK_STATE_DIR/notices/auto-backup     (default ~/.claude/state/state-check/notices/)
+#   the file's whole content is the notice; the reader prints it under a "PENDING NOTICE" line.
+# Created private (umask 077: file 600, folder 700). Tests: hooks/test-hooks.sh "attack fixes (2)" B2/M6.
+NOTICE_DIR="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}/notices"
+NOTICE_FILE="$NOTICE_DIR/auto-backup"; NOTICE_STARTED=0
+note_pending() {
+  ( umask 077; mkdir -p "$NOTICE_DIR" 2>/dev/null
+    if [ "$NOTICE_STARTED" = 0 ]; then : > "$NOTICE_FILE"; fi
+    printf 'auto-backup hook: %s\n' "$1" >> "$NOTICE_FILE" ) 2>/dev/null
+  NOTICE_STARTED=1
+}
+warn() { printf 'auto-backup hook: %s\n' "$1"; note_pending "$1"; }
+# For messages that are routine and need nobody: a lock race, being offline.
+say_only() { printf 'auto-backup hook: %s\n' "$1"; }
 
 [ -f "$CONF" ] || exit 0
-AUTHOR=""; MIRROR_DIR=""
+AUTHOR=""; MIRROR_DIR=""; MIRROR_BRANCH=""
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ''|'#'*) continue ;; esac
   case "$line" in *=*) ;; *) continue ;; esac
@@ -51,6 +69,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$key" in
     AUTHOR)     AUTHOR="$val" ;;
     MIRROR_DIR) MIRROR_DIR="$val" ;;
+    MIRROR_BRANCH) MIRROR_BRANCH="$val" ;;
   esac
 done < "$CONF"
 if [ -z "$AUTHOR" ]; then
@@ -65,11 +84,13 @@ case "$MIRROR_DIR" in
 esac
 
 # Push. On failure, report — never merge the remote's version in.
-# $1 = human label for the repo, used in messages.
+# $1 = human label for the repo, used in messages. $2 (optional) = an explicit refspec, so
+# the mirror pushes ONLY its own commit to its own branch, never whatever is checked out.
 push_with_heal() {
-  git push -q 2>/dev/null && return 0
+  if [ -n "${2:-}" ]; then git push -q origin "$2" 2>/dev/null && return 0
+  else git push -q 2>/dev/null && return 0; fi
   if ! git fetch -q 2>/dev/null; then
-    warn "$1: commit saved locally but the remote is unreachable (offline?); will retry next turn"
+    say_only "$1: commit saved locally but the remote is unreachable (offline?); will retry next turn"
     return 1
   fi
   # Deliberately NOT auto-merging. This repo holds hooks and settings, so
@@ -203,7 +224,7 @@ if is_repo_root "$CLAUDE_DIR"; then
     if [ "$rc" = "0" ]; then
       push_with_heal "config backup repo"
     elif printf '%s' "$err" | grep -q 'index.lock'; then
-      warn "another session is backing up right now; this turn's changes go into that commit — nothing to do"
+      say_only "another session is backing up right now; this turn's changes go into that commit — nothing to do"
     else
       warn "the commit in ~/.claude failed and the config is NOT backed up. git said: $(printf '%s' "$err" | head -2 | tr '\n' ' '). Tell the user plainly."
     fi
@@ -229,6 +250,22 @@ fi
 if [ -z "$MIRROR_DIR" ]; then
   exit 0
 elif git -C "$MIRROR_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # The mirror often sits inside the person's own project repo. Commit and push there ONLY when
+  # that repo is on the expected branch (MIRROR_BRANCH, default main) and holds no commit of
+  # the person's own that is not yet on its upstream — otherwise a half-done feature branch, or
+  # an unreviewed local commit, would be pushed along with the copies. Anything else: touch
+  # nothing, leave a pending notice. Tests: hooks/test-hooks.sh "attack fixes (2)" B2.
+  mirror_want="${MIRROR_BRANCH:-main}"
+  mirror_cur="$(git -C "$MIRROR_DIR" symbolic-ref -q --short HEAD 2>/dev/null)"
+  mirror_ahead="$(git -C "$MIRROR_DIR" rev-list --count '@{u}..HEAD' 2>/dev/null)"
+  if [ "$mirror_cur" != "$mirror_want" ]; then
+    warn "mirror repo: NOT refreshed, nothing committed or pushed — $MIRROR_DIR is on '${mirror_cur:-a detached HEAD}', not '$mirror_want' (set MIRROR_BRANCH in backup.conf if the mirror lives on another branch). Tell the user."
+    exit 0
+  fi
+  if [ -n "$mirror_ahead" ] && [ "$mirror_ahead" -gt 0 ] 2>/dev/null; then
+    warn "mirror repo: NOT refreshed, nothing committed or pushed — it has $mirror_ahead commit(s) of yours not yet pushed to its upstream, and the backup must not push those. Push or drop them, then the copies refresh. Tell the user."
+    exit 0
+  fi
   cp "$CLAUDE_DIR/CLAUDE.md"             "$MIRROR_DIR/global-copy.md"       2>/dev/null
   cp "$CLAUDE_DIR/hooks/check-claude-md.sh" "$MIRROR_DIR/hook-copy.sh"      2>/dev/null
   cp "$CLAUDE_DIR/settings.json"         "$MIRROR_DIR/settings-copy.json"   2>/dev/null
@@ -249,7 +286,7 @@ elif git -C "$MIRROR_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # whose message names only these four files — and then pushed.
     if git commit -q -m "auto-refresh copies: ${files:-readable copies}" --author="$AUTHOR" \
          -- global-copy.md hook-copy.sh settings-copy.json auto-backup-copy.sh; then
-      push_with_heal "mirror repo"
+      push_with_heal "mirror repo" "HEAD:refs/heads/$mirror_want"
     else
       warn "commit of readable copies failed — refresh manually per rule 11"
     fi

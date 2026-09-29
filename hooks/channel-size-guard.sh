@@ -5,8 +5,8 @@
 # stop — checked live, on every edit, not only at commit time. Shrinking edits (a sweep)
 # always pass, even over the hard stop. It prints NOTHING while an edit is allowed: stderr on
 # an exit-0 hook is not something the model reads, so a "you are over the band" note went
-# nowhere (refresh 2026-09-29 A29; the same is likely true of channel-size-post.sh's warning,
-# which is left as it was — see hooks/channel-size-post.sh). The conf's `band` column is
+# nowhere (refresh 2026-09-29 A29; channel-size-post.sh's warning therefore exits 2 with its
+# reason on stderr, which Claude Code shows the model after the tool has run). The conf's `band` column is
 # still the SWEEP-DOWN TARGET the post hook's message names, and an edit that ends at or
 # under the band always passes.
 #
@@ -51,7 +51,13 @@
 # without one it derives a generous byte bound from the words/lines stop); a relative Bash path is resolved against the hook JSON's `.cwd` when given, and
 # left unchecked (noted, not refused) when `.cwd` is absent, rather than refused on a guess;
 # the basename compare is case-insensitive.
+# Cost: a Bash command is judged once, not once per line — a command that names no watched file
+# is let through after ONE grep, and a segment with no `>` or `tee` is skipped without spawning
+# anything (a 1,500-line heredoc used to cost minutes). Tests: "attack fixes (2)" M12.
+# Conf lines are split with globbing OFF (`set -f`): a pattern like `*/NOTES.md` must reach the
+# case-match below as text, never be expanded against the folder the hook runs in. Tests: M5.
 # Tests: hooks/test-hooks.sh (sections 22 and 29).
+set -f
 input="$(cat)"
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"
 CONF="$(dirname "$0")/channel-ceiling.conf"
@@ -157,6 +163,9 @@ case "$tool" in
     cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
     names="$(all_watched_basenames)"
     [ -z "$names" ] && exit 0
+    # One grep for the whole command: no watched name anywhere in it means nothing below can fire.
+    names_re="$(printf '%s' "$names" | sed 's/\./\\./g' | paste -sd'|' -)"
+    printf '%s' "$cmd" | grep -qiE "$names_re" || exit 0
     # judge <watched basename> <text that holds the target's name>: the target is the first
     # token whose BASENAME is the watched name (a whole name: not `proof-notes.md`, not
     # `NOTES.md.bak` — A27); resolved against the hook JSON's .cwd when relative; refused when
@@ -201,6 +210,8 @@ case "$tool" in
     segs="${cmd//&&/$'\n'}"; segs="${segs//||/$'\n'}"; segs="${segs//|/$'\n'}"; segs="${segs//;/$'\n'}"
     while IFS= read -r seg; do
       [ -z "$seg" ] && continue
+      # every growth form below needs a `>` or a `tee`; skip the rest with no process spawned
+      case "$seg" in *'>'*|*tee*) ;; *) continue ;; esac
       for b in $names; do
         bre="$(printf '%s' "$b" | sed 's/\./\\./g')"
         nb="(^|[^A-Za-z0-9_.-])${bre}([^A-Za-z0-9_.-]|\$)"

@@ -266,6 +266,24 @@ cic_backup_watchdog() {
 }
 [ "$typed_prompt" = 1 ] && cic_backup_watchdog
 
+# Pending notices: a Stop-time hook (the backup) cannot speak to the model or the person at exit 0,
+# so it leaves a small plain-text file in $STATE_CHECK_STATE_DIR/notices/ (default
+# ~/.claude/state/state-check/notices/) — format documented in hooks/auto-backup.sh, note_pending().
+# The next TYPED prompt prints each one (up to 2,000 bytes) and deletes it, so it is said exactly once.
+# Tests: hooks/test-hooks.sh "attack fixes (2)" M6.
+cic_pending_notices() {
+  local _nd="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}/notices" _f
+  [ -d "$_nd" ] && [ ! -L "$_nd" ] || return 0
+  for _f in "$_nd"/*; do
+    [ -f "$_f" ] && [ ! -L "$_f" ] || continue
+    printf 'PENDING NOTICE from a background hook (%s) — tell the user about it at the start of your reply:\n' "$(basename "$_f")"
+    head -c 2000 "$_f" 2>/dev/null
+    rm -f "$_f" 2>/dev/null
+  done
+  return 0
+}
+[ "$typed_prompt" = 1 ] && cic_pending_notices
+
 # Fullness note: the context is over CONTEXT_NOTE_K thousand tokens. Typed prompts only, never a
 # helper's own transcript. The re-read line needs BOTH you and the model idle CONTEXT_STALE_MIN
 # minutes: a chat that was working while you were silent has a warm cache.

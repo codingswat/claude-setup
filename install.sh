@@ -1,4 +1,8 @@
 #!/bin/bash
+# Run under real bash whatever the spelling (`sh install.sh` is bash in POSIX mode, which cannot
+# parse `< <(...)` further down, and `zsh install.sh` is not bash at all): re-run ourselves first,
+# before anything has been written. Tests: hooks/test-hooks.sh "attack fixes (2)" M16.
+[ -n "${BASH_VERSION:-}" ] && ! shopt -oq posix 2>/dev/null || exec /bin/bash "$0" "$@"
 # install.sh — set up this Claude Code configuration on your machine.
 #
 # What it touches (and nothing else):
@@ -350,6 +354,10 @@ register_hook() {   # event  command  timeout  statusMessage  [matcher]
         // repo, and renaming onto the LINK would replace it with a regular
         // file, silently detaching the real source of truth.
         try { p = fs.realpathSync(p); } catch(e) { /* file may not exist yet */ }
+        // A new file gets the umask mode; keep the mode of the original file (a 600 settings.json holding
+        // keys must not become 644) and never leave the temp file world-readable meanwhile.
+        process.umask(0o077);
+        let mode=0o644; try { mode=fs.statSync(p).mode & 0o7777; } catch(e) {}
         let s={}; const raw=fs.readFileSync(p,"utf8").trim();
         try{ s=raw?JSON.parse(raw):{}; }catch(e){ console.log("PARSE_FAIL"); process.exit(0); }
         if(s.hooks===undefined) s.hooks={};
@@ -368,6 +376,7 @@ register_hook() {   # event  command  timeout  statusMessage  [matcher]
           if(!changed){ console.log("ALREADY"); process.exit(0); }
           const tmp=p+".setup-tmp";
           fs.writeFileSync(tmp, JSON.stringify(s,null,2)+"\n");
+          fs.chmodSync(tmp, mode);
           fs.renameSync(tmp, p);
           console.log("UPDATED"); process.exit(0);
         }
@@ -383,6 +392,7 @@ register_hook() {   # event  command  timeout  statusMessage  [matcher]
         // original settings.json.
         const tmp=p+".setup-tmp";
         fs.writeFileSync(tmp, JSON.stringify(s,null,2)+"\n");
+        fs.chmodSync(tmp, mode);
         fs.renameSync(tmp, p);
         console.log("ADDED");
       ' "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" "$mt" 2>/dev/null) ;;
@@ -392,6 +402,10 @@ import json,os,sys
 p,ev,cmd,to,sm,mt = sys.argv[1:7]
 # Resolve first — see the note in the node branch above.
 p = os.path.realpath(p)
+# Keep the original's file mode (a 600 settings.json stays 600); the temp file is private meanwhile.
+os.umask(0o077)
+try: mode = os.stat(p).st_mode & 0o7777
+except OSError: mode = 0o644
 try:
     raw=open(p).read().strip()
     s=json.loads(raw) if raw else {}
@@ -421,6 +435,7 @@ if dup:
         print("ALREADY"); sys.exit(0)
     tmp = p + ".setup-tmp"
     with open(tmp,"w") as fh: fh.write(json.dumps(s,indent=2)+"\n")
+    os.chmod(tmp, mode)
     os.replace(tmp, p)
     print("UPDATED"); sys.exit(0)
 if os.environ.get("SETUP_ONLY_EXISTING"):
@@ -434,6 +449,7 @@ s["hooks"][ev].append(grp)
 # Atomic: write beside the target, then rename over it.
 tmp = p + ".setup-tmp"
 with open(tmp,"w") as fh: fh.write(json.dumps(s,indent=2)+"\n")
+os.chmod(tmp, mode)
 os.replace(tmp, p)
 print("ADDED")
 PYEOF
@@ -774,10 +790,30 @@ say "  pre-commit, pre-merge-commit and pre-push (copied in step 1) run in EVERY
 say "  this machine."
 say "  The sharp edge: it REPLACES any hooks a repo already has in its own"
 say "  .git/hooks/ — those stop running the moment this is on."
+# A machine-wide hooks folder you already had (a company scanner, a pre-commit framework) would be
+# REPLACED by this. Save what is there first, so the undo below can put it back exactly.
+# The file holds the old value, or the word "unset" when there was none. A re-run never
+# overwrites it once git already points at ours. Tests: "attack fixes (2)" M8.
+PREV_HP_FILE="$DEST/.setup-prev-hookspath"
+PREV_HP="$(git config --global --get core.hooksPath 2>/dev/null)"
+if [ -n "$PREV_HP" ] && [ "$PREV_HP" != "$DEST/git-hooks" ]; then
+  say "  Note: git already has a global hooksPath: $PREV_HP"
+  say "  It stops running for every repo the moment this is on; it is saved to"
+  say "  ~/.claude/.setup-prev-hookspath and the undo line below puts it back."
+fi
 if ask "Set git's global core.hooksPath to ~/.claude/git-hooks?" "n"; then
+  if [ "$PREV_HP" != "$DEST/git-hooks" ] || [ ! -f "$PREV_HP_FILE" ]; then
+    if [ "$PREV_HP" = "$DEST/git-hooks" ]; then PREV_HP=""; fi
+    ( umask 077; printf '%s\n' "${PREV_HP:-unset}" > "$PREV_HP_FILE" ) 2>/dev/null
+  fi
   if git config --global core.hooksPath "$DEST/git-hooks"; then
     ok "Set — git now runs ~/.claude/git-hooks/* in every repository."
-    say  "     To undo: git config --global --unset core.hooksPath"
+    SAVED_HP="$(head -1 "$PREV_HP_FILE" 2>/dev/null)"
+    if [ -n "$SAVED_HP" ] && [ "$SAVED_HP" != "unset" ]; then
+      say  "     To undo: git config --global core.hooksPath $(printf '%q' "$SAVED_HP")"
+    else
+      say  "     To undo: git config --global --unset core.hooksPath"
+    fi
   else
     warn "Could not set it — run by hand:"
     say  "       git config --global core.hooksPath ~/.claude/git-hooks"

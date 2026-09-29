@@ -3149,5 +3149,234 @@ if [ "$RC_RC" = 0 ] && [ "${RC_F:-1}" = 0 ]; then ok; else bad "hooks/test-rules
 pass_n=$((pass_n+1))
 pass=$((pass + ${RC_P:-0})); fail=$((fail + ${RC_F:-0}))
 
+echo "attack fixes (2): installer, always-on session hooks, backup hook (refresh 2026-09-29, attack-B B2 M5 M6 M7 M8 M12 M13 M14 M16)"
+ATK="$T/atk2"; mkdir -p "$ATK"
+atk_mode() { python3 -c 'import os,sys;print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1" 2>/dev/null; }
+# ---- B2: the backup's mirror step commits and pushes only from the expected branch, with nothing unpushed of the person's ----
+b2_new() {   # name [conf-branch-line] -> prints the fixture home; the mirror is a plain SUBFOLDER of the project repo
+  local h="$ATK/$1"; mkdir -p "$h/.claude/hooks" "$h/state"
+  git init -q --bare -b main "$h/proj.git"; git init -q --bare -b main "$h/cfg.git"
+  git init -q -b main "$h/proj"; git -C "$h/proj" config core.hooksPath /dev/null
+  git -C "$h/proj" config user.name Tester; git -C "$h/proj" config user.email tester@example.com
+  git -C "$h/proj" remote add origin "$h/proj.git"; mkdir -p "$h/proj/docs/claude-copies"
+  echo seed > "$h/proj/README"; git -C "$h/proj" add -A; git -C "$h/proj" commit -q -m initial; git -C "$h/proj" push -q -u origin main
+  git -C "$h/.claude" init -q -b main; git -C "$h/.claude" config core.hooksPath /dev/null
+  git -C "$h/.claude" config user.name Tester; git -C "$h/.claude" config user.email tester@example.com
+  git -C "$h/.claude" remote add origin "$h/cfg.git"
+  cp "$HOOKS_DIR/check-claude-md.sh" "$HOOKS_DIR/auto-backup.sh" "$h/.claude/hooks/"; echo "rules" > "$h/.claude/CLAUDE.md"; echo '{"name":"clean"}' > "$h/.claude/settings.json"
+  printf 'AUTHOR=Tester <tester@example.com>\nMIRROR_DIR=%s\n%s\n' "$h/proj/docs/claude-copies" "${2:-}" > "$h/.claude/hooks/backup.conf"
+  git -C "$h/.claude" add -A; git -C "$h/.claude" commit -q -m seed; git -C "$h/.claude" push -q -u origin main
+  printf '%s' "$h"
+}
+b2_run() { env HOME="$1" STATE_CHECK_STATE_DIR="$1/state" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1; }
+b2_refreshes() { git --git-dir="$1/proj.git" log --all --format=%s 2>/dev/null | grep -c '^auto-refresh copies'; }
+b2_notice() { [ -s "$1/state/notices/auto-backup" ] && grep -qi 'mirror' "$1/state/notices/auto-backup"; }
+B2A="$(b2_new feat)"
+git -C "$B2A/proj" checkout -q -b feature/half-done; echo a > "$B2A/proj/w1"; git -C "$B2A/proj" add -A; git -C "$B2A/proj" commit -q -m "WIP: half-done"
+git -C "$B2A/proj" push -q -u origin feature/half-done
+echo b > "$B2A/proj/w2"; git -C "$B2A/proj" add -A; git -C "$B2A/proj" commit -q -m "WIP 2: do not push yet"
+b2a_head="$(git -C "$B2A/proj" rev-parse HEAD)"; b2a_remote="$(git --git-dir="$B2A/proj.git" rev-parse feature/half-done)"
+b2_run "$B2A"
+if [ "$(b2_refreshes "$B2A")" = 0 ] && [ "$(git -C "$B2A/proj" rev-parse HEAD)" = "$b2a_head" ] && [ "$(git --git-dir="$B2A/proj.git" rev-parse feature/half-done)" = "$b2a_remote" ]; then ok; else bad "B2: a mirror inside the person's repo on a feature branch with an unpushed commit must get NO commit and NO push"; fi
+refuse_n=$((refuse_n+1))
+if b2_notice "$B2A"; then ok; else bad "B2: the skipped mirror must leave a pending notice naming the mirror"; fi
+refuse_n=$((refuse_n+1))
+B2B="$(b2_new ahead)"
+echo b > "$B2B/proj/w2"; git -C "$B2B/proj" add -A; git -C "$B2B/proj" commit -q -m "WIP 2: do not push yet"
+b2b_remote="$(git --git-dir="$B2B/proj.git" rev-parse main)"
+b2_run "$B2B"
+if [ "$(b2_refreshes "$B2B")" = 0 ] && [ "$(git --git-dir="$B2B/proj.git" rev-parse main)" = "$b2b_remote" ]; then ok; else bad "B2: the expected branch with a local commit ahead of its upstream must not be pushed"; fi
+refuse_n=$((refuse_n+1))
+B2C="$(b2_new good)"
+b2_run "$B2C"
+if [ "$(b2_refreshes "$B2C")" = 1 ] && git --git-dir="$B2C/proj.git" log main --format=%s | head -1 | grep -q '^auto-refresh copies'; then ok; else bad "B2 control: a mirror on main, in step with its upstream, must still be committed and pushed to main"; fi
+pass_n=$((pass_n+1))
+if [ ! -e "$B2C/state/notices/auto-backup" ]; then ok; else bad "B2 control: a clean mirror refresh must leave no notice"; fi
+pass_n=$((pass_n+1))
+B2D="$(b2_new trunk MIRROR_BRANCH=trunk)"
+git -C "$B2D/proj" branch -q -m main trunk; git -C "$B2D/proj" push -q -u origin trunk
+b2_run "$B2D"
+if [ "$(git --git-dir="$B2D/proj.git" log trunk --format=%s | head -1 | grep -c '^auto-refresh copies')" = 1 ]; then ok; else bad "B2: MIRROR_BRANCH=trunk in the conf must be honoured for a mirror on trunk"; fi
+pass_n=$((pass_n+1))
+B2E="$(b2_new wrongbr)"
+git -C "$B2E/proj" branch -q -m main trunk; git -C "$B2E/proj" push -q -u origin trunk
+b2_run "$B2E"
+if [ "$(b2_refreshes "$B2E")" = 0 ]; then ok; else bad "B2: with no MIRROR_BRANCH (default main) a mirror on trunk must be skipped"; fi
+refuse_n=$((refuse_n+1))
+
+# ---- M6: every promised warning reaches someone ----
+# post hook: exit 2 + reason on stderr (the tool already ran, nothing is undone)
+M6D="$ATK/m6post"; mkdir -p "$M6D"; cp "$HOOKS_DIR/channel-size-post.sh" "$M6D/"
+printf 'LIMIT=100\nNOTES.md words 5 10\n' > "$M6D/channel-ceiling.conf"
+python3 -c "print(' '.join(['w']*16))" > "$M6D/NOTES.md"
+INPUT="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":"x"}}))' "$M6D/NOTES.md")"
+expect refuse 2 "M6: the size post hook must exit 2 (reason on stderr) when the file is over its hard stop" bash "$M6D/channel-size-post.sh"
+m6err="$(printf '%s' "$INPUT" | bash "$M6D/channel-size-post.sh" 2>&1 >/dev/null)"
+if printf '%s' "$m6err" | grep -q 'HARD STOP'; then ok; else bad "M6: the post hook's reason must be on stderr"; fi
+refuse_n=$((refuse_n+1))
+python3 -c "print(' '.join(['w']*8))" > "$M6D/NOTES.md"
+expect pass 0 "M6 control: a file over the band but under the hard stop stays silent, exit 0" bash "$M6D/channel-size-post.sh"
+# the notice file: printed and deleted by the always-on clock hook at the next TYPED prompt
+M6N="$ATK/m6notice"; mkdir -p "$M6N/state/notices" "$M6N/.claude"
+notice_run() { printf '{"session_id":"s","hook_event_name":"%s","prompt":"hello there"}' "$1" | env HOME="$M6N" STATE_CHECK_STATE_DIR="$M6N/state" bash "$HOOKS_DIR/clock-in-context.sh" 2>/dev/null; }
+printf 'auto-backup: the mirror was skipped, tell the user (marker-m6)\n' > "$M6N/state/notices/auto-backup"
+out="$(notice_run SessionStart)"
+if ! printf '%s' "$out" | grep -q 'marker-m6' && [ -e "$M6N/state/notices/auto-backup" ]; then ok; else bad "M6 control: a SessionStart is not a typed prompt - the notice must wait"; fi
+pass_n=$((pass_n+1))
+out="$(notice_run UserPromptSubmit)"
+if printf '%s' "$out" | grep -q 'marker-m6'; then ok; else bad "M6: a typed prompt must print the pending notice"; fi
+refuse_n=$((refuse_n+1))
+if [ ! -e "$M6N/state/notices/auto-backup" ]; then ok; else bad "M6: the notice must be deleted once printed"; fi
+refuse_n=$((refuse_n+1))
+out="$(notice_run UserPromptSubmit)"
+if ! printf '%s' "$out" | grep -q 'marker-m6'; then ok; else bad "M6 control: the notice must print only once"; fi
+pass_n=$((pass_n+1))
+# a backup refusal (a secret in the config) leaves a notice, private mode; a clean run leaves none
+M6B="$(b2_new secnote)"
+printf 'k=%s\n' "gh""p_$(printf 'a%.0s' {1..30})" > "$M6B/.claude/leaked.txt"
+b2_run "$M6B"
+if [ -s "$M6B/state/notices/auto-backup" ] && grep -q 'leaked.txt' "$M6B/state/notices/auto-backup"; then ok; else bad "M6: a backup refusal over a secret must leave a pending notice naming the file"; fi
+refuse_n=$((refuse_n+1))
+if [ "$(atk_mode "$M6B/state/notices/auto-backup")" = 600 ] && [ "$(atk_mode "$M6B/state/notices")" = 700 ]; then ok; else bad "M6/M7: the notice file must be created private (600) in a private folder (700)"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$M6B/.claude/leaked.txt"; rm -f "$M6B/state/notices/auto-backup"; b2_run "$M6B"
+if [ ! -e "$M6B/state/notices/auto-backup" ]; then ok; else bad "M6 control: a clean backup run leaves no notice"; fi
+pass_n=$((pass_n+1))
+
+# ---- M5: a conf line's pattern is never glob-expanded against the folder the hook runs in ----
+M5D="$ATK/m5"; mkdir -p "$M5D/hooks" "$M5D/proj/docs" "$M5D/proj/plans"
+cp "$HOOKS_DIR/channel-size-guard.sh" "$HOOKS_DIR/channel-size-post.sh" "$M5D/hooks/"
+printf 'LIMIT=100\n*/NOTES.md words 5 10\n' > "$M5D/hooks/channel-ceiling.conf"
+python3 -c "print(' '.join(['w']*16))" > "$M5D/proj/docs/NOTES.md"; python3 -c "print(' '.join(['w']*16))" > "$M5D/proj/plans/NOTES.md"
+m5run() { ( cd "$M5D/proj" && printf '%s' "$2" | bash "$M5D/hooks/$1" >/dev/null 2>&1 ); echo $?; }
+m5cmd="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":"echo more >> plans/NOTES.md"},"cwd":sys.argv[1]}))' "$M5D/proj")"
+if [ "$(m5run channel-size-guard.sh "$m5cmd")" = 2 ]; then ok; else bad "M5: with */NOTES.md in the conf and two matching folders, an append to an over-stop NOTES.md must be refused from the project folder"; fi
+refuse_n=$((refuse_n+1))
+m5w="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1]+"/plans/NOTES.md","old_string":"w","new_string":"w w w"}}))' "$M5D/proj")"
+if [ "$(m5run channel-size-guard.sh "$m5w")" = 2 ]; then ok; else bad "M5: a growing Edit of plans/NOTES.md over its stop must be refused from the project folder"; fi
+refuse_n=$((refuse_n+1))
+m5p="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1]+"/plans/NOTES.md","content":"x"}}))' "$M5D/proj")"
+if [ "$(m5run channel-size-post.sh "$m5p")" = 2 ]; then ok; else bad "M5: the post hook must warn about an over-stop NOTES.md from the project folder too"; fi
+refuse_n=$((refuse_n+1))
+python3 -c "print(' '.join(['w']*4))" > "$M5D/proj/plans/NOTES.md"
+if [ "$(m5run channel-size-guard.sh "$m5cmd")" = 0 ]; then ok; else bad "M5 control: an append to a small NOTES.md must pass from the project folder"; fi
+pass_n=$((pass_n+1))
+
+# ---- M12: the size guard parses a long command once, not once per line ----
+M12D="$ATK/m12"; mkdir -p "$M12D/hooks" "$M12D/proj"; cp "$HOOKS_DIR/channel-size-guard.sh" "$M12D/hooks/"
+printf 'LIMIT=100\nNOTES.md words 5 10\nMISTAKES.md lines 5 10\nDECISIONS.md words 5 10\n' > "$M12D/hooks/channel-ceiling.conf"
+python3 -c "print(' '.join(['w']*16))" > "$M12D/proj/NOTES.md"
+m12_cmd() { python3 - "$1" "$2" <<'PY'
+import sys
+n=int(sys.argv[1]); tail=sys.argv[2]
+lines=["cat > big.txt <<'EOF'"]+["line %d of an ordinary heredoc body, some words here" % i for i in range(n)]+["EOF"]
+if tail: lines.append(tail)
+print("\n".join(lines))
+PY
+}
+m12_json() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$1" "$2"; }
+m12_json "$(m12_cmd 1500 '')" "$M12D/proj" > "$M12D/plain.json"
+m12_json "$(m12_cmd 1500 'echo more >> NOTES.md')" "$M12D/proj" > "$M12D/tail.json"
+m12_t0=$SECONDS; ( cd "$M12D/proj" && bash "$M12D/hooks/channel-size-guard.sh" < "$M12D/plain.json" >/dev/null 2>&1 ); m12_rc=$?; m12_dt=$((SECONDS - m12_t0))
+if [ "$m12_rc" = 0 ] && [ "$m12_dt" -lt 8 ]; then ok; else bad "M12: a 1,500-line heredoc naming no watched file must be judged in under 8 s (rc=$m12_rc, took ${m12_dt}s)"; fi
+refuse_n=$((refuse_n+1))
+( cd "$M12D/proj" && bash "$M12D/hooks/channel-size-guard.sh" < "$M12D/tail.json" >/dev/null 2>&1 ); m12_rc=$?
+if [ "$m12_rc" = 2 ]; then ok; else bad "M12 control: a long command that ENDS with an append to an over-stop NOTES.md must still be refused (rc=$m12_rc)"; fi
+refuse_n=$((refuse_n+1))
+m12_json "$(m12_cmd 300 'echo more >> other.md')" "$M12D/proj" > "$M12D/other.json"
+( cd "$M12D/proj" && bash "$M12D/hooks/channel-size-guard.sh" < "$M12D/other.json" >/dev/null 2>&1 ); m12_rc=$?
+if [ "$m12_rc" = 0 ]; then ok; else bad "M12 control: a long command appending to an unwatched file must pass (rc=$m12_rc)"; fi
+pass_n=$((pass_n+1))
+
+# ---- M13: <project>/.claude/CLAUDE.md is the project's rules file ----
+M13H="$ATK/m13"; mkdir -p "$M13H/.claude/hooks" "$M13H/projects/with-dot-claude/.claude" "$M13H/projects/bare" "$M13H/projects/plain"
+cp "$HOOKS_DIR"/*.md "$M13H/.claude/hooks/" 2>/dev/null;
+[ -s "$M13H/.claude/hooks/interview.md" ] || echo "Interview marker m13" > "$M13H/.claude/hooks/interview.md"
+printf '## PROCESS RULES (enforced)\n1. x\n' > "$M13H/.claude/CLAUDE.md"; printf '%s\n' "$M13H/projects" > "$M13H/.claude/hooks/project-roots.conf"
+echo rules > "$M13H/projects/with-dot-claude/.claude/CLAUDE.md"; echo rules > "$M13H/projects/plain/CLAUDE.md"
+m13() { printf '{"cwd":"%s","hook_event_name":"SessionStart"}' "$1" | env HOME="$M13H" bash "$HOOKS_DIR/check-claude-md.sh" 2>/dev/null | grep -c 'has no CLAUDE.md yet'; }
+if [ "$(m13 "$M13H/projects/with-dot-claude")" = 0 ]; then ok; else bad "M13: a project whose rules live in .claude/CLAUDE.md must NOT get the new-project interview"; fi
+refuse_n=$((refuse_n+1))
+if [ "$(m13 "$M13H/projects/plain")" = 0 ]; then ok; else bad "M13 control: a project with ./CLAUDE.md gets no interview"; fi
+pass_n=$((pass_n+1))
+if [ "$(m13 "$M13H/projects/bare")" = 1 ]; then ok; else bad "M13 control: a project with no rules file at all still gets the interview"; fi
+pass_n=$((pass_n+1))
+
+# ---- M14: the backup allowlist leaves memory notes out; INSTALL.md says why ----
+M14R="$ATK/m14"; mkdir -p "$M14R/projects/-x-y/memory" "$M14R/skills/s"; git init -q "$M14R"; cp "$HOOKS_DIR/dot-claude.gitignore" "$M14R/.gitignore"
+echo n > "$M14R/projects/-x-y/memory/note.md"; echo n > "$M14R/projects/-x-y/session.jsonl"; echo n > "$M14R/skills/s/SKILL.md"
+if git -C "$M14R" check-ignore -q projects/-x-y/memory/note.md; then ok; else bad "M14: a memory note under projects/ must stay OUT of the backup allowlist"; fi
+refuse_n=$((refuse_n+1))
+if git -C "$M14R" check-ignore -q projects/-x-y/session.jsonl; then ok; else bad "M14: a session transcript stays out of the allowlist"; fi
+refuse_n=$((refuse_n+1))
+if ! git -C "$M14R" check-ignore -q skills/s/SKILL.md; then ok; else bad "M14 control: skills/ stays in the allowlist"; fi
+pass_n=$((pass_n+1))
+if grep -qiE 'memory' "$REPOD2/INSTALL.md" && grep -iE 'memory' "$REPOD2/INSTALL.md" | grep -qiE 'home path|folder names'; then ok; else bad "M14: INSTALL.md must say in one line why memory notes are left out of the backup"; fi
+refuse_n=$((refuse_n+1))
+
+# ---- M7: an existing settings.json keeps its file mode through the merge ----
+for m7tool in node python3; do
+  M7H="$ATK/m7-$m7tool"; mkdir -p "$M7H/.claude"; printf '{"env":{"K":"v"}}\n' > "$M7H/.claude/settings.json"; chmod 600 "$M7H/.claude/settings.json"
+  if [ "$m7tool" = python3 ]; then env HOME="$M7H" INSTALL_PRETEND_MISSING=node bash "$REPOD2/install.sh" --yes >/dev/null 2>&1; else env HOME="$M7H" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1; fi
+  if [ "$(atk_mode "$M7H/.claude/settings.json")" = 600 ] && [ "$(d2_count "$M7H/.claude/settings.json" SessionStart)" -ge 1 ]; then ok; else bad "M7: a 600 settings.json must stay 600 after the merge ($m7tool merge; got $(atk_mode "$M7H/.claude/settings.json"))"; fi
+  refuse_n=$((refuse_n+1))
+done
+M7C="$ATK/m7-644"; mkdir -p "$M7C/.claude"; printf '{}\n' > "$M7C/.claude/settings.json"; chmod 644 "$M7C/.claude/settings.json"
+env HOME="$M7C" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1
+if [ "$(atk_mode "$M7C/.claude/settings.json")" = 644 ]; then ok; else bad "M7 control: a 644 settings.json stays 644"; fi
+pass_n=$((pass_n+1))
+
+# ---- M8: the installer saves an existing global core.hooksPath and the printed undo restores exactly it ----
+m8_run() { local h="$1"; env HOME="$h" python3 - "$h" "$REPOD2/install.sh" "$2" <<'PY'
+import os,pty,sys,select,re
+home,script,outp=sys.argv[1:4]
+pid,fd=pty.fork()
+if pid==0:
+    os.environ["HOME"]=home
+    os.execvp("bash",["bash",script])
+buf=b""; answered=0
+while True:
+    r,_,_=select.select([fd],[],[],0.5)
+    if r:
+        try: d=os.read(fd,4096)
+        except OSError: break
+        if not d: break
+        buf+=d
+    elif len(buf)>answered:
+        tail=buf[-400:].decode("utf8","ignore")
+        if re.search(r"(\] |: |\? )$",tail):
+            os.write(fd,b"y\n" if tail.rstrip().endswith("[y/N]") and "core.hooksPath" in tail else b"\n"); answered=len(buf)
+open(outp,"wb").write(buf)
+_,st=os.waitpid(pid,0); sys.exit(os.waitstatus_to_exitcode(st))
+PY
+}
+M8A="$ATK/m8a"; mkdir -p "$M8A/company hooks"; env HOME="$M8A" git config --global core.hooksPath "$M8A/company hooks"
+m8_run "$M8A" "$ATK/m8a.out" >/dev/null 2>&1
+if [ "$(env HOME="$M8A" git config --global core.hooksPath)" = "$M8A/.claude/git-hooks" ]; then ok; else bad "M8 setup: the pty run must have answered yes to the hooksPath step"; fi
+refuse_n=$((refuse_n+1))
+if [ "$(cat "$M8A/.claude/.setup-prev-hookspath" 2>/dev/null)" = "$M8A/company hooks" ]; then ok; else bad "M8: the previous core.hooksPath must be saved under ~/.claude before it is replaced"; fi
+refuse_n=$((refuse_n+1))
+m8_undo="$(grep 'To undo:' "$ATK/m8a.out" | tail -1 | sed 's/^.*To undo: //' | tr -d '\r')"
+( env HOME="$M8A" bash -c "$m8_undo" >/dev/null 2>&1 )
+if [ "$(env HOME="$M8A" git config --global core.hooksPath)" = "$M8A/company hooks" ]; then ok; else bad "M8: the printed undo line must restore the previous value exactly (line was: $m8_undo)"; fi
+refuse_n=$((refuse_n+1))
+M8B="$ATK/m8b"; mkdir -p "$M8B"
+m8_run "$M8B" "$ATK/m8b.out" >/dev/null 2>&1
+m8_undo="$(grep 'To undo:' "$ATK/m8b.out" | tail -1 | sed 's/^.*To undo: //' | tr -d '\r')"
+( env HOME="$M8B" bash -c "$m8_undo" >/dev/null 2>&1 )
+if [ "$(cat "$M8B/.claude/.setup-prev-hookspath" 2>/dev/null)" = unset ] && ! env HOME="$M8B" git config --global core.hooksPath >/dev/null 2>&1; then ok; else bad "M8 control: with no previous value the saved file says unset and the undo unsets"; fi
+pass_n=$((pass_n+1))
+
+# ---- M16: `sh install.sh` re-runs itself under bash instead of dying half-way ----
+M16H="$ATK/m16"; mkdir -p "$M16H"
+env HOME="$M16H" sh "$REPOD2/install.sh" --yes >/dev/null 2>&1; m16rc=$?
+if [ "$m16rc" = 0 ] && [ "$(d2_count "$M16H/.claude/settings.json" SessionStart)" -ge 1 ]; then ok; else bad "M16: sh install.sh --yes must finish (rc=$m16rc) with the hooks registered"; fi
+refuse_n=$((refuse_n+1))
+if command -v zsh >/dev/null 2>&1; then
+  M16Z="$ATK/m16z"; mkdir -p "$M16Z"; env HOME="$M16Z" zsh "$REPOD2/install.sh" --yes >/dev/null 2>&1; m16rc=$?
+  if [ "$m16rc" = 0 ] && [ "$(d2_count "$M16Z/.claude/settings.json" SessionStart)" -ge 1 ]; then ok; else bad "M16: zsh install.sh --yes must finish (rc=$m16rc) with the hooks registered"; fi
+  refuse_n=$((refuse_n+1))
+fi
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
