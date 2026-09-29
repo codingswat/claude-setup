@@ -18,7 +18,10 @@
 # files. <floor-in-thousands-of-tokens> is when stop-state-check.sh marks that session
 # "retired": its context at or over this many thousand tokens. Pick a number well under
 # your model's real context window, so a session still has room to write its state file and
-# hand off cleanly before it runs out.
+# hand off cleanly before it runs out. The same number is doorman.sh's cut-off: a typed prompt sent to
+# a chat whose context is at or over it is held (saved, refused once with "don't retype: your next
+# message carries this one"), and the next typed message passes and carries the held text. Unknown
+# context (a compaction, an unreadable transcript) never holds. There is no separate cut-off key.
 #
 # A folder whose name matches no line here is untouched by either guard. The name matched is the
 # git TOPLEVEL folder's (a chat opened in a subfolder of a seat's worktree matches the same line),

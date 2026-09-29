@@ -861,13 +861,13 @@ outss4="$(ssc_json "$scr2" sidNC false "" | bash "$SCD2/stop-state-check.sh")"
 if [ -z "$outss4" ]; then ok; else bad "stop-state-check.sh: no conf file must be INERT (no block); got '$outss4'"; fi
 pass_n=$((pass_n+1))
 
-echo "26 hooks/doorman.sh: refuses a RETIRED session and a genuinely idle+heavy one; passes a fresh one"
-DCD="$T/doorman-conf"; mkdir -p "$DCD"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCD/"
+echo "26 hooks/doorman.sh: refuses a RETIRED session (marker with its companion); passes a fresh one"
+DCD="$T/doorman-conf"; mkdir -p "$DCD"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$DCD/"
 printf 'myapp-dev*  dev  850\n' > "$DCD/state-check.conf"
 dm="$T/myapp-dev3"; mkdir -p "$dm"
 dj() { python3 -c 'import json,sys;print(json.dumps({"cwd":sys.argv[1],"session_id":sys.argv[2],"prompt":sys.argv[3],"transcript_path":sys.argv[4]}))' "$1" "$2" "$3" "$4"; }
 
-mkdir -p "$T/doorman-state/retired"; echo "2026-01-01 00:00 dev 900k" > "$T/doorman-state/retired/sidDM-A"
+mkdir -p "$T/doorman-state/retired" "$T/doorman-state/retired-compacts"; echo "2026-01-01 00:00 dev 900k" > "$T/doorman-state/retired/sidDM-A"; echo 0 > "$T/doorman-state/retired-compacts/sidDM-A"
 dj "$dm" sidDM-A hello "" | STATE_CHECK_STATE_DIR="$T/doorman-state" bash "$DCD/doorman.sh" >/dev/null 2>&1
 rcA=$?
 if [ "$rcA" = 2 ]; then ok; else bad "doorman.sh: a session already marked RETIRED must be REFUSED (exit 2), got $rcA"; fi
@@ -878,7 +878,7 @@ rcB=$?
 if [ "$rcB" = 0 ]; then ok; else bad "doorman.sh: a fresh session with no transcript must PASS (fail open), got $rcB"; fi
 pass_n=$((pass_n+1))
 
-echo "26b hooks/doorman.sh: 'idle' means the SESSION stopped working, never that the owner was merely silent"
+echo "26b hooks/doorman.sh: idle time never holds (the hold is the context cut-off only; c2b A52)"
 T0E=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('2026-01-01T00:00:00','%Y-%m-%dT%H:%M:%S')))")
 NOWE=$((T0E + 70*60))
 NOWT=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime($NOWE)))")
@@ -903,11 +903,11 @@ cat > "$TPD" <<EOF
 EOF
 dj "$dm" sidDM-D "current prompt" "$TPD" | STATE_CHECK_STATE_DIR="$T/doorman-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD/doorman.sh" >/dev/null 2>&1
 rcD=$?
-if [ "$rcD" = 2 ]; then ok; else bad "doorman.sh: BOTH sides quiet 70min with high context must REFUSE (genuinely idle), got $rcD"; fi
-refuse_n=$((refuse_n+1))
+if [ "$rcD" = 0 ]; then ok; else bad "doorman.sh: BOTH sides quiet 70min with high context (under the floor) must PASS: idle no longer holds (A52), got $rcD"; fi
+pass_n=$((pass_n+1))
 
 echo "26c hooks/doorman.sh: no hooks/state-check.conf at all is INERT"
-DCD2="$T/doorman-noconf"; mkdir -p "$DCD2"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCD2/"
+DCD2="$T/doorman-noconf"; mkdir -p "$DCD2"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$DCD2/"
 dj "$dm" sidDM-E hello "" | bash "$DCD2/doorman.sh" >/dev/null 2>&1
 rcE=$?
 if [ "$rcE" = 0 ]; then ok; else bad "doorman.sh: no conf file must be INERT (always pass), got $rcE"; fi
@@ -1269,7 +1269,7 @@ ssc_json "$sr29" "" false "$TP29" | STATE_CHECK_STATE_DIR="$S29" bash "$SCD29/st
 n29ret="$(ls "$S29/retired" 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$n29ret" = "0" ]; then ok; else bad "M14 pair: with no session id no retirement marker may be written (got $n29ret)"; fi
 pass_n=$((pass_n+1))
-DCDS="$T/doorman-snap-conf"; mkdir -p "$DCDS"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCDS/"
+DCDS="$T/doorman-snap-conf"; mkdir -p "$DCDS"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$DCDS/"
 printf 'myapp-dev*  dev  850\n' > "$DCDS/state-check.conf"
 rm -rf "$S29/turnsnap"
 dj "$sr29" sid29g "hello" "" | STATE_CHECK_STATE_DIR="$S29" bash "$DCDS/doorman.sh" >/dev/null 2>&1
@@ -1289,7 +1289,7 @@ if env HOME="$FAKE_HOME" "${ID[@]}" git -C "$rn29" commit -q -m t >/dev/null 2>&
 pass_n=$((pass_n+1))
 
 # --- M13 doorman: a tool result is activity; an undated user/assistant line fails OPEN --
-DCD29="$T/doorman29"; mkdir -p "$DCD29"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh"  "$DCD29/"
+DCD29="$T/doorman29"; mkdir -p "$DCD29"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$DCD29/"
 printf 'myapp-dev*  dev  850\n' > "$DCD29/state-check.conf"
 dm29="$T/myapp-dev30"; mkdir -p "$dm29"
 TOOLT29=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime($NOWE - 2*60)))")
@@ -1313,8 +1313,8 @@ cat > "$TPF" <<EOF
 EOF
 dj "$dm29" sidDM29B "current prompt" "$TPF" | STATE_CHECK_STATE_DIR="$T/doorman29-state" DOORMAN_NOW="$NOWE" DOORMAN_IDLE_MIN=10 DOORMAN_CTX_K=5 bash "$DCD29/doorman.sh" >/dev/null 2>&1
 rc29b=$?
-if [ "$rc29b" = 2 ]; then ok; else bad "M13 pair: the newest tool result 70 min old must still REFUSE (got $rc29b)"; fi
-refuse_n=$((refuse_n+1))
+if [ "$rc29b" = 0 ]; then ok; else bad "M13 pair: the newest tool result 70 min old no longer holds either (A52; got $rc29b)"; fi
+pass_n=$((pass_n+1))
 TPG="$T/doorman-tp-g.jsonl"
 cat > "$TPG" <<EOF
 {"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
@@ -2261,7 +2261,7 @@ INPUT="$(jb2 "sed -i '' '5,\$d' NOTES.md" "$CSF/r")"; expect pass 0 "A26 deferre
 
 echo "refresh 2026-09-29 (c2a): opt-in multi-chat group, the end-of-turn check and its prompt-time helpers (A03 A04 A40 A41 A42 A43 A44 A45 A46 A47 A48 A69 A70 A71)"
 C2="$T/c2a"; HK="$C2/hk"; mkdir -p "$HK"
-cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HK/"
+cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$HK/"
 # The role names below are plain words plus digits built into FOLDER names at run time.
 c2_conf() { local l; { printf 'STATE_FILE state/{role}.md\n'; for l in "$@"; do printf '%s\n' "$l"; done; } > "$HK/state-check.conf"; }
 c2_repo() {   # <dir> [role]: a git repo with a filled state file state/<role>.md, a README, a file two folders down
@@ -2521,13 +2521,13 @@ c2_stop "$R" h9 false "$C2/tp-noprompt"
 c2_chk pass "A44 pair: no human/peer prompt line to anchor the turn: no tell" test ! -e "$S/tell/h9"
 
 echo "  A69 the tell's reader half and the turn-start size: the prompt hook shows the tell once, only on a passing prompt"
-R="$C2/myapp-dev11"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a69"; mkdir -p "$S/tell" "$S/retired"
+R="$C2/myapp-dev11"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a69"; mkdir -p "$S/tell" "$S/retired" "$S/retired-compacts"
 echo 41 > "$S/tell/p1"; c2_prompt "$R" p1
 c2_chk refuse "A69 a passing prompt shows the tell (stdout, with the number)" has 'context by 41k' "$C2/pout"
 c2_chk refuse "A69 ... and deletes it" test ! -e "$S/tell/p1"
 c2_prompt "$R" p1
 c2_chk pass "A69 pair: the next prompt shows nothing" nothas 'helper tell' "$C2/pout"
-echo 42 > "$S/tell/p2"; echo "2026-01-01 00:00 dev 900k" > "$S/retired/p2"; c2_prompt "$R" p2
+echo 42 > "$S/tell/p2"; echo "2026-01-01 00:00 dev 900k" > "$S/retired/p2"; echo 0 > "$S/retired-compacts/p2"; c2_prompt "$R" p2
 c2_chk refuse "A69 a HELD prompt (retired session, exit 2) does not show the tell" bash -c "[ $C2_PRC = 2 ] && ! grep -q 'helper tell' '$C2/pout'"
 c2_chk refuse "A69 ... and leaves it for the next prompt that passes" test -f "$S/tell/p2"
 rm -f "$S/retired/p2"; c2_prompt "$R" p2
@@ -2589,6 +2589,224 @@ rm -f "$WS/wrapup-fired/c1s"; echo 600 > "$WS/wrapup-fired/c1s"
 c1_quiet "A70 pair: a machine prompt gets neither line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '<task-notification>x</task-notification>')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up'
 c1_quiet "A70 pair: a helper's own transcript gets neither line" "$(c1_run "$(c1_in UserPromptSubmit "$C1/subagents/agent-1.jsonl" 'go on')" STATE_CHECK_STATE_DIR="$WS")" 'wrapping up'
 echo "keep" > "$SENT"
+
+echo "refresh 2026-09-29 (c2b): opt-in doorman, the hold, delivery and compaction (A52 A53 A54 A55 A56 A57 A58 A59)"
+C3="$T/c2b"; HK3="$C3/hk"; mkdir -p "$HK3"
+cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$HK3/"
+c3_conf() { { printf 'STATE_FILE state/{role}.md\n'; local l; for l in "$@"; do printf '%s\n' "$l"; done; } > "$HK3/state-check.conf"; }
+c3_p() {   # <cwd> <sid> [transcript] [prompt]: run the doorman against $S; stdout -> $C3/o, stderr -> $C3/e, rc in $C3_RC
+  dj "$1" "$2" "${4:-hello}" "${3:-}" | STATE_CHECK_STATE_DIR="$S" bash "$HK3/doorman.sh" > "$C3/o" 2> "$C3/e"; C3_RC=$?
+}
+c3_ret() {   # <sid> [compact-count]: a live RETIRED marker (marker + companion)
+  mkdir -p "$S/retired" "$S/retired-compacts"; echo "2026-01-01 00:00 dev 900k" > "$S/retired/$1"; echo "${2:-0}" > "$S/retired-compacts/$1"
+}
+c3_line() { printf '{"type":"assistant","message":{"usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":%d,"output_tokens":5}}}\n' 1000 $(( ($1 - 1) * 1000 )); }
+c3_zero() { printf '{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}\n'; }
+c3_bound() { printf '{"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}\n'; }
+rc_is() { [ "$C3_RC" = "$1" ]; }
+out_empty() { [ ! -s "$C3/o" ]; }
+c3_conf 'myapp-dev*  dev  850' 'myapp-ops*  ops  850'
+D1="$C3/myapp-dev21"; D2="$C3/myapp-dev22"; O1="$C3/myapp-ops1"; mkdir -p "$D1" "$D2" "$O1"
+c2_tp "$C3/tp900" 900; c2_tp "$C3/tp849" 849; c2_tp "$C3/tp850" 850; c2_tp "$C3/tp100" 100
+
+echo "  A52 the hold fires only at the context cut-off (or a retired marker): no idle trigger, no 'wake anyway'"
+S="$C3/s-a52"
+cat > "$C3/tp-idle" <<'EOT'
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:05Z","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":499000,"output_tokens":1}}}
+EOT
+c3_p "$D1" a52a "$C3/tp-idle"
+c2_chk pass "A52 pair: an idle-for-months chat at 500k (under the 850k floor) passes: idle no longer holds" rc_is 0
+c3_p "$D1" a52b "$C3/tp850"
+c2_chk refuse "A52 a chat at exactly its floor (850k) is held" rc_is 2
+c3_p "$D1" a52c "$C3/tp849"
+c2_chk pass "A52 pair: 849k (one thousand under the floor) passes" rc_is 0
+c3_conf 'myapp-dev*  dev  5' 'myapp-ops*  ops  850'
+c3_p "$D1" a52d "$C3/tp100"
+c2_chk refuse "A52 the cut-off is the conf row's own number: a 5k floor holds a 100k chat" rc_is 2
+c3_p "$O1" a52e "$C3/tp100"
+c2_chk pass "A52 pair: another row's 850k floor does not hold the same 100k chat" rc_is 0
+c3_conf 'myapp-dev*  dev  850' 'myapp-ops*  ops  850'
+c3_ret a52f; c3_p "$D1" a52f "$C3/tp100" "wake anyway, please"
+c2_chk refuse "A52 'wake anyway' no longer forces a retired chat open: it is held like any prompt" rc_is 2
+c3_p "$D1" a52g "$C3/tp100" "wake anyway, please"
+c2_chk pass "A52 pair: 'wake anyway' on a chat that is not retired or full is just a prompt: passes" rc_is 0
+c2_chk pass "A52 the script no longer carries the idle trigger or the wake-anyway escape" bash -c "! grep -v '^[[:space:]]*#' '$HK3/doorman.sh' | grep -qiE 'wake anyway|IDLE_MIN|DOORMAN_CTX_K'"
+
+echo "  A53 a held message: saved per session and stamped, refused with the plain sentence, nothing on stdout"
+S="$C3/s-a53"; c3_p "$D1" a53 "$C3/tp900" "please build the thing"
+c2_chk refuse "A53 a chat over its floor is refused (exit 2)" rc_is 2
+c2_chk refuse "A53 the refusal says: don't retype: your next message carries this one" has "don't retype: your next message carries this one" "$C3/e"
+c2_chk refuse "A53 stdout is empty on a held turn" out_empty
+c2_chk refuse "A53 the held file holds the text" has "please build the thing" "$S/held/a53"
+c2_chk refuse "A53 line 1 of the held file is a stamp, line 2 the folder, text from line 3" bash -c "sed -n 1p '$S/held/a53' | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}\$' && [ \"\$(sed -n 2p '$S/held/a53')\" = '$D1' ] && [ \"\$(sed -n 3p '$S/held/a53')\" = 'please build the thing' ]"
+c2_chk refuse "A53 the text is also appended to the role's inbox (a second, durable copy)" has "please build the thing" "$S/inbox/dev.md"
+c3_p "$D1" a53b "$C3/tp100" "a normal message"
+c2_chk pass "A53 pair: a passing prompt writes no held file" test ! -e "$S/held/a53b"
+c2_chk pass "A53 pair: ... and nothing new in the inbox" nothas "a normal message" "$S/inbox/dev.md"
+c3_p "$D1" "" "$C3/tp900" "no session id here"
+c2_chk pass "A53 a chat with no session id cannot carry a held text, so it is never held (fails open)" rc_is 0
+
+echo "  A54 the owner's next typed message passes and carries the held text; later prompts get the wrap-up note"
+c3_p "$D1" a53 "$C3/tp900" "second message"
+c2_chk refuse "A54 the next typed message passes (exit 0)" rc_is 0
+c2_chk refuse "A54 stdout carries the held text, labelled with its stamped time" bash -c "grep -qE 'HELD MESSAGE delivered \\(held at [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}\\): please build the thing' '$C3/o'"
+c2_chk refuse "A54 the held file is gone and delivered/<sid> holds it (moved, not deleted)" bash -c "[ ! -e '$S/held/a53' ] && grep -q 'please build the thing' '$S/delivered/a53'"
+c2_chk refuse "A54 the per-session open marker exists (the path clock-in-context.sh reads)" test -f "$S/open/a53"
+c2_chk refuse "A54 the pass turn is told to wrap up" has "wrap up the task in hand" "$C3/o"
+c3_p "$D1" a53 "$C3/tp900" "third message"
+c2_chk refuse "A54 every later typed prompt passes" rc_is 0
+c2_chk refuse "A54 ... and gets the wrap-up note" has "wrap up the task in hand" "$C3/o"
+c2_chk pass "A54 pair: ... and the held text is not carried a second time" nothas "HELD MESSAGE" "$C3/o"
+c3_p "$D1" a54fresh "$C3/tp100" "fresh chat prompt"
+c2_chk pass "A54 pair: a chat that was never held gets no wrap-up note" nothas "wrap up" "$C3/o"
+S="$C3/s-a54b"; c3_p "$D1" a54s "$C3/tp900" "yes A"; c3_p "$D1" a54s "$C3/tp900" "next"
+c2_chk refuse "A54 a held body of 12 characters or fewer is delivered with a confirm-before-acting line" has 'confirm this answer with the owner' "$C3/o"
+S="$C3/s-a54c"; c3_p "$D1" a54t "$C3/tp900" "yes A, that one"; c3_p "$D1" a54t "$C3/tp900" "next"
+c2_chk pass "A54 pair: a 15-character body has no confirm line" nothas 'confirm this answer' "$C3/o"
+S="$C3/s-a54d"; c3_p "$D1" a54u "$C3/tp900" "123456789012"; c3_p "$D1" a54u "$C3/tp900" "next"
+c2_chk refuse "A54 exactly 12 characters still gets the confirm line" has 'confirm this answer' "$C3/o"
+S="$C3/s-a54e"; c3_p "$D1" a54v "$C3/tp900" "1234567890123"; c3_p "$D1" a54v "$C3/tp900" "next"
+c2_chk pass "A54 pair: 13 characters does not" nothas 'confirm this answer' "$C3/o"
+
+echo "  A55 a retired chat is never locked out: the pass comes before the retired refusal"
+S="$C3/s-a55"; c3_ret a55; c3_p "$D1" a55 "$C3/tp100" "first message"
+c2_chk refuse "A55 a chat marked RETIRED (marker + companion) is held" rc_is 2
+c2_chk refuse "A55 the refusal says retired" has "retired" "$C3/e"
+c3_p "$D1" a55 "$C3/tp100" "second message"
+c2_chk refuse "A55 its very next typed message passes, though the marker still stands" rc_is 0
+c2_chk refuse "A55 ... and carries the first message" has "first message" "$C3/o"
+c3_p "$D1" a55 "$C3/tp100" "third message"
+c2_chk pass "A55 pair: the message after that passes too (open marker read first)" rc_is 0
+c2_chk pass "A55 pair: the retired marker itself is left alone" test -f "$S/retired/a55"
+S="$C3/s-a55b"; mkdir -p "$S/retired"; echo "old" > "$S/retired/a55b"; c3_p "$D1" a55b "$C3/tp100"
+c2_chk pass "A55 pair: a marker with NO companion counts as absent: passes" rc_is 0
+S="$C3/s-a55c"; mkdir -p "$S/retired" "$S/retired-compacts"; echo "x" > "$S/retired/a55c"; ln -s "$SENT" "$S/retired-compacts/a55c"; c3_p "$D1" a55c "$C3/tp100"
+c2_chk pass "A55 pair: a symlinked companion is not honoured: passes" rc_is 0
+S="$C3/s-a55d"; c3_ret a55d; c3_p "$D1" a55d ""
+c2_chk refuse "A55 a retired chat is held even when its transcript cannot be read (retirement needs no size)" rc_is 2
+
+echo "  A56 delivery: the same chat when woken; a fresh chat in the same folder only after the held chat is retired; once"
+S="$C3/s-a56"; c3_ret a56old; c3_p "$D1" a56old "$C3/tp100" "carry me to the new chat"
+c3_p "$D1" a56new "$C3/tp100" "hello in a fresh chat"
+c2_chk refuse "A56 a fresh chat in the same folder receives the retired chat's held text" has "carry me to the new chat" "$C3/o"
+c2_chk refuse "A56 ... labelled as held for the previous chat" has "held for the previous chat" "$C3/o"
+c2_chk refuse "A56 ... and it moved to delivered/" bash -c "[ ! -e '$S/held/a56old' ] && [ -f '$S/delivered/a56old' ]"
+c3_p "$D1" a56third "$C3/tp100" "another fresh chat"
+c2_chk pass "A56 pair: a second fresh chat gets nothing (delivered once)" nothas "HELD MESSAGE" "$C3/o"
+S="$C3/s-a56b"; c3_p "$D1" a56live "$C3/tp900" "held from a live chat"; c3_p "$D1" a56other "$C3/tp100" "fresh chat"
+c2_chk pass "A56 pair: a chat that is only full, not retired, keeps its held text from a fresh chat" nothas "HELD MESSAGE" "$C3/o"
+c2_chk pass "A56 pair: ... the held file stays" test -f "$S/held/a56live"
+S="$C3/s-a56c"; c3_ret a56x; c3_p "$D1" a56x "$C3/tp100" "for folder one"; c3_p "$D2" a56y "$C3/tp100" "chat in folder two"
+c2_chk pass "A56 pair: a chat in another folder never receives it" nothas "HELD MESSAGE" "$C3/o"
+S="$C3/s-a56d"; c3_ret a56z; c3_p "$D1" a56z "$C3/tp100" "for the machine test"
+c3_p "$D1" a56m "$C3/tp100" "<task-notification>done</task-notification>"
+c2_chk pass "A56 pair: a machine prompt in a fresh chat does not take the held text" test -f "$S/held/a56z"
+S="$C3/s-a56e"; c3_ret a56q; c3_p "$D1" a56q "$C3/tp100" "twice?"
+( dj "$D1" a56q "next" "$C3/tp100" | STATE_CHECK_STATE_DIR="$S" bash "$HK3/doorman.sh" > "$C3/o1" 2>/dev/null ) &
+( dj "$D1" a56q "next" "$C3/tp100" | STATE_CHECK_STATE_DIR="$S" bash "$HK3/doorman.sh" > "$C3/o2" 2>/dev/null ) &
+wait
+c2_chk refuse "A56 two prompts racing for one held text: it is delivered exactly once" eq "$(cat "$C3/o1" "$C3/o2" | grep -c 'HELD MESSAGE')" "1"
+
+echo "  A57 machine prompts are never held, never the passing message, never counted (one classifier, clock-in-context.sh --classify-prompt)"
+S="$C3/s-a57"; c3_ret a57
+for m in '<task-notification>x</task-notification>' '<agent-message from="x">y</agent-message>' '<cross-session-message>z</cross-session-message>' 'Another Claude session sent a message: hi' '<bash-input>ls</bash-input>' '<<autonomous-loop>>' '[Cross-session delivery notice] see the file'; do
+  c3_p "$D1" a57 "$C3/tp100" "$m"
+  c2_chk pass "A57 a machine prompt on a retired chat passes, held nothing: ${m:0:30}" bash -c "[ '$C3_RC' = 0 ] && [ ! -e '$S/held/a57' ]"
+done
+c3_p "$D1" a57 "$C3/tp100" "hand-typed words"
+c2_chk refuse "A57 pair: the same chat's typed prompt is held" rc_is 2
+c3_p "$D1" a57 "$C3/tp100" "<task-notification>x</task-notification>"
+c2_chk pass "A57 a machine prompt is not the passing message: the held text stays and no marker opens" bash -c "[ -f '$S/held/a57' ] && [ ! -e '$S/open/a57' ] && ! grep -q 'HELD MESSAGE' '$C3/o'"
+S="$C3/s-a57b"; c3_p "$D1" a57b "$C3/tp900" "hold me"; c3_p "$D1" a57b "$C3/tp900" "second"; c3_p "$D1" a57b "$C3/tp900" "<task-notification>x</task-notification>"
+c2_chk pass "A57 a machine prompt on an open chat gets no wrap-up note (it is not counted as a prompt)" nothas "wrap up" "$C3/o"
+S="$C3/s-a57c"; mkdir -p "$S/crons"; c3_ret a57c
+printf '%s\n' "$(printf '%s' 'check the build every hour' | jq -Rs .)" > "$S/crons/a57c"
+c3_p "$D1" a57c "$C3/tp100" "  check the build every hour  "
+c2_chk pass "A57 a fired scheduled prompt (in the cron registry, trimmed exact match) is machine: passes" rc_is 0
+c3_p "$D1" a57c "$C3/tp100" "check the build every day"
+c2_chk refuse "A57 pair: a typed prompt that is not in the registry is held" rc_is 2
+HK4="$C3/hk-nocls"; mkdir -p "$HK4"; cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HK4/"; cp "$HK3/state-check.conf" "$HK4/"
+S="$C3/s-a57d"; c3_ret a57d
+dj "$D1" a57d "typed words" "$C3/tp100" | STATE_CHECK_STATE_DIR="$S" bash "$HK4/doorman.sh" > "$C3/o" 2> "$C3/e"; C3_RC=$?
+c2_chk pass "A57 with no classifier beside the hook nothing is held (cannot tell: fail open, note on stderr)" bash -c "[ '$C3_RC' = 0 ] && grep -q 'classifier' '$C3/e'"
+printf '#!/bin/bash\nexit 3\n' > "$HK4/clock-in-context.sh"
+dj "$D1" a57d "typed words" "$C3/tp100" | STATE_CHECK_STATE_DIR="$S" bash "$HK4/doorman.sh" > "$C3/o" 2> "$C3/e"; C3_RC=$?
+c2_chk pass "A57 a classifier that fails (exit 3) is not read as 'typed': passes" rc_is 0
+
+echo "  A58 compaction (UNVERIFIED against a real payload): unknown context never holds; the chat is told; a later compaction clears the marker"
+S="$C3/s-a58"; { c2_tp "$C3/tp-c1" 900; c3_bound >> "$C3/tp-c1"; }
+c3_p "$D1" a58 "$C3/tp-c1"
+c2_chk refuse "A58 a compact boundary after the 900k usage line: not held (context unknown)" rc_is 0
+c2_chk refuse "A58 the chat is told it was compacted" has "was compacted" "$C3/o"
+c2_chk refuse "A58 ... with the wrap-up words (a dev role)" has "wrapping up" "$C3/o"
+c3_p "$O1" a58o "$C3/tp-c1"
+c2_chk pass "A58 pair: a role not in WRAPUP_ROLES is told of the compaction without the wrap-up words" bash -c "grep -q 'was compacted' '$C3/o' && ! grep -q 'wrapping up' '$C3/o'"
+{ c2_tp "$C3/tp-c2" 900; c3_bound >> "$C3/tp-c2"; c3_line 100 >> "$C3/tp-c2"; }
+c3_p "$D1" a58b "$C3/tp-c2"
+c2_chk pass "A58 pair: a usage line AFTER the boundary is a fresh measurement: no notice, passes" bash -c "[ '$C3_RC' = 0 ] && ! grep -q 'compacted' '$C3/o'"
+{ c2_tp "$C3/tp-c3" 100; c3_bound >> "$C3/tp-c3"; c3_line 900 >> "$C3/tp-c3"; }
+c3_p "$D1" a58c "$C3/tp-c3"
+c2_chk refuse "A58 a chat that is over its floor AFTER the compaction is held again" rc_is 2
+S="$C3/s-a58d"; c3_ret a58d 0; c3_p "$D1" a58d "$C3/tp-c2"
+c2_chk refuse "A58 a compaction since the retirement (1 boundary now, 0 recorded) clears the retired marker: passes" bash -c "[ '$C3_RC' = 0 ] && [ ! -e '$S/retired/a58d' ] && [ ! -e '$S/retired-compacts/a58d' ]"
+S="$C3/s-a58e"; c3_ret a58e 1; c3_p "$D1" a58e "$C3/tp-c2"
+c2_chk refuse "A58 pair: the boundary was already counted at retirement (1 recorded): still retired, held" rc_is 2
+S="$C3/s-a58f"; c3_p "$D1" a58f "$C3/tp900"
+c2_chk refuse "A58 pair: no boundary at all: a 900k chat is held as before" rc_is 2
+printf '{"type":"user","message":{"content":"hi"}}\n' > "$C3/tp-nousage"; S="$C3/s-a58g"
+c3_p "$D1" a58g "$C3/tp-nousage"
+c2_chk pass "A58 a transcript with no usage line at all is unknown: never held" rc_is 0
+c3_p "$D1" a58g "$C3/does-not-exist"
+c2_chk pass "A58 an unreadable transcript is unknown: never held" rc_is 0
+ss_json() { python3 -c 'import json,sys;print(json.dumps({"hook_event_name":"SessionStart","source":sys.argv[2],"cwd":sys.argv[1],"session_id":"ss1"}))' "$1" "$2"; }
+S="$C3/s-a58h"; mkdir -p "$S/tell"; echo 40 > "$S/tell/ss1"
+ss_json "$D1" compact | STATE_CHECK_STATE_DIR="$S" bash "$HK3/doorman.sh" > "$C3/o" 2> "$C3/e"; C3_RC=$?
+c2_chk refuse "A58 a SessionStart with source compact prints the compaction notice" has "was compacted" "$C3/o"
+c2_chk pass "A58 pair: a session start is not a turn: no snapshot, and the tell is left alone" bash -c "[ ! -e '$S/turnsnap' ] && [ -f '$S/tell/ss1' ] && ! grep -q 'helper tell' '$C3/o'"
+ss_json "$D1" startup | STATE_CHECK_STATE_DIR="$S" bash "$HK3/doorman.sh" > "$C3/o" 2> "$C3/e"; C3_RC=$?
+c2_chk pass "A58 pair: a SessionStart with source startup prints nothing" out_empty
+ss_json "$C3" compact | STATE_CHECK_STATE_DIR="$S" bash "$HK3/doorman.sh" > "$C3/o" 2> "$C3/e"
+c2_chk pass "A58 pair: a compact SessionStart in a folder the conf does not name prints nothing (inert)" out_empty
+
+echo "  A59 the context is read from the WHOLE transcript, newest usage line first; all-zero usage lines are skipped"
+S="$C3/s-a59"; { c2_tp "$C3/tp-big" 900; python3 -c 'print("{\"type\":\"user\",\"message\":{\"content\":\"" + "x"*300000 + "\"}}")' >> "$C3/tp-big"; }
+c3_p "$D1" a59 "$C3/tp-big"
+c2_chk refuse "A59 a 300 KB tool result after the 900k usage line does not hide it: held" rc_is 2
+S="$C3/s-a59b"; { c2_tp "$C3/tp-zero" 900; c3_zero >> "$C3/tp-zero"; }
+c3_p "$D1" a59b "$C3/tp-zero"
+c2_chk refuse "A59 a trailing all-zero usage line (an API error) is skipped: still held at 900k" rc_is 2
+S="$C3/s-a59c"; { c2_tp "$C3/tp-zero2" 100; c3_zero >> "$C3/tp-zero2"; }
+c3_p "$D1" a59c "$C3/tp-zero2"
+c2_chk pass "A59 pair: ... and a 100k chat with a trailing zero line is 100k, not 0 and not held" bash -c "[ '$C3_RC' = 0 ] && [ \"\$(cat '$S/turn-start/a59c')\" = 100 ]"
+S="$C3/s-a59d"; { c2_tp "$C3/tp-newer" 900; c3_line 100 >> "$C3/tp-newer"; }
+c3_p "$D1" a59d "$C3/tp-newer"
+c2_chk pass "A59 pair: the NEWEST non-zero line wins: 900k then 100k passes" rc_is 0
+c2_chk pass "A59 the reader is portable: no BSD-only date -j / tail -r / stat -f / shasum in the code (comments aside)" bash -c "! grep -v '^[[:space:]]*#' '$HK3/doorman.sh' | grep -qE 'date -j|tail -r|stat -f|shasum '"
+
+echo "  the failure paths: a kill between the hold and the pass, and inside the pass"
+S="$C3/s-crash"; c3_p "$D1" k1 "$C3/tp900" "survive the crash"
+# the hook is killed after the hold (exit 2 never seen); the next typed message is the pass
+c3_p "$D1" k1 "$C3/tp900" "after the crash"
+c2_chk refuse "crash after the hold: the next message delivers the held text" has "survive the crash" "$C3/o"
+c3_p "$D1" k1 "$C3/tp900" "and again"
+c2_chk pass "crash after the hold: ... exactly once (the message after that carries nothing)" nothas "survive the crash" "$C3/o"
+S="$C3/s-crash2"; c3_p "$D1" k2 "$C3/tp900" "half way"
+mkdir -p "$S/open"; : > "$S/open/k2"
+c3_p "$D1" k2 "$C3/tp900" "next"
+c2_chk refuse "crash after the open marker, before the rename: the held text is still delivered (held/ is read before the marker)" has "half way" "$C3/o"
+S="$C3/s-crash3"; mkdir -p "$S/open" "$S/delivered"; : > "$S/open/k3"; echo "was delivered" > "$S/delivered/k3"; c3_ret k3
+c3_p "$D1" k3 "$C3/tp900" "after a kill mid-print"
+c2_chk pass "crash after the rename, before the print: the chat is not held again, the wrap-up note shows, the text is not shown twice" bash -c "[ '$C3_RC' = 0 ] && ! grep -q 'HELD MESSAGE' '$C3/o' && grep -q 'wrap up' '$C3/o'"
+c2_chk pass "crash after the rename: the text is still on disk in delivered/" has "was delivered" "$S/delivered/k3"
+S="$C3/s-crash4"; mkdir -p "$S/held"; printf '2026-01-01 00:00\n%s\nhalf a message' "$D1" > "$S/held/.k4.999"
+c3_p "$D1" k4 "$C3/tp100" "plain"
+c2_chk pass "crash mid-write of the held copy: a leftover temporary file is never delivered" bash -c "[ '$C3_RC' = 0 ] && ! grep -q 'HELD MESSAGE' '$C3/o'"
+S="$C3/s-crash5"; mkdir -p "$C3/elsewhere" "$S"; ln -s "$C3/elsewhere" "$S/held"
+c3_p "$D1" k5 "$C3/tp900" "through a link"
+c2_chk pass "a symlinked held/ folder is never written through: the prompt passes (fail open) and the target stays empty" bash -c "[ '$C3_RC' = 0 ] && [ -z \"\$(ls -A '$C3/elsewhere')\" ]"
+S="$C3/s-crash6"; mkdir -p "$S/held"; ln -s "$SENT" "$S/held/k6"; c3_p "$D1" k6 "$C3/tp100" "plain"
+c2_chk pass "a symlinked held file is not delivered and its target is untouched" bash -c "[ '$C3_RC' = 0 ] && ! grep -q 'HELD MESSAGE' '$C3/o' && [ \"\$(cat '$SENT')\" = keep ]"
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
