@@ -54,9 +54,11 @@ and passes on a working one — one-sided proof doesn't count.
 cause first.
 **What happened** — real time has been burned trying a third and fourth version of the same
 broken fix, each one wrong in the same way as the last, because nobody stepped back to ask why
-the first two hadn't worked.
+the first two hadn't worked. The owner's fix, after one problem kept coming back: have a
+strongest-model reviewer look at the work blind before the third try.
 **The rule to copy** — after two failed fix attempts, stop, roll back to the last working
-version, and get a plain explanation of the real cause before touching the code again.
+version, and get a plain explanation of the real cause before touching the code again. Before a
+third attempt, a blind reviewer on your strongest model checks the work so far.
 **Enforced by** — habit.
 
 ### Security review before anything goes live
@@ -83,7 +85,10 @@ the question "how could this be bad for me?" — has found real leaks (leftover 
 settings that could identify the owner) that a briefed review had completely missed.
 **The rule to copy** — before anything irreversible, open a brand-new chat with no project
 files or memory loaded, hand it only the finished thing, and ask "how could this hurt me, and
-what's missing?" — fix what it finds before you take the step.
+what's missing?" — fix what it finds before you take the step. Keep this for steps that face
+outward or touch your data (going public, a deploy, migrating or deleting data), not routine
+cleanup of the session's own work; and if the only helper you can get was opened inside the
+project, say plainly that it isn't blind.
 **Enforced by** — habit.
 
 ### Whole-picture proof, not a close-up
@@ -121,6 +126,19 @@ the builder thought of.
 bypass it and to make it refuse ordinary work, runs every attempt, and the builder fixes what got
 through; only then do the builder's own tests count.
 **Enforced by** — habit; the attack's findings become the guard's two-sided test cases.
+
+### A guard is for honest mistakes, not a wall against a determined bypass
+
+**Lesson** — write and test a rule or a guard against the ordinary ways an honest session goes
+wrong, not against someone deliberately working around it.
+**What happened** — a review of the safety hooks found one guard had refused a great many
+ordinary past commands (any command with a pipe in it) — honest work stopped, for no gain. The
+owner's ruling: rules guide a chat; they are not walls, and the test is honest work wrongly
+refused.
+**The rule to copy** — break-test every guard for honest mistakes (another spelling, a
+subfolder, an ordinary edge case) and for honest work it wrongly refuses; do not spend
+complexity trying to make a deliberate bypass impossible.
+**Enforced by** — habit; the break-it review's brief names both directions.
 
 ### Run it against the real thing once, and count what it saw
 
@@ -224,6 +242,19 @@ running the real command gave.
 actually run, never retyped or reconstructed afterward.
 **Enforced by** — habit.
 
+### Rehearse the failure paths, not only the smooth one
+
+**Lesson** — before handing over a script or a set of steps, run it end to end on a throwaway
+copy — including being stopped halfway and losing the connection — and look at what each case
+leaves behind.
+**What happened** — three times in one stretch the same slip recurred: handover recipes never
+run as written, a phone check that skipped the project's own pages, and a history-rewrite script
+tried only on its happy path — which a review then broke by stopping it midway and dropping
+the connection after a push.
+**The rule to copy** — before a script or a set of steps goes to anyone, run it on a throwaway
+copy, including stopped halfway and offline, and show what each case leaves behind.
+**Enforced by** — habit.
+
 ## Git and things you cannot undo
 
 ### One working feature, one commit, pushed now
@@ -280,7 +311,9 @@ public. Naming the exact action and its consequence, then waiting for a plain ye
 mistakes that would otherwise have been permanent.
 **The rule to copy** — before anything irreversible or outward-facing, state exactly what
 you're about to do and what it costs if it's wrong, and wait for an explicit yes — don't treat
-silence, or a vague "sounds good," as that yes.
+silence, or a vague "sounds good," as that yes. A branch the session made itself may be deleted
+once merged; branches and files you made need the yes. Before anything goes public, do the
+checks in order: identity and privacy check, security review, blind reviewer, then your yes.
 **Enforced by** — a hook that blocks the most dangerous git commands before they run (a forced
 history overwrite, a hard reset, a branch deletion); everything outside git is habit.
 
@@ -446,6 +479,19 @@ for a recommendation only, and wait for an explicit go before anything gets buil
 or changed.
 **Enforced by** — habit.
 
+### Skip what the reader already knows
+
+**Lesson** — tell your assistant exactly what you know, so its words go to what is new, and
+correct it when it over-explains.
+**What happened** — once, an explainer page and a chat message spent their words on the basics of
+the owner's own field and why a wrong input is bad — "it sounds like you're talking to a
+four-year-old." The first fix overshot: a claimed "I know this tooling well" was never
+confirmed, so software terms went back to a one-line explanation.
+**The rule to copy** — name in your rulebook what you know cold (never explain its basics) and
+what you don't (keeps its one-line explanation); when unsure, one short clause, not a lesson;
+spend the words on the cause, the change, the choice and the cost.
+**Enforced by** — habit.
+
 ### Ask for the smallest change, not a rewrite
 
 **Lesson** — ask for the smallest working change, not a rewrite of things nobody asked to touch.
@@ -498,9 +544,15 @@ recorded on the task's file, and covers the review's follow-on work; nobody asks
 **Lesson** — when there's more than one way something could look, the choice gets made by
 clicking an option on the actual rendered page, not by naming a letter back in chat.
 **What happened** — an owner kept typing back which mockup they'd picked from a description in
-chat; asking for a real button next to each option, on the page itself, ended the back-and-forth.
-**The rule to copy** — for anything visual, put the options on a real rendered page with a way to
-pick one there, and read the pick back from the page — never choose from a paragraph in chat.
+chat; asking for a real button next to each option, on the page itself, ended the back-and-forth. Since then it has happened three more ways: options shown
+only as words while a preview sat open elsewhere; a question about what a tester would see, asked
+twice in prose and unanswered; and storyboards drawn inside the chat, which reached the owner
+only once they were put on a page.
+**The rule to copy** — for anything visual, or any question whose answer changes what a user
+sees, put the options on a real rendered page (an artifact, with the pictures and buttons on it)
+with a way to pick one there, and read the pick back from the page — never choose from a
+paragraph in chat, and never from a drawing rendered inside the chat or a preview open somewhere
+else, which never reaches the reader.
 **Enforced by** — habit.
 
 ## Money and models
@@ -522,13 +574,16 @@ verdict or review — default every task to the cheapest tier that fits.
 
 **Lesson** — before a big research task or a job that spins up a lot of AI helpers, ask whether
 the answer is even worth what it will cost.
-**What happened** — once, a review that spun up dozens of AI helpers at the same time burned
+**What happened** — once, after a fix helper's overrun held the work at the quoted figure, the
+owner ruled that the quote is not the limit; twice the estimate is. Earlier, a review that spun up dozens of AI helpers at the same time burned
 through a whole week's usage limit in one sitting, and roughly half of what it found turned out
 to be noise, paid for twice.
 **The rule to copy** — state the expected cost and the expected payoff in one line before any
 big or multi-helper job, and get an explicit yes before any run projected above a fixed price
 (mine is ten dollars at list price, about five mid-size helpers or two of the best) — a price,
-not a headcount, because two big helpers can cost more than ten small ones.
+not a headcount, because two big helpers can cost more than ten small ones. A yes on an estimate
+covers up to twice it; ask again only past that. A limit you set may be passed only for work sure
+to fix a named problem — a known cause and a known fix — never to keep hammering an unsolved one.
 **Enforced by** — a Stop hook that writes one line per finished helper to a ledger with what it
 cost, so the spend is visible after the fact; the yes before the run is habit.
 
@@ -593,11 +648,13 @@ conversation.
 **Lesson** — write every real decision (what, why, what it rules out) and every real mistake
 (what happened, the actual cause, the cost) into a plain file, not only into the chat.
 **What happened** — a chat that hasn't seen an earlier conversation will happily reopen a
-settled decision, or repeat a mistake that's already been made once. A short, append-only
+settled decision, or repeat a mistake that's already been made once. (The promotion bar started
+at two similar mistakes; it moved to three when the owner judged a second occurrence of one slip
+not yet worth a standing rule.) A short, append-only
 written log is the only memory that survives between separate chats.
 **The rule to copy** — keep a running decisions file (three lines per choice: what, why, what
 it rules out) and a running mistakes file (one line: what, cause, cost, status), and promote a
-repeated mistake into an actual rule the second time it happens.
+repeated mistake into an actual rule the third time it happens.
 **Enforced by** — habit.
 
 ### A chat is bound to the exact folder it started in

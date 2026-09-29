@@ -69,14 +69,15 @@ them.
 8. **Back up the database before any migration.** Git protects code, not data. A code
    rollback is not data recovery.
 9. **Two failed fix attempts = stop.** Roll back, find the root cause, and explain it to me in
-   plain language before touching code again.
+   plain language before touching code again. Before a third attempt, a blind reviewer on your
+   strongest model checks the work.
 10. **Secrets never go in code.** API keys and passwords live in `.env`, gitignored — and
     remind me they must be set separately on the hosting service at deploy time.
 11. **Keep a decision log and a mistakes ledger.** Every project gets a `DECISIONS.md`:
     significant choice = three lines, what was decided, why, and what it rules out; check it
     before proposing changes so settled decisions aren't re-argued. And a `MISTAKES.md`: one
     line per mistake (what, root cause, cost, status), filed by whoever catches it; a
-    lesson becomes a rule the second time it happens.
+    lesson becomes a rule the third time it happens.
 12. **No feature is done without a test that can fail.** Anything visual also gets checked in
     a real window — headless tests have passed while the actual screen was broken.
 13. **Don't act unless it's clear I want an action started.** A question ("thoughts?",
@@ -94,10 +95,15 @@ them.
     force-push, deleting branches or data, dropping a database, a hosting or DNS change,
     publishing a package, making a repo public — state the target, the scope, and the
     consequence, and wait for my confirmation.
-17. **Fresh eyes before anything permanent.** Before going public, a real deploy, or work sent
-    outside: one blind reviewer sees only the thing itself plus "how can this be bad for me,
+17. **Fresh eyes before anything permanent.** Before any step that faces outward or touches my
+    data — going public, a real deploy, migrating or deleting data — not routine cleanup of the
+    session's own work: one blind reviewer sees only the thing itself plus "how can this be bad for me,
     and what are the gaps?" — run from an empty folder outside any project, so none of these
     files or any memory auto-load into it. Fix what it finds first.
+
+18. **Rehearse the failure paths, not only the smooth one.** Before a script or a set of steps
+    is handed to me, run it end to end on a throwaway copy, including being stopped halfway
+    and losing the connection, and show what each case leaves behind.
 
 <!-- FILL THIS IN (over time)
 Add your own rules here as you earn them. The format that works: the rule in bold, then
@@ -132,10 +138,13 @@ explaining nothing.
 
 *A worked example of a line that does real work:*
 
-> "I'm specific about modern web tooling, but git and deployment terminology needs plain
-> explanation. Don't assume the two go together."
+> "I'm an expert in my own field, so never explain its basics. Git and deployment
+> terminology needs plain explanation — and if you're unsure which side a term falls on, one
+> short clause, not a lesson."
 
-That one sentence changes every future session.
+That one sentence changes every future session. Only list as "known" what you have actually
+confirmed you know: a claimed strength that was never true quietly removes explanations you
+still needed.
 
 <!-- Write yours below this line. -->
 
@@ -157,6 +166,8 @@ Things worth answering:
   deleting your files, spending money, publishing anything public, the scope growing much
   bigger, reversing something already decided.)
 - When you say "choose for me", do you want the choice made and explained — or offered back?
+- Do you want guards and rules to guide, or to be walls? (A rule tested only against
+  deliberate bypass ends up refusing honest work.)
 - Do you want pushback? Say so explicitly if you do; most people say they want it and then
   phrase requests in a way that discourages it.
 

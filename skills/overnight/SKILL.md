@@ -1,6 +1,6 @@
 ---
 name: overnight
-description: Overnight work session — start at the owner's given time, work through everything that needs no owner input until it is done, and end with a two-section morning summary (FYI / INPUT NEEDED). Use when the owner invokes /overnight, gives a start time for autonomous work, or asks for work to continue while they sleep.
+description: Overnight work session — start at the owner's given time, work through everything that needs no owner input until it is done, and end with a morning summary card (done / INPUT NEEDED). Use when the owner invokes /overnight, gives a start time for autonomous work, or asks for work to continue while they sleep.
 ---
 
 # Overnight work session
@@ -35,7 +35,7 @@ morning, and nothing that needs them blocks the rest.**
   write the plain-language root-cause explanation into the summary, move on.
 - **Usage limit hit?** Note the reset time, schedule a wakeup for just after it, and
   continue then. Losing an hour is fine; losing the night is not. Record the interruption
-  in the summary's FYI.
+  in the summary.
 - **The owner may interject from a phone.** "pause" and "stop" (defined in the global
   CLAUDE.md process rules) apply overnight exactly as they do by day.
 - **Keep running notes as you go** — the morning summary is assembled from notes, not
@@ -45,16 +45,13 @@ morning, and nothing that needs them blocks the rest.**
 
 ## The morning summary (the last thing written, always)
 
-Two sections, plain English, in this order:
+The owner has been away all night, so the summary is the card (the `summarize` skill),
+assembled from the running notes:
 
-**FYI** — no action needed:
-- What got done, one line each, with the commit hash or other evidence beside it.
-- What was verified and how (real output, not "it works").
-- Anything surprising found along the way, and any usage-limit interruptions.
+- **Story and Result** carry what got done, each item with its commit hash or the line of
+  real output that verified it, plus anything surprising and any usage-limit interruption.
+- **Needs my input** holds the parked items (the INPUT NEEDED list): one decision each, your
+  recommendation ticked with a one-line reason so a single word from the owner unblocks it,
+  and what it is currently blocking.
 
-**INPUT NEEDED** — one bullet per parked item:
-- The question, in one sentence.
-- Your recommendation with a one-line reason, so a single word from the owner unblocks it.
-- What it is currently blocking, if anything.
-
-If INPUT NEEDED is empty, say so explicitly — an empty section is information.
+If nothing was parked, Needs my input says "nothing needed" — an empty section is information.

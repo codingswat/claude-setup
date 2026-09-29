@@ -17,6 +17,7 @@ a starting set rather than a complete one.
 - **Allowlist vs denylist** — two ways to filter: an allowlist blocks everything except what you explicitly permit (the safe default); a denylist permits everything except what you explicitly block — one forgotten item and it slips through.
 - **API** — a menu of requests one program can make to another ("give me the weather for my city").
 - **API key** — a secret string proving it's MY account calling a service; usage bills to it, so it must never leak.
+- **Artifact (Claude)** — a finished page a chat renders in its own side panel, with pictures and buttons on it; where design options are shown and picked, instead of described in prose.
 - **Backend** — the brain of an app; rules and logic running on a server ("is this password right?").
 - **Branch (git)** — a parallel copy of the code for risky experiments; merge it into main only if it works.
 - **Build output (dist)** — the ready-to-run copy of code that a build step produces from the source (our TypeScript must be converted to plain JavaScript before it can run); it goes stale the moment the source changes, until someone rebuilds — and anything pointed at a stale copy runs old code even while the source and its tests are fine.
