@@ -1442,6 +1442,15 @@ expect refuse 2 "D1 a python3 that exits 0 printing nothing must REFUSE too" env
 err30="$(printf '%s' "$INPUT" | env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh" 2>&1 1>/dev/null)"
 if printf '%s' "$err30" | grep -qi 'parse'; then ok; else bad "D1 the refusal must say the guard could not parse its input (got: '$err30')"; fi
 refuse_n=$((refuse_n+1))
+# --- D1b the PREFERRED interpreter exists but fails (a Mac without the Command Line Tools ships
+# /usr/bin/python3 as a stub that exits non-zero): the resolver must fall back to a working python3
+# on PATH instead of failing every guard closed; a failing PATH python3 still fails closed.
+INPUT="$(json_bash 'ls -la')"
+expect pass 0 "D1b stub preferred python, working python3 on PATH: an ordinary command must pass" env GUARD_PYTHON_PREFERRED="$PYBAD30/python3" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'git reset --hard')"
+expect refuse 2 "D1b stub preferred python, working python3 on PATH: a destructive command is still refused" env GUARD_PYTHON_PREFERRED="$PYBAD30/python3" bash "$HOOKS_DIR/block-dangerous-git.sh"
+INPUT="$(json_bash 'ls -la')"
+expect refuse 2 "D1b stub preferred AND failing PATH python3: still fails closed" env GUARD_PYTHON_PREFERRED="$PYBAD30/python3" PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
 INPUT="$(json_bash 'npm test')"
 expect refuse 2 "D1 python3 present but failing: heavy-suite-guard must REFUSE" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
 ex30 refuse 2 "D1 python3 present but failing: commit-pathspec-guard must REFUSE" 'git commit --all -m x' env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
@@ -2839,6 +2848,135 @@ INPUT=""; d1_exp 0 "B1 an empty payload passes (nothing to judge)" "$AMG"
 INPUT="$(d1_agent Agent '{"prompt":"p"}')"; d1_msg "name the model for this helper" "B1 the refusal says what to do" "$AMG"
 if bash "$AMG" < <(d1_agent Agent '{"prompt":"p"}') 2>&1 | grep -qiE 'rule [0-9]|fable|opus|sonnet|haiku'; then bad "B1 the refusal text must not name a private rule or a model"; else ok; fi; pass_n=$((pass_n+1))
 d1_chk "B1 no private rule number, model name or path in the script" bash -c "[ -f '$HOOKS_DIR/agent-model-guard.sh' ] && ! grep -liE 'rule [0-9]+|fable|helper setup|ac'\"-\"'calc|/Us'\"ers\"'/|done-list' '$HOOKS_DIR/agent-model-guard.sh'"
+
+echo "refresh 2026-09-29 (d2) install.sh: the new default guard, every conf example, timeouts, the doorman on SessionStart, a python3 that really runs, the upgrade path"
+REPOD2="$(cd "$HOOKS_DIR/.." && pwd -P)"
+# d2_settings_count <settings.json> <event> -> number of hook entries under that event
+d2_count() { python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));print(sum(len(g.get("hooks",[])) for g in s.get("hooks",{}).get(sys.argv[2],[])))' "$1" "$2" 2>/dev/null; }
+# d2_field <settings.json> <event> <command-substring> <field> -> that field of the first matching entry ("-" when absent)
+d2_field() { python3 -c '
+import json,sys
+p,ev,sub,f=sys.argv[1:5]
+s=json.load(open(p))
+for g in s.get("hooks",{}).get(ev,[]):
+    for h in g.get("hooks",[]):
+        if sub in h.get("command",""):
+            print(h.get(f, g.get(f,"-")) if f!="matcher" else g.get("matcher","-")); sys.exit(0)
+print("MISSING")' "$1" "$2" "$3" "$4" 2>/dev/null; }
+# d2_yes <home> [env...]: run the installer on a real pty and answer the multi-chat question yes
+d2_yes() { local h="$1"; shift
+  env "$@" python3 - "$h" "$REPOD2/install.sh" <<'PY' >/dev/null 2>&1
+import os,pty,sys
+home,script=sys.argv[1:3]
+pid,fd=pty.fork()
+if pid==0:
+    os.environ["HOME"]=home
+    os.execvp("bash",["bash",script])
+os.write(fd,b"\ny\n\n\n")
+while True:
+    try:
+        if not os.read(fd,4096): break
+    except OSError: break
+_,st=os.waitpid(pid,0)
+sys.exit(os.waitstatus_to_exitcode(st))
+PY
+}
+DH1="$T/d2-fresh"; mkdir -p "$DH1"
+env HOME="$DH1" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1; d2rc=$?
+S1="$DH1/.claude/settings.json"
+if [ "$d2rc" = 0 ]; then ok; else bad "d2 a fresh install must exit 0 (got $d2rc)"; fi
+pass_n=$((pass_n+1))
+if [ -f "$DH1/.claude/hooks/agent-model-guard.sh" ] && [ -x "$DH1/.claude/hooks/agent-model-guard.sh" ]; then ok; else bad "d2 agent-model-guard.sh must be copied and executable"; fi
+pass_n=$((pass_n+1))
+if [ "$(d2_field "$S1" PreToolUse agent-model-guard.sh matcher)" = "Agent" ]; then ok; else bad "d2 the agent guard must be registered on PreToolUse with matcher Agent"; fi
+pass_n=$((pass_n+1))
+if [ "$(d2_field "$S1" PreToolUse agent-model-guard.sh timeout)" = "10" ] && [ "$(d2_field "$S1" PreToolUse agent-model-guard.sh statusMessage)" = "Agent launch names its model" ]; then ok; else bad "d2 the agent guard entry needs timeout 10 and its status message"; fi
+pass_n=$((pass_n+1))
+for ex in "$REPOD2"/hooks/*.conf.example; do
+  if [ -f "$DH1/.claude/hooks/$(basename "$ex")" ]; then ok; else bad "d2 the installer must copy $(basename "$ex")"; fi
+  pass_n=$((pass_n+1))
+done
+if [ "$(d2_field "$S1" SessionStart clock-in-context.sh timeout)" = "10" ] && [ "$(d2_field "$S1" UserPromptSubmit clock-in-context.sh timeout)" = "10" ]; then ok; else bad "d2 clock-in-context needs timeout 10 under SessionStart and UserPromptSubmit"; fi
+pass_n=$((pass_n+1))
+# the multi-chat group, answered yes on a pty
+DH2="$T/d2-optin"; mkdir -p "$DH2"
+d2_yes "$DH2"; d2rc=$?
+S2="$DH2/.claude/settings.json"
+if [ "$d2rc" = 0 ]; then ok; else bad "d2 an install with the multi-chat group on must exit 0 (got $d2rc)"; fi
+pass_n=$((pass_n+1))
+for spec in "UserPromptSubmit doorman.sh" "SessionStart doorman.sh" "Stop stop-state-check.sh"; do
+  set -- $spec
+  if [ "$(d2_field "$S2" "$1" "$2" timeout)" = "10" ]; then ok; else bad "d2 $2 under $1 must be registered with timeout 10 (got $(d2_field "$S2" "$1" "$2" timeout))"; fi
+  pass_n=$((pass_n+1))
+done
+# a fresh install without the group must NOT register the doorman anywhere
+if grep -q 'doorman.sh' "$S1"; then bad "d2 pair: the opt-in doorman must stay unregistered on a default install"; else ok; fi
+refuse_n=$((refuse_n+1))
+# idempotent: a second run changes nothing
+cp "$S1" "$T/d2-s1.before"
+env HOME="$DH1" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1
+if cmp -s "$T/d2-s1.before" "$S1"; then ok; else bad "d2 a second run must leave settings.json byte-identical"; fi
+pass_n=$((pass_n+1))
+# upgrade: an old-kit settings.json (no timeouts, no agent guard) plus an entry of the user's own
+DH3="$T/d2-upgrade"; mkdir -p "$DH3/.claude"
+python3 - "$DH3/.claude/settings.json" <<'PY'
+import json,sys
+C='/bin/bash "$HOME/.claude/hooks/%s"'
+def e(n,m=None):
+    g={"hooks":[{"type":"command","command":C%n}]}
+    if m: g["matcher"]=m
+    return g
+s={"theme":"dark","hooks":{
+ "SessionStart":[e("check-claude-md.sh"),e("clock-in-context.sh"),{"hooks":[{"type":"command","command":"echo mine"}]}],
+ "UserPromptSubmit":[e("clock-in-context.sh"),e("doorman.sh")],
+ "Stop":[e("stop-state-check.sh")]}}
+json.dump(s,open(sys.argv[1],"w"))
+PY
+env HOME="$DH3" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1; d2rc=$?
+S3="$DH3/.claude/settings.json"
+if [ "$d2rc" = 0 ]; then ok; else bad "d2 upgrade must exit 0 (got $d2rc)"; fi
+pass_n=$((pass_n+1))
+if [ "$(d2_field "$S3" SessionStart clock-in-context.sh timeout)" = "10" ] && [ "$(d2_field "$S3" UserPromptSubmit clock-in-context.sh timeout)" = "10" ] \
+   && [ "$(d2_field "$S3" UserPromptSubmit doorman.sh timeout)" = "10" ] && [ "$(d2_field "$S3" Stop stop-state-check.sh timeout)" = "10" ]; then ok; else bad "d2 upgrade: existing entries must gain timeout 10"; fi
+pass_n=$((pass_n+1))
+if [ "$(d2_count "$S3" SessionStart)" = 3 ] && [ "$(d2_count "$S3" UserPromptSubmit)" = 2 ]; then ok; else bad "d2 upgrade: no duplicate entries (SessionStart $(d2_count "$S3" SessionStart), want 3; UserPromptSubmit $(d2_count "$S3" UserPromptSubmit), want 2)"; fi
+pass_n=$((pass_n+1))
+if grep -q '"echo mine"' "$S3" && grep -q '"theme": "dark"' "$S3"; then ok; else bad "d2 upgrade: the user's own entry and setting must survive"; fi
+pass_n=$((pass_n+1))
+# a timeout the user chose is never overwritten
+DH4="$T/d2-usertimeout"; mkdir -p "$DH4/.claude"
+printf '%s' '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/bin/bash \"$HOME/.claude/hooks/clock-in-context.sh\"","timeout":99}]}]}}' > "$DH4/.claude/settings.json"
+env HOME="$DH4" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1
+if [ "$(d2_field "$DH4/.claude/settings.json" UserPromptSubmit clock-in-context.sh timeout)" = "99" ]; then ok; else bad "d2 pair: a timeout the user set (99) must not be overwritten"; fi
+pass_n=$((pass_n+1))
+# a python3 that is on PATH but exits non-zero (the Mac stub without the Command Line Tools)
+PYSTUB="$T/d2-pystub"; mkdir -p "$PYSTUB"; printf '#!/bin/sh\nexit 1\n' > "$PYSTUB/python3"; chmod +x "$PYSTUB/python3"
+DH5="$T/d2-stub"; mkdir -p "$DH5"
+d2out="$(env HOME="$DH5" PATH="$PYSTUB:$PATH" GUARD_PYTHON_PREFERRED=/nonexistent/python3 bash "$REPOD2/install.sh" --yes 2>&1)"; d2rc=$?
+S5="$DH5/.claude/settings.json"
+if [ "$d2rc" = 0 ]; then ok; else bad "d2 a failing python3 must not stop the installer (got $d2rc)"; fi
+pass_n=$((pass_n+1))
+for g in block-dangerous-git.sh commit-pathspec-guard.sh heavy-suite-guard.sh gate-guard.sh helper-ledger.py; do
+  if grep -q "$g" "$S5"; then bad "d2 a failing python3 must be treated as no python3: $g must not be registered"; else ok; fi
+  refuse_n=$((refuse_n+1))
+done
+if printf '%s' "$d2out" | grep -qi 'python3.*\(fails\|does not run\|not work\)'; then ok; else bad "d2 the warning must say python3 is present but does not run"; fi
+pass_n=$((pass_n+1))
+if grep -q 'agent-model-guard.sh' "$S5" && grep -q 'channel-size-guard.sh' "$S5"; then ok; else bad "d2 pair: the guards that need no python3 are still registered"; fi
+pass_n=$((pass_n+1))
+# the python3 registration branch (no node) must give the same upgrade result as the node branch
+DH6="$T/d2-upgrade-py"; mkdir -p "$DH6/.claude";
+python3 - "$DH6/.claude/settings.json" <<'PY'
+import json,sys
+C='/bin/bash "$HOME/.claude/hooks/%s"'
+e=lambda n:{"hooks":[{"type":"command","command":C%n}]}
+json.dump({"hooks":{"SessionStart":[e("clock-in-context.sh")],"UserPromptSubmit":[e("clock-in-context.sh"),e("doorman.sh")]}},open(sys.argv[1],"w"))
+PY
+env HOME="$DH6" INSTALL_PRETEND_MISSING=node bash "$REPOD2/install.sh" --yes >/dev/null 2>&1; d2rc=$?
+S6="$DH6/.claude/settings.json"
+if [ "$d2rc" = 0 ] && [ "$(d2_field "$S6" SessionStart clock-in-context.sh timeout)" = "10" ] && [ "$(d2_field "$S6" UserPromptSubmit doorman.sh timeout)" = "10" ] \
+   && [ "$(d2_count "$S6" UserPromptSubmit)" = 2 ] && [ "$(d2_field "$S6" PreToolUse agent-model-guard.sh matcher)" = "Agent" ]; then ok; else bad "d2 the python3 branch (no node) must upgrade timeouts, add the agent guard, and not duplicate (rc=$d2rc)"; fi
+pass_n=$((pass_n+1))
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?

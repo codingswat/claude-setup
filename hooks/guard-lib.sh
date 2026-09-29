@@ -63,9 +63,11 @@
 # (some Linux images) the PATH one is used, as before. GUARD_PYTHON_PREFERRED is a TEST SEAM
 # (the suite points it at a missing file to drive the PATH fallback and the failing-parser
 # cases); leave it unset in real use. Each guard checks the result is executable before use.
+# The preferred one must also RUN: on a Mac without the Command Line Tools /usr/bin/python3 is a
+# stub that exits non-zero, and choosing it would fail every guard closed (test-hooks.sh "D1b").
 guard_resolve_python() {
   local p="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
-  if [ -x "$p" ]; then printf '%s' "$p"; else command -v python3 2>/dev/null; fi
+  if [ -x "$p" ] && "$p" -c '' >/dev/null 2>&1; then printf '%s' "$p"; else command -v python3 2>/dev/null; fi
 }
 GUARD_PY="$(guard_resolve_python)"
 

@@ -85,10 +85,6 @@ say "Installing into $DEST"
 
 [ -f "$SRC/hooks/check-claude-md.sh" ] || die "run this from inside the repo folder (hooks/ not found)."
 
-JSONTOOL=""
-command -v node    >/dev/null 2>&1 && JSONTOOL="node"
-[ -z "$JSONTOOL" ] && command -v python3 >/dev/null 2>&1 && JSONTOOL="python3"
-
 # have <binary> — "is it on PATH?", with one test seam: INSTALL_PRETEND_MISSING is a
 # space-separated list of binaries to treat as absent, so hooks/test-hooks.sh can prove
 # the "skip that guard" branch without rebuilding PATH. Empty in every real run.
@@ -96,6 +92,33 @@ have() {
   case " ${INSTALL_PRETEND_MISSING:-} " in *" $1 "*) return 1 ;; esac
   command -v "$1" >/dev/null 2>&1
 }
+
+# python3 must not just EXIST, it must RUN. On a Mac without the Command Line Tools,
+# /usr/bin/python3 is a stub that is on PATH and executable but exits non-zero; the guards
+# would then fail closed on every command. So probe with a real run, and treat a failing
+# interpreter exactly like a missing one. The guards prefer /usr/bin/python3 when it is
+# executable (hooks/guard-lib.sh guard_resolve_python) and do NOT fall back if it fails, so
+# that one is probed too — a working python3 further along PATH does not save them.
+# GUARD_PYTHON_PREFERRED is the same test seam guard-lib.sh reads; empty in every real run.
+HAVE_PY=0
+if have python3; then
+  if python3 -c 'import sys' >/dev/null 2>&1; then
+    HAVE_PY=1
+    gp="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
+    if [ -x "$gp" ] && ! "$gp" -c 'import sys' >/dev/null 2>&1; then HAVE_PY=0; PY_WHY="$gp is on this machine but fails to run"; fi
+  else
+    PY_WHY="python3 is on PATH but fails to run"
+  fi
+fi
+if [ "$HAVE_PY" = 0 ] && [ -n "${PY_WHY:-}" ]; then
+  warn "$PY_WHY (on a Mac this is the stub that appears until the Command Line Tools are"
+  say  "     installed: run  xcode-select --install ). Treating it as not installed — the"
+  say  "     guards that need python3 are skipped below; install it, then run this again."
+fi
+
+JSONTOOL=""
+have node && JSONTOOL="node"
+[ -z "$JSONTOOL" ] && [ "$HAVE_PY" = 1 ] && JSONTOOL="python3"
 
 mkdir -p "$DEST/hooks" "$DEST/skills" "$DEST/project-template" "$DEST/git-hooks" || die "cannot create $DEST"
 
@@ -125,6 +148,7 @@ copy_if_present  "$SRC/hooks/guard-lib.sh"             "$DEST/hooks/guard-lib.sh
 copy_if_present  "$SRC/hooks/block-dangerous-git.sh"   "$DEST/hooks/block-dangerous-git.sh"   "block-dangerous-git.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/commit-pathspec-guard.sh" "$DEST/hooks/commit-pathspec-guard.sh" "commit-pathspec-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/heavy-suite-guard.sh"     "$DEST/hooks/heavy-suite-guard.sh"     "heavy-suite-guard.sh (PreToolUse: Bash)" required
+copy_if_present  "$SRC/hooks/agent-model-guard.sh"     "$DEST/hooks/agent-model-guard.sh"     "agent-model-guard.sh (PreToolUse: Agent)" required
 copy_if_present  "$SRC/hooks/override-ledger.sh"       "$DEST/hooks/override-ledger.sh"       "override-ledger.sh (used by the guards below)" required
 copy_if_present  "$SRC/hooks/gate-guard.sh"            "$DEST/hooks/gate-guard.sh"            "gate-guard.sh (PreToolUse: Bash)" required
 copy_if_present  "$SRC/hooks/channel-size-guard.sh"    "$DEST/hooks/channel-size-guard.sh"    "channel-size-guard.sh (PreToolUse: Write|Edit|MultiEdit|Bash)" required
@@ -144,7 +168,7 @@ copy_if_present  "$SRC/hooks/test-helper-ledger.sh"    "$DEST/hooks/test-helper-
 copy_if_present  "$SRC/hooks/test-rules-cap.sh"        "$DEST/hooks/test-rules-cap.sh"        "test-rules-cap.sh (run by test-hooks.sh)"
 chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/hooks/clock-in-context.sh" \
          "$DEST/hooks/guard-lib.sh" \
-         "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" \
+         "$DEST/hooks/block-dangerous-git.sh" "$DEST/hooks/commit-pathspec-guard.sh" "$DEST/hooks/agent-model-guard.sh" \
          "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/override-ledger.sh" "$DEST/hooks/gate-guard.sh" \
          "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/channel-size-post.sh" "$DEST/hooks/helper-ledger.py" \
          "$DEST/hooks/channel-provenance-pre.sh" "$DEST/hooks/channel-provenance-post.sh" \
@@ -154,9 +178,10 @@ chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/ho
 # .conf.example files for the new guards — copied as EXAMPLES only, never as a live conf:
 # each guard stays inert until you copy one to its live name yourself and fill it in (the
 # one exception, heavy-suite.conf above, predates this stage). See INSTALL.md.
-for ex in gate-guard.conf.example channel-ceiling.conf.example allowed-email-domains.conf.example \
-          block-dangerous-git.conf.example state-check.conf.example; do
-  copy_if_present "$SRC/hooks/$ex" "$DEST/hooks/$ex" "$ex (example — copy it to enable)"
+# Every *.conf.example the kit ships (a glob, so a new one is never forgotten).
+for exf in "$SRC"/hooks/*.conf.example; do
+  ex="$(basename "$exf")"
+  copy_if_present "$exf" "$DEST/hooks/$ex" "$ex (example — copy it to enable)"
 done
 
 # The redaction names list — git-hooks/pre-commit's privacy check fails CLOSED (refuses
@@ -330,11 +355,23 @@ register_hook() {   # event  command  timeout  statusMessage  [matcher]
         if(s.hooks===undefined) s.hooks={};
         if(s.hooks===null || typeof s.hooks!=="object" || Array.isArray(s.hooks)){
           console.log("SHAPE_FAIL"); process.exit(0); }
-        if(s.hooks[ev]===undefined) s.hooks[ev]=[];
+        if(s.hooks[ev]===undefined){ if(process.env.SETUP_ONLY_EXISTING){ console.log("ABSENT"); process.exit(0); } s.hooks[ev]=[]; }
         if(!Array.isArray(s.hooks[ev])){ console.log("SHAPE_FAIL"); process.exit(0); }
         const dup = s.hooks[ev].some(g =>
           (g && Array.isArray(g.hooks) ? g.hooks : []).some(h => h && h.command === cmd));
-        if(dup){ console.log("ALREADY"); process.exit(0); }
+        if(dup){
+          // Upgrade path: an entry from an older kit has no timeout. Add ours, but never
+          // overwrite one the user set, and never touch anything else in the entry.
+          let changed=false;
+          if(to) for(const g of s.hooks[ev]) for(const h of (g && Array.isArray(g.hooks) ? g.hooks : []))
+            if(h && h.command===cmd && h.timeout===undefined){ h.timeout=Number(to); changed=true; }
+          if(!changed){ console.log("ALREADY"); process.exit(0); }
+          const tmp=p+".setup-tmp";
+          fs.writeFileSync(tmp, JSON.stringify(s,null,2)+"\n");
+          fs.renameSync(tmp, p);
+          console.log("UPDATED"); process.exit(0);
+        }
+        if(process.env.SETUP_ONLY_EXISTING){ console.log("ABSENT"); process.exit(0); }
         const h={type:"command",command:cmd};
         if(to) h.timeout=Number(to);
         if(sm) h.statusMessage=sm;
@@ -363,14 +400,31 @@ except Exception:
 if "hooks" not in s: s["hooks"] = {}
 if not isinstance(s.get("hooks"), dict):
     print("SHAPE_FAIL"); sys.exit(0)
-if ev not in s["hooks"]: s["hooks"][ev] = []
+if ev not in s["hooks"]:
+    if os.environ.get("SETUP_ONLY_EXISTING"):
+        print("ABSENT"); sys.exit(0)
+    s["hooks"][ev] = []
 if not isinstance(s["hooks"][ev], list):
     print("SHAPE_FAIL"); sys.exit(0)
 dup = any(h.get("command") == cmd
           for g in s["hooks"][ev] if isinstance(g, dict)
           for h in g.get("hooks", []) if isinstance(h, dict))
 if dup:
-    print("ALREADY"); sys.exit(0)
+    changed=False
+    if to:
+        for g in s["hooks"][ev]:
+            if not isinstance(g, dict): continue
+            for h in g.get("hooks", []):
+                if isinstance(h, dict) and h.get("command") == cmd and "timeout" not in h:
+                    h["timeout"]=int(to); changed=True
+    if not changed:
+        print("ALREADY"); sys.exit(0)
+    tmp = p + ".setup-tmp"
+    with open(tmp,"w") as fh: fh.write(json.dumps(s,indent=2)+"\n")
+    os.replace(tmp, p)
+    print("UPDATED"); sys.exit(0)
+if os.environ.get("SETUP_ONLY_EXISTING"):
+    print("ABSENT"); sys.exit(0)
 h={"type":"command","command":cmd}
 if to: h["timeout"]=int(to)
 if sm: h["statusMessage"]=sm
@@ -393,7 +447,9 @@ ANY_ADDED=0
 report_hook_result() {   # $1 = result  $2 = human name of the hook
   case "$1" in
     ADDED)      ok "$2 registered"; ANY_ADDED=1 ;;
+    UPDATED)    ok "$2 was already registered — gave it its timeout"; ANY_ADDED=1 ;;
     ALREADY)    skip "$2 was already registered" ;;
+    ABSENT)     : ;;   # upgrade-only pass: not registered, and not ours to add
     PARSE_FAIL) warn "settings.json isn't valid JSON — not touching it. Add $2 by hand (see INSTALL.md)." ;;
     SHAPE_FAIL) warn "settings.json is valid JSON but its \"hooks\" block has an unexpected shape — not touching it. Add $2 by hand (see INSTALL.md)." ;;
     NOTOOL)     warn "no node or python3 found — add $2 by hand (see INSTALL.md)." ;;
@@ -407,10 +463,10 @@ report_hook_result "$res" "the SessionStart hook (check-claude-md.sh)"
 [ "$res" = "ADDED" ] && say "     Your rules now get re-asserted at the start of every session."
 
 CLOCK_CMD='/bin/bash "$HOME/.claude/hooks/clock-in-context.sh"'
-res=$(register_hook "SessionStart" "$CLOCK_CMD" "" "Loading the owner card...")
+res=$(register_hook "SessionStart" "$CLOCK_CMD" "10" "Loading the owner card...")
 report_hook_result "$res" "the SessionStart hook (clock-in-context.sh)"
 
-res=$(register_hook "UserPromptSubmit" "$CLOCK_CMD" "" "")
+res=$(register_hook "UserPromptSubmit" "$CLOCK_CMD" "10" "")
 report_hook_result "$res" "the UserPromptSubmit hook (clock-in-context.sh)"
 
 # The three PreToolUse guards below use jq to read the tool-call JSON AND python3 to
@@ -418,7 +474,7 @@ report_hook_result "$res" "the UserPromptSubmit hook (clock-in-context.sh)"
 # missing — a silent no-op would be worse. So they are registered only when BOTH are on
 # PATH: registering them with one of the two missing would install guards that refuse
 # every Bash command on this machine.
-if have jq && have python3; then
+if have jq && [ "$HAVE_PY" = 1 ]; then
   BLOCK_GIT_CMD='/bin/bash "$HOME/.claude/hooks/block-dangerous-git.sh"'
   res=$(register_hook "PreToolUse" "$BLOCK_GIT_CMD" "" "" "Bash")
   report_hook_result "$res" "the PreToolUse hook (block-dangerous-git.sh)"
@@ -456,6 +512,12 @@ else
   say  "     it. Install jq, then run this again."
 fi
 
+# agent-model-guard.sh needs neither jq nor python3 (it reads the call with sed), so it is
+# registered on every machine: it refuses an Agent launch that names no model.
+AGENT_CMD='/bin/bash "$HOME/.claude/hooks/agent-model-guard.sh"'
+res=$(register_hook "PreToolUse" "$AGENT_CMD" "10" "Agent launch names its model" "Agent")
+report_hook_result "$res" "the PreToolUse hook (agent-model-guard.sh)"
+
 # gate-guard.sh is different: unlike the four above, it degrades safely with NO jq (it
 # falls back to a cruder text match instead of refusing everything), and with no python3 it
 # now passes every command with a one-line warning instead of refusing them — it is the one
@@ -463,7 +525,7 @@ fi
 # exit codes. Registering it without python3 would therefore be harmless but useless: a
 # subprocess per Bash call that can never say no. So it is still gated on python3, now for
 # cost rather than for safety.
-if command -v python3 >/dev/null 2>&1; then
+if [ "$HAVE_PY" = 1 ]; then
   GATE_CMD='/bin/bash "$HOME/.claude/hooks/gate-guard.sh"'
   res=$(register_hook "PreToolUse" "$GATE_CMD" "" "" "Bash")
   report_hook_result "$res" "the PreToolUse hook (gate-guard.sh)"
@@ -476,7 +538,7 @@ fi
 
 # The helper ledger only reads transcripts and appends TSV rows — never blocks the
 # session, and needs python3 (not jq) on PATH.
-if command -v python3 >/dev/null 2>&1; then
+if [ "$HAVE_PY" = 1 ]; then
   LEDGER_CMD='/usr/bin/env python3 "$HOME/.claude/hooks/helper-ledger.py"'
   res=$(register_hook "Stop" "$LEDGER_CMD" "" "")
   report_hook_result "$res" "the Stop hook (helper-ledger.py)"
@@ -493,9 +555,9 @@ say "    - channel-provenance-pre.sh / -post.sh: record, per session, which line
 say "      shared file (NOTES, a plan, a changelog) THIS session wrote, so a later commit"
 say "      can't accidentally sweep in another session's uncommitted change. Needs python3"
 say "      — inert without it."
-say "    - doorman.sh: bounces a new prompt to a session already marked retired, or gone"
-say "      idle for a while at a high context, saving the message for the next session"
-say "      instead of losing it."
+say "    - doorman.sh: bounces a new prompt to a session already marked retired, or past"
+say "      the context cut-off, saving the message for the next session instead of losing"
+say "      it. Also runs at session start, to note a compaction."
 say "    - stop-state-check.sh: marks a session retired past a configured context floor,"
 say "      and won't let a turn end having changed tracked files unless that role's own"
 say "      state file is among them."
@@ -504,14 +566,17 @@ say "  hooks/state-check.conf.example) — none of it exists yet, so all four st
 say "  until you write it by hand. Nothing here talks to the network."
 if ask "Register the multi-chat coordination hooks?" "n"; then
   DOORMAN_CMD='/bin/bash "$HOME/.claude/hooks/doorman.sh"'
-  res=$(register_hook "UserPromptSubmit" "$DOORMAN_CMD" "" "" )
+  res=$(register_hook "UserPromptSubmit" "$DOORMAN_CMD" "10" "" )
   report_hook_result "$res" "the UserPromptSubmit hook (doorman.sh)"
+  # Also on SessionStart: after a compaction it prints the "context unknown" notice there.
+  res=$(register_hook "SessionStart" "$DOORMAN_CMD" "10" "" )
+  report_hook_result "$res" "the SessionStart hook (doorman.sh)"
 
   STATECHK_CMD='/bin/bash "$HOME/.claude/hooks/stop-state-check.sh"'
-  res=$(register_hook "Stop" "$STATECHK_CMD" "" "")
+  res=$(register_hook "Stop" "$STATECHK_CMD" "10" "")
   report_hook_result "$res" "the Stop hook (stop-state-check.sh)"
 
-  if command -v python3 >/dev/null 2>&1; then
+  if [ "$HAVE_PY" = 1 ]; then
     PROV_PRE_CMD='/bin/bash "$HOME/.claude/hooks/channel-provenance-pre.sh"'
     res=$(register_hook "PreToolUse" "$PROV_PRE_CMD" "" "" "Write|Edit|MultiEdit|Bash")
     report_hook_result "$res" "the PreToolUse hook (channel-provenance-pre.sh)"
@@ -527,6 +592,16 @@ if ask "Register the multi-chat coordination hooks?" "n"; then
   say  "  of the four on for a real project — every one is inert with no conf."
 else
   skip "Skipped — all four stay inert (no hooks/state-check.conf, nothing registered)."
+  # Not adding anything — but a group registered by an earlier run of this installer gets
+  # its timeout now (a long paste once outran an unbounded prompt hook). Existing entries only.
+  export SETUP_ONLY_EXISTING=1
+  res=$(register_hook "UserPromptSubmit" '/bin/bash "$HOME/.claude/hooks/doorman.sh"' "10" "")
+  report_hook_result "$res" "the UserPromptSubmit hook (doorman.sh)"
+  res=$(register_hook "SessionStart" '/bin/bash "$HOME/.claude/hooks/doorman.sh"' "10" "")
+  report_hook_result "$res" "the SessionStart hook (doorman.sh)"
+  res=$(register_hook "Stop" '/bin/bash "$HOME/.claude/hooks/stop-state-check.sh"' "10" "")
+  report_hook_result "$res" "the Stop hook (stop-state-check.sh)"
+  unset SETUP_ONLY_EXISTING
 fi
 
 # #9: a backup copy only earns its place if we actually changed the file.
