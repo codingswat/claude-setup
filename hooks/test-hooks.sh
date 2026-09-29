@@ -2808,6 +2808,38 @@ c2_chk pass "a symlinked held/ folder is never written through: the prompt passe
 S="$C3/s-crash6"; mkdir -p "$S/held"; ln -s "$SENT" "$S/held/k6"; c3_p "$D1" k6 "$C3/tp100" "plain"
 c2_chk pass "a symlinked held file is not delivered and its target is untouched" bash -c "[ '$C3_RC' = 0 ] && ! grep -q 'HELD MESSAGE' '$C3/o' && [ \"\$(cat '$SENT')\" = keep ]"
 
+# ======================================================================================
+echo "refresh 2026-09-29 (d1): agent-model-guard (B1)"
+D1="$T/d1"; rm -rf "$D1"; mkdir -p "$D1"
+d1_exp() {   # want label script [NAME=value...] : $INPUT through the script; want 2 counts as a must-refuse case
+  local want="$1" label="$2" script="$3"; shift 3
+  printf '%s' "$INPUT" | env "$@" bash "$script" >/dev/null 2>&1; local got=$?
+  if [ "$got" = "$want" ]; then ok; else bad "$label (wanted exit $want, got $got)"; fi
+  if [ "$want" = 2 ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi
+}
+d1_msg() {   # want-substring label script [NAME=value...] : must exit 2 AND say the substring (refused for the right reason)
+  local sub="$1" label="$2" script="$3"; shift 3
+  local err; err="$(printf '%s' "$INPUT" | env "$@" bash "$script" 2>&1 >/dev/null)"; local got=$?
+  if [ "$got" = 2 ] && printf '%s' "$err" | grep -qF -- "$sub"; then ok; else bad "$label (wanted exit 2 saying '$sub', got $got: $err)"; fi
+  refuse_n=$((refuse_n+1))
+}
+d1_chk() { local label="$1"; shift; if "$@"; then ok; else bad "$label"; fi; pass_n=$((pass_n+1)); }
+d1_agent() { python3 -c 'import json,sys;print(json.dumps({"tool_name":sys.argv[1],"tool_input":json.loads(sys.argv[2])}))' "$@"; }
+
+# ---- B1 agent-model-guard ------------------------------------------------------------------
+AMG="$HOOKS_DIR/agent-model-guard.sh"
+for j in '{"subagent_type":"executor","description":"d","prompt":"p"}' '{"description":"d","prompt":"p"}' '{"model":""}' '{"model":"   "}' '{"model":"\t"}' '{"model":null}' '{"model":7}' \
+         '{"description":"d","prompt":"use \"model\": \"haiku\" for this"}' '{"subagent_type":"fork2","prompt":"p"}'; do
+  INPUT="$(d1_agent Agent "$j")"; d1_exp 2 "B1 must refuse an Agent launch whose model is missing or blank: $j" "$AMG"; done
+for j in '{"model":"sonnet","prompt":"p"}' '{"model":"any-string-at-all-9"}' '{"subagent_type":"fork","description":"d","prompt":"p"}' '{"subagent_type":"fork","model":"haiku"}' '{"subagent_type":"executor","model":"opus"}'; do
+  INPUT="$(d1_agent Agent "$j")"; d1_exp 0 "B1 must pass an Agent launch that names a model, or a fork: $j" "$AMG"; done
+INPUT="$(json_bash 'ls')"; d1_exp 0 "B1 a Bash call with no model field is not its business" "$AMG"
+INPUT="$(d1_agent Read '{"file_path":"/x"}')"; d1_exp 0 "B1 any other tool passes untouched" "$AMG"
+INPUT=""; d1_exp 0 "B1 an empty payload passes (nothing to judge)" "$AMG"
+INPUT="$(d1_agent Agent '{"prompt":"p"}')"; d1_msg "name the model for this helper" "B1 the refusal says what to do" "$AMG"
+if bash "$AMG" < <(d1_agent Agent '{"prompt":"p"}') 2>&1 | grep -qiE 'rule [0-9]|fable|opus|sonnet|haiku'; then bad "B1 the refusal text must not name a private rule or a model"; else ok; fi; pass_n=$((pass_n+1))
+d1_chk "B1 no private rule number, model name or path in the script" bash -c "[ -f '$HOOKS_DIR/agent-model-guard.sh' ] && ! grep -liE 'rule [0-9]+|fable|helper setup|ac'\"-\"'calc|/Us'\"ers\"'/|done-list' '$HOOKS_DIR/agent-model-guard.sh'"
+
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
 printf '%s\n' "$HL_OUT" | tail -3
