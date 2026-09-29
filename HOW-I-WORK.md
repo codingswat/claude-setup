@@ -153,7 +153,8 @@ as file contents:
   only for work that is sure to fix a named problem, never to keep hammering an unsolved one.
 - **Use the lightest tool that can actually do the job.** A cheap, fast model for
   mechanical work; a stronger one only where real judgment is needed. Spending more
-  than a task needs isn't caution, it's waste.
+  than a task needs isn't caution, it's waste. A hook enforces the habit: a helper agent
+  cannot be launched without naming the model it runs on.
 - **A budget is a gauge to report, not a stop sign to quietly obey.** Once a job is under way,
   going over an estimate means saying so and continuing — not trimming the work down to fit
   without telling me. An earlier habit did the opposite: work quietly got smaller once an

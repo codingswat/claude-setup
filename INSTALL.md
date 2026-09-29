@@ -21,13 +21,13 @@ through filling in your rulebook afterwards — which is the part that actually 
 
 | Path | What happens |
 |---|---|
-| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-size-post.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Five more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
+| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `agent-model-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-size-post.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Six more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`, `commit-size`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
 | `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-merge-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/.redaction-names.local` | Created **only if missing**, empty, with a comment explaining its two sections (`[guard]`, `[redact-only]`) — `git-hooks/pre-commit`'s privacy check fails CLOSED (refuses every commit) with no file there at all, so a fresh machine needs at least this to unblock ordinary commits. The installer's closing summary tells you to open it and fill it in |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | Every skill folder in this repo (currently fifteen); any skill folder of the same name is left alone |
-| `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), `PostToolUse` on the same matcher (`channel-size-post.sh`), and `Stop` (the helper cost ledger) — up to **ten** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **four** more, so **fourteen** in total with everything on. Everything else in the file is preserved |
+| `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`), to `Agent` (`agent-model-guard.sh`, which refuses a helper launch that does not name its model) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), `PostToolUse` on the same matcher (`channel-size-post.sh`), and `Stop` (the helper cost ledger) — up to **eleven** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` and `SessionStart` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **five** more, so **sixteen** in total with everything on. The two hooks that run on every message you type (`clock-in-context.sh`, `doorman.sh`) and the end-of-turn check (`stop-state-check.sh`) are registered with a 10-second time limit, so a stuck one cannot hang your session Everything else in the file is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
 | git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
 
@@ -39,6 +39,12 @@ folder). Anything that would be overwritten is copied to
 
 Requires `bash`, and either `node` or `python3` for the settings merge. Claude Code already
 brings Node, so this is almost always satisfied.
+
+`python3` has to actually run, not just exist. On a Mac that has never had Apple's Command Line
+Tools installed, the built-in `python3` is an empty stand-in that fails when called. The
+installer tests it by running it; if it fails, the installer says so, treats it as not
+installed (skipping the guards that need it), and tells you to run `xcode-select --install`
+and then run it again. The guards themselves also pick a `python3` that runs.
 
 Three `PreToolUse` guards (`block-dangerous-git.sh`, `commit-pathspec-guard.sh`,
 `heavy-suite-guard.sh`) additionally need `jq` **and** `python3` on `PATH` — they read the
@@ -53,7 +59,8 @@ text match instead of a refusal), and with no `python3` it passes every command 
 one-line warning — it is the one guard allowed to fail OPEN, because it protects no data and
 only enforces a habit about exit codes. The installer still gates it on `python3`, now for
 cost rather than safety: without `python3` it could never say no, so registering it would
-only add a subprocess to every Bash call.
+only add a subprocess to every Bash call. The model guard (`agent-model-guard.sh`) needs
+neither `jq` nor `python3`, so it is always registered.
 
 All four Bash guards also need `hooks/guard-lib.sh` beside them — the shared file that reads
 a command the way a shell would (quotes, tabs, escapes, `sh -c`/`eval` wrappers). It is not a
@@ -82,7 +89,8 @@ mkdir -p ~/.claude/hooks ~/.claude/git-hooks ~/.claude/skills ~/.claude/project-
 cp -a ~/.claude/hooks ~/.claude/hooks.backup-$(date +%s) 2>/dev/null
 cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
    hooks/clock-in-context.sh hooks/guard-lib.sh hooks/block-dangerous-git.sh \
-   hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/override-ledger.sh \
+   hooks/commit-pathspec-guard.sh hooks/heavy-suite-guard.sh hooks/agent-model-guard.sh \
+   hooks/override-ledger.sh \
    hooks/gate-guard.sh hooks/channel-size-guard.sh hooks/channel-size-post.sh \
    hooks/helper-ledger.py \
    hooks/channel-provenance-pre.sh hooks/channel-provenance-post.sh hooks/provenance.py \
@@ -93,7 +101,7 @@ chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
          ~/.claude/hooks/clock-in-context.sh ~/.claude/hooks/guard-lib.sh \
          ~/.claude/hooks/block-dangerous-git.sh \
          ~/.claude/hooks/commit-pathspec-guard.sh ~/.claude/hooks/heavy-suite-guard.sh \
-         ~/.claude/hooks/override-ledger.sh ~/.claude/hooks/gate-guard.sh \
+         ~/.claude/hooks/agent-model-guard.sh ~/.claude/hooks/override-ledger.sh ~/.claude/hooks/gate-guard.sh \
          ~/.claude/hooks/channel-size-guard.sh ~/.claude/hooks/channel-size-post.sh \
          ~/.claude/hooks/helper-ledger.py \
          ~/.claude/hooks/channel-provenance-pre.sh ~/.claude/hooks/channel-provenance-post.sh \
@@ -111,11 +119,11 @@ cp -Rn skills/. ~/.claude/skills/
 # hooks/heavy-suite.conf.example (whose PATTERN is now exactly the guard's built-in
 # default) and widen yours, or delete yours to fall back to the built-in.
 
-# Five more .conf.example files — copied as EXAMPLES only, next to their hooks. Each
+# Six more .conf.example files — copied as EXAMPLES only, next to their hooks. Each
 # matching guard stays inert until you copy one to its live name yourself:
 cp -n hooks/gate-guard.conf.example hooks/channel-ceiling.conf.example \
       hooks/allowed-email-domains.conf.example hooks/block-dangerous-git.conf.example \
-      hooks/state-check.conf.example \
+      hooks/state-check.conf.example hooks/commit-size.conf.example \
       ~/.claude/hooks/
 
 # The git hooks proper — copied in and made executable, but inert until step 7:
@@ -287,11 +295,15 @@ Same merge as step 4, three more events this time.
 { "hooks": [ {
     "type": "command",
     "command": "/bin/bash \"$HOME/.claude/hooks/clock-in-context.sh\"",
+    "timeout": 10,
     "statusMessage": "Loading the owner card..."
 } ] }
 ```
 
-Then the Bash-only guards go under `PreToolUse`. Each carries a `"matcher"` on the
+(`"timeout": 10` is seconds: the longest a hook that runs on every message may take before
+Claude Code stops waiting for it.)
+
+Then the guards go under `PreToolUse`. Each carries a `"matcher"` on the
 group — that's what restricts a hook to firing only before the `Bash` tool runs:
 
 ```json
@@ -306,6 +318,8 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
           { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/heavy-suite-guard.sh\"" } ] },
       { "matcher": "Bash", "hooks": [
           { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/gate-guard.sh\"" } ] },
+      { "matcher": "Agent", "hooks": [
+          { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/agent-model-guard.sh\"", "timeout": 10 } ] },
       { "matcher": "Write|Edit|MultiEdit|Bash", "hooks": [
           { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/channel-size-guard.sh\"" } ] }
     ],
@@ -317,12 +331,24 @@ group — that's what restricts a hook to firing only before the `Bash` tool run
 }
 ```
 
+`agent-model-guard.sh` (the `Agent` entry above) refuses to start a helper agent whose launch
+does not name a model — the point is that choosing the cheapest model that can do the job is
+a decision made every time, not a default nobody looked at. It reads only the launch itself
+and needs nothing beyond `bash` and `sed`.
+
 `block-dangerous-git.sh` inspects quoted text too, so a command that
 merely quotes a dangerous git command — `echo "git reset --hard is dangerous"` — is
 refused along with the real thing; put that text in a file with an editor instead of
 echoing it. (The
 trade-off is deliberate: reading only unquoted words would let `sh -c "git reset --hard"`
-through, which is the real command wearing quotes.)
+through, which is the real command wearing quotes.) It also refuses the ways of switching
+git's other checks off (`--no-verify`, and `-c core.hooksPath=...`), the commands that
+make something public (`gh repo create --public`, `gh repo edit --visibility public`, and
+`npm publish` without `--dry-run`), and deleting a branch on the remote that has not been
+merged. That last check has to look at the remote, so **on a delete of a remote branch only,
+this guard makes a quick network fetch** (limited to 10 seconds); a branch it cannot check is
+refused. `GITGUARD=1` approves a refusal on purpose. One loosening: `gate-guard.sh` now refuses a test run piped into a reader only when a
+commit, a push or a "READY" message is chained after it; the pipe alone passes.
 
 `gate-guard.sh` is gated on `python3` (see the note above the "Requires" paragraph): with
 no `python3` it passes everything with a warning, so registering it would cost a subprocess
@@ -359,7 +385,7 @@ prints the last N rows plus a per-model summary.
 ### 6b. Optional: multi-chat coordination hooks
 
 Only useful once more than one Claude Code session works in the same repo at a time —
-skip this entirely for a single-session project. Four hooks (copied in step 1), one config
+skip this entirely for a single-session project. Four hooks (copied in step 1; the doorman is registered twice, so five entries), one config
 file (`hooks/state-check.conf`, see `hooks/state-check.conf.example`), which is shared with
 `stop-state-check.sh`.
 
@@ -383,19 +409,53 @@ need `python3` — inert without it:
 }
 ```
 
-`doorman.sh` (bounces a new prompt to a session already retired, or idle a while at a high
-context) goes under `UserPromptSubmit`; `stop-state-check.sh` (marks a session retired past
-its configured context floor, and holds a turn open until the role's state file is among
-the changed files) goes under `"Stop"`. Neither needs `python3` or `jq`:
+`doorman.sh` goes under `UserPromptSubmit` and, a second time, under `SessionStart`;
+`stop-state-check.sh` goes under `"Stop"`. Neither needs `python3` or `jq`. Both carry
+`"timeout": 10`.
+
+- The doorman holds a message only when the chat's context is at or over the role's cut-off
+  in `state-check.conf` (the number in thousands of tokens; it is the same number that
+  marks a chat as retired). It saves the message and refuses it once, telling you not to
+  retype it: the next message you type goes through and carries the held one. There is
+  no "idle" trigger and no "wake anyway" word any more, and a message whose context
+  size is unknown (after a compaction, or a transcript it cannot read) is never held. On
+  `SessionStart` it prints a one-line notice after a compaction. A compaction is when Claude
+  Code shrinks a long chat into a summary to free up room; it is why the size is then unknown.
+- The end-of-turn check marks a chat retired past the cut-off, and refuses to let a turn end
+  until the role's state file changed *during that turn* — the doorman takes a snapshot of the
+  repo when each turn starts, and the check compares against it (so a turn that only
+  committed, or that only touched a state file that was already changed, is judged
+  correctly). Roles named as dev seats also get **one** wrap-up stop the first time a turn ends past
+  600 thousand tokens: the chat is asked to finish, land its work and update its state file.
+  The threshold and the list of roles are lines in `state-check.conf` (`WRAPUP_K`,
+  `WRAPUP_ROLES`); the defaults are labelled as examples there. It also leaves a one-line
+  nudge for the next message when a turn grew the context a lot without any helper agent
+  being launched (`TELL_GROWTH_K`).
+- **An unattended run** (an overnight run nobody is watching) skips the wrap-up while a file
+  holds an end time in the future. Nothing here writes that file; you set it by hand, for
+  example for eight hours:
+
+  ```bash
+  mkdir -p ~/.claude/state
+  echo $(( $(date +%s) + 8*3600 )) > ~/.claude/state/unattended-until
+  ```
+
+  and end the run early with `rm ~/.claude/state/unattended-until`. A missing, garbled or
+  past-dated file means a normal run. The path can be changed with `UNATTENDED_UNTIL` in
+  `state-check.conf`.
+
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/doorman.sh\"" } ] }
+      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/doorman.sh\"", "timeout": 10 } ] }
+    ],
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/doorman.sh\"", "timeout": 10 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/stop-state-check.sh\"" } ] }
+      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/stop-state-check.sh\"", "timeout": 10 } ] }
     ]
   }
 }
@@ -443,7 +503,15 @@ onto commits that were themselves made with `git commit`, and each of those alre
 machine** (a pull, a PR merge) — run the full privacy sweep before any public step rather
 than trusting a hook for that.
 
-`pre-commit` also caps a root `CLAUDE.md` by word count (4000 words if the repo's top level
+`pre-commit` also refuses a commit that stages a key-shaped secret (an API key, a token, a
+private key) — the same list the backup hook uses. `PRIVACY_OK=1` does not lift it; a
+placeholder such as `your-key-here` passes. It refuses too when the files in one commit add up
+to more than 10 MB (change the number with `LIMIT_MB=` in `hooks/commit-size.conf`, copied
+from `commit-size.conf.example`); a deliberate big commit is `SIZE_OK=1 git commit ...`, which
+writes one line to the override ledger and is refused if that line cannot be written. Both
+checks need `hooks/auto-backup.sh` installed beside `git-hooks/`, which the installer does.
+`commit-msg` also refuses a commit *message* that contains a name from your redaction list
+(the privacy scan reads staged files, never the message). And it caps a root `CLAUDE.md` by word count (4000 words if the repo's top level
 is `$HOME/.claude`, 5750 otherwise; override with `RULES_CAP_OK=1 git commit ...`) — a
 rulebook that grows without limit stops being read.
 
@@ -475,6 +543,20 @@ Expect its final line to say something like `... passed, 0 failed`. Any failed c
 zero means one of the hooks above isn't wired the way this script expects — read its output,
 it names which one.
 
+## Known limits
+
+- **The heavy-suite guard does not see a test runner behind a wrapper.** `npm test` is
+  caught; `timeout 60 npm test` (or a runner started through `xargs`) is not.
+- **The compaction handling has not been tried against a real compaction.** The doorman's
+  notice, and the rule that an unknown context size is never held, were built from the
+  transcript format and tested on made-up ones. Whether Claude Code's `SessionStart` really
+  reports a compaction the way the doorman expects is unverified.
+- **Upgrading the multi-chat group.** If you turned the group on with an earlier version and
+  answer no (or use `--yes`) when the installer runs again, the existing entries get their
+  10-second limit but the doorman is not newly added under `SessionStart`; answer yes once to add it.
+- **The GNU/Linux branches were not run in this refresh.** Every script has a fallback for
+  Linux's versions of `date` and `stat`, but the 29 September changes were only tested on macOS.
+
 ## Undoing it
 
 Everything replaced is in `~/.claude/.setup-backup-<timestamp>/`. To switch the setup off
@@ -482,15 +564,15 @@ without deleting anything, remove the `hooks` entries you added from
 `~/.claude/settings.json`. To disable just the backup hook, delete
 `~/.claude/hooks/backup.conf` — the script exits immediately without it.
 
-To turn off just the multi-chat coordination group, remove its four `hooks` entries from
+To turn off just the multi-chat coordination group, remove its five `hooks` entries from
 `~/.claude/settings.json` (or simplest: never create `~/.claude/hooks/state-check.conf` —
-all four stay inert without it).
+all of them stay inert without it).
 
 To turn off the git hooks step: `git config --global --unset core.hooksPath` — the files stay
 at `~/.claude/git-hooks/`, just unwired from every repo. The new files themselves, if you want
 them gone entirely: `~/.claude/hooks/clock-in-context.sh`, `owner-card.md`,
 `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,
-`override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-provenance-pre.sh`,
+`agent-model-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-provenance-pre.sh`,
 `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`,
 `channel-size-post.sh`, `heavy-suite.conf`, `test-hooks.sh`, `test-helper-ledger.sh`,
 `test-rules-cap.sh`, `.redaction-names.local`, and
