@@ -3,10 +3,13 @@
 # rulebook sentence can't enforce on its own:
 # (a) a gate (a test run, a typecheck, a build check) is trustworthy only when its EXIT CODE
 #     decides what happens next, joined with `&&`. Refused when the gate's output is piped
-#     into a reader (tee/tail/head/grep/wc/sed/awk/less/cut, "|" or "|&") — the exit code
-#     that reaches the shell is then the READER's, not the gate's — or when `;` (or a bare
-#     newline) joins it to a commit, a push, or `echo READY`, which lets a red run continue
-#     into either one anyway.
+#     into a reader (tee/tail/head/grep/rg/cat/wc/sed/awk/less/cut, "|" or "|&") — the exit
+#     code that reaches the shell is then the READER's, not the gate's — AND a commit, a push
+#     or `echo READY` is joined after it by `&&` or `;` (a piped gate with nothing riding on
+#     its exit code, `npx vitest run x | tail -3` alone, is only a way to read output and
+#     passes; so does a commit placed BEFORE the gate) — or when `;` (or a bare newline) joins
+#     the gate to a commit, a push, or `echo READY`, which lets a red run continue into either
+#     one anyway. `git -C <path> commit` / `git -c k=v push` count as a commit or a push.
 # (b) a loop that polls a log file for a marker (`while`/`until`/`for` … grep|tail … sleep)
 #     is refused: waiting on a background job should block on the job itself (`wait`, a
 #     job-control/monitor tool, a task-completion notification) and then read the result
@@ -26,7 +29,8 @@
 #     inside it is matched too, not hidden by the quote-strip.
 #
 # Which commands count as a "gate": a built-in default (vitest, playwright, tsc, npm test,
-# npm run test, npm run typecheck) plus anything listed, one per line, in
+# npm t, npm run test, npm run typecheck, and `npm -w <workspace> test` / `--workspace` /
+# `--prefix` in front) plus anything listed, one per line, in
 # hooks/gate-guard.conf (see hooks/gate-guard.conf.example) — ADDED ON TOP of the built-in
 # list, never replacing it, and never turning the built-ins into a blanket refusal (the
 # conf-added names join the built-in group; they used to be spliced in as a top-level
@@ -48,7 +52,7 @@
 # Refusing every Bash command on a machine without python3 would cost far more than the
 # habit is worth. hooks/guard-lib.sh missing: fails CLOSED — that file is part of this
 # hook, not part of the machine, so its absence means a broken install, not a thin one.
-# Tests: hooks/test-hooks.sh.
+# Tests: hooks/test-hooks.sh (`refresh 2026-09-29 (a)` for A21, A22, A23, A85).
 GUARD_LIB="$(dirname "$0")/guard-lib.sh"
 if [ ! -r "$GUARD_LIB" ]; then
   echo "gate-guard: REFUSED — hooks/guard-lib.sh is missing next to this hook, so the command cannot be normalised before matching (fail closed, not open). Reinstall the hooks (install.sh copies hooks/*.sh)." >&2
@@ -64,7 +68,7 @@ if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
 fi
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"; [ "$tool" = "Bash" ] || exit 0
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"; [ -z "$cmd" ] && exit 0
-if ! command -v python3 >/dev/null 2>&1; then
+if [ -z "$GUARD_PY" ] || [ ! -x "$GUARD_PY" ]; then
   echo "gate-guard: python3 not found — this guard is INERT for this command (it only checks how gates are joined; it protects no data, so it passes rather than refusing). Install python3 to turn it back on." >&2
   exit 0
 fi
@@ -77,10 +81,10 @@ if [ -f "$CONF" ]; then
     GATE_EXTRA="${GATE_EXTRA}${GATE_EXTRA:+$'\n'}$line"
   done < "$CONF"
 fi
-verdict="$(printf '%s' "$cmd" | GATE_EXTRA="$GATE_EXTRA" python3 -c "$GUARD_PY_COMMON"'
+verdict="$(printf '%s' "$cmd" | GATE_EXTRA="$GATE_EXTRA" "$GUARD_PY" -c "$GUARD_PY_COMMON"'
 s = clean(sys.stdin.read())
 s = blank_quoted(s)
-gate = r"(?:(?:npx\s+)?(?:vitest|playwright|tsc)\b|npm\s+(?:run\s+)?(?:test(?::[\w-]+)?|typecheck)\b)"
+gate = r"(?:(?:npx\s+)?(?:vitest|playwright|tsc)\b|npm\s+(?:(?:-w|--workspace|--prefix)(?:=|\s+)\S+\s+)*(?:run\s+)?(?:test(?::[\w-]+)?|t(?![\w:-])|typecheck)\b)"
 extra = [ln.strip() for ln in os.environ.get("GATE_EXTRA", "").split("\n") if ln.strip()]
 if extra:
     alts = [r"(?:npx\s+)?" + r"\s+".join(re.escape(w) for w in tok.split()) + r"\b" for tok in extra]
@@ -88,6 +92,9 @@ if extra:
 cmdpos = r"(?:^|[;&|(]|\n)\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*"   # the gate must BE the command
 seg = r"(?:[^|;&\n]|\d?>&\d)*"     # the gate arguments: 2>&1 allowed; && ; | end them
 query = re.compile(r"--(?:version|help|list)\b")
+# What can ride on a gate: a commit or a push (A22: with git global flags in front -- `git -C
+# <path> commit`, `git -c k=v push`), or `echo READY`.
+rides = r"(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git(?:\s+(?:-C|-c|--git-dir|--work-tree)\s+\S+|\s+-\S+)*\s+(?:commit|push)\b|echo\s+READY\b)"
 s_flat = re.sub(r"\n", ";", s)     # a bare newline joins statements exactly like ; for rule (a)
 def out(v, pos=None):
     # The override counts only at the start of the SEGMENT that broke the rule: an
@@ -98,9 +105,11 @@ for m in re.finditer("(?:" + cmdpos + ")(" + gate + seg + ")", s_flat):
     if query.search(m.group(0)):
         continue
     rest = s_flat[m.end():]
-    if re.match(r"\|&?\s*(?:tee|tail|head|grep|wc|sed|awk|less|cut)\b", rest):
+    # A21: a piped gate hides its exit code, which only matters when something rides on that
+    # exit code: a commit, a push or `echo READY` joined AFTER the pipe by && or ;.
+    if re.match(r"\|&?\s*(?:tee|tail|head|grep|rg|cat|wc|sed|awk|less|cut)\b", rest) and re.search(r"(?:&&|;)\s*" + rides, rest):
         out("pipe", m.start(1))
-    if re.match(r";\s*(?:git\s+(?:commit|push)\b|echo\s+READY\b)", rest):
+    if re.match(r";\s*" + rides, rest):
         out("semicolon", m.start(1))
 for m in re.finditer(r"\b(?:while|until|for)\b(.*?)(?:;|\bdo\b)", s_flat):
     cond = m.group(1)

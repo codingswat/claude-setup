@@ -10,5 +10,9 @@
 # yarn and pnpm alike, any `run test:<something>` script, and vitest/playwright with or
 # without npx. Narrowing it is how a suite slips past the load check, so narrow on
 # purpose, never by accident.
+# PATTERN is matched only at the command position of each segment (leading VAR=val words, time/
+# sudo/env-style wrappers and a leading ( are peeled off first), so a runner named as an argument
+# (`rg vitest docs/`) is not a run. Always on, whatever PATTERN says: a bare vitest/playwright test,
+# the runner reached by path (node_modules/.bin/vitest run) and `npm --prefix <dir> test`.
 PATTERN='(^|[;&| ])(npm|yarn|pnpm) +(test|run +(test(:[A-Za-z0-9_.:-]+)?|e2e))([ ;&|]|$)|(^|[;&| ])(npx +)?(vitest +run|playwright +test)([ ;&|]|$)'
 MAX_LOAD=10

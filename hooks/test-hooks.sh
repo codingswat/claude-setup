@@ -120,7 +120,7 @@ if [ "$rc" = 0 ] && quiet "$out" && printf '%s' "$out" | grep -q '^Clock (this m
 pass_n=$((pass_n+1))
 
 echo "2 block-dangerous-git.sh"
-for c in 'git reset --hard HEAD~1' 'git reset HEAD~1 --hard' 'git reset abc1234 --hard' 'git reset --quiet HEAD~1 --hard' 'git reset origin/main --hard' 'cd /x && git reset HEAD~1 --hard' 'git -c core.pager=cat reset --hard' 'git --no-pager reset --hard' 'git -C /some/path reset --hard' 'git clean -fd' 'git clean -f' 'git branch -D feature' 'git branch -Df feature' 'git branch --delete --force feature' 'git checkout .' 'git checkout -- .' 'git checkout -f main' 'git checkout main .' 'git restore .' 'git restore -s HEAD -- .' 'git restore --staged --worktree .' 'git push --force origin main' 'git push -f origin main' 'git push --force-with-lease' 'git push origin --delete feature' 'git push origin -d feature' 'git push origin :feature' 'git filter-branch --all' 'cd "/x y" && git reset --hard' 'git commit -m "GITGUARD=1 later" && git reset --hard' 'echo GITGUARD=1; git reset --hard'; do
+for c in 'git reset --hard HEAD~1' 'git reset HEAD~1 --hard' 'git reset abc1234 --hard' 'git reset --quiet HEAD~1 --hard' 'git reset origin/main --hard' 'cd /x && git reset HEAD~1 --hard' 'git -c core.pager=cat reset --hard' 'git --no-pager reset --hard' 'git -C /some/path reset --hard' 'git clean -fd' 'git clean -f' 'git branch -D feature' 'git branch -Df feature' 'git branch --delete --force feature' 'git checkout .' 'git checkout -- .' 'git checkout -f main' 'git checkout main .' 'git restore .' 'git restore -s HEAD -- .' 'git restore --staged --worktree .' 'git push --force origin main' 'git push -f origin main' 'git push --force-with-lease' 'git filter-branch --all' 'cd "/x y" && git reset --hard' 'git commit -m "GITGUARD=1 later" && git reset --hard' 'echo GITGUARD=1; git reset --hard'; do
   INPUT="$(json_bash "$c")"; expect refuse 2 "must refuse: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
 for c in 'git push origin main' 'git push -u origin main' 'git push' 'git branch -d feature' 'git branch -a' 'git checkout main' 'git checkout -b feature' 'git restore file.ts' 'git restore --staged file.ts' 'git reset --soft HEAD~1' 'git reset file.ts' 'git reset' 'git reset --soft HEAD~1 && git status' 'git reset HEAD -- file.ts' 'GITGUARD=1 git reset HEAD~1 --hard' 'git commit -m "never run git reset --hard here"' 'git commit NOTES.md -m "never run git reset HEAD~1 --hard here"' 'git reset --soft HEAD~1; git push --hard-nothing' 'git clean -n' 'git push origin HEAD:main' 'git commit -m "note GITGUARD=1 for later"' 'cd /x && GITGUARD=1 git clean -fd' 'ls -la' 'echo "git reset --hardly"' 'digit reset --hard' 'git checkout main && cd .' 'git branch -a && ls -D' $'python3 - <<\'PY\'\nprint("git reset --hard")\nPY\ngit status'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "must allow: $c" bash "$HOOKS_DIR/block-dangerous-git.sh"; done
@@ -700,16 +700,16 @@ if [ "$rc20" != 0 ]; then ok; else bad "override-ledger.sh must exit non-zero wh
 refuse_n=$((refuse_n+1))
 
 echo "21 hooks/gate-guard.sh"
-for c in 'npm test | tee out.log' 'npm run typecheck | grep -q PASS' 'vitest run | tail -20' 'npx playwright test; git commit -am "x"' 'while ! grep -q READY build.log; do sleep 2; done' 'until tail -1 build.log | grep -q DONE; do sleep 1; done'; do
+for c in 'npm test | tee out.log && git commit -m x' 'npm run typecheck | grep -q PASS && git commit -m x' 'vitest run | tail -20 && git push' 'npx playwright test; git commit -am "x"' 'while ! grep -q READY build.log; do sleep 2; done' 'until tail -1 build.log | grep -q DONE; do sleep 1; done'; do
   INPUT="$(json_bash "$c")"; expect refuse 2 "must refuse: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
 NLGATE=$'npm test\ngit push'
 INPUT="$(json_bash "$NLGATE")"; expect refuse 2 "a bare newline joining a gate to a push must refuse" bash "$HOOKS_DIR/gate-guard.sh"
-for c in 'npm test && git commit -am "x"' 'npm test && git push' 'ls -la' 'GATE_OK=1 npm test | tee out.log' 'git commit -m "ran npm test and it passed"' 'while ! curl -sf localhost:3000/health; do sleep 2; done' 'npx vitest run src/foo.test.ts && echo done'; do
+for c in 'npm test && git commit -am "x"' 'npm test && git push' 'ls -la' 'GATE_OK=1 npm test | tee out.log && git commit -m x' 'git commit -m "ran npm test and it passed"' 'while ! curl -sf localhost:3000/health; do sleep 2; done' 'npx vitest run src/foo.test.ts && echo done'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "must allow: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
 GGCONF="$T/gg-conf"; mkdir -p "$GGCONF"; cp "$HOOKS_DIR/gate-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$GGCONF/"
 printf 'pytest\ngo test\n' > "$GGCONF/gate-guard.conf"
-INPUT="$(json_bash 'pytest | tee out.log')"; expect refuse 2 "conf-added gate 'pytest' piped must refuse" bash "$GGCONF/gate-guard.sh"
-INPUT="$(json_bash 'go test | tee out.log')"; expect refuse 2 "conf-added gate 'go test' piped must refuse" bash "$GGCONF/gate-guard.sh"
+INPUT="$(json_bash 'pytest | tee out.log && git commit -m x')"; expect refuse 2 "conf-added gate 'pytest' piped must refuse" bash "$GGCONF/gate-guard.sh"
+INPUT="$(json_bash 'go test | tee out.log && git commit -m x')"; expect refuse 2 "conf-added gate 'go test' piped must refuse" bash "$GGCONF/gate-guard.sh"
 INPUT="$(json_bash 'pytest && echo done')"; expect pass 0 "conf-added gate 'pytest' joined with && must pass" bash "$GGCONF/gate-guard.sh"
 INPUT="$(json_bash 'npm test')"; expect pass 0 "with no jq/no gate found at all: bare gate command alone (no pipe/semicolon) must pass" bash "$HOOKS_DIR/gate-guard.sh"
 
@@ -793,7 +793,7 @@ pass_n=$((pass_n+1))
 rm -f "$WL"; INPUT="$(json_bash 'SUITE_OK=1 npm test')"; printf '%s' "$INPUT" | env OVERRIDE_LEDGER="$WL" HEAVY_SUITE_LOAD_OVERRIDE=12 bash "$HOOKS_DIR/heavy-suite-guard.sh" >/dev/null 2>&1
 if ledger_has "$WL" SUITE_OK; then ok; else bad "heavy-suite-guard.sh: SUITE_OK=1 must write a ledger line"; fi
 pass_n=$((pass_n+1))
-rm -f "$WL"; INPUT="$(json_bash 'GATE_OK=1 npm test | tee out.log')"; printf '%s' "$INPUT" | env OVERRIDE_LEDGER="$WL" bash "$HOOKS_DIR/gate-guard.sh" >/dev/null 2>&1
+rm -f "$WL"; INPUT="$(json_bash 'GATE_OK=1 npm test | tee out.log && git commit -m x')"; printf '%s' "$INPUT" | env OVERRIDE_LEDGER="$WL" bash "$HOOKS_DIR/gate-guard.sh" >/dev/null 2>&1
 if ledger_has "$WL" GATE_OK; then ok; else bad "gate-guard.sh: GATE_OK=1 must write a ledger line"; fi
 pass_n=$((pass_n+1))
 rm -f "$WL"
@@ -928,8 +928,8 @@ OL28="$T/h28-ovl.tsv"
 # --- 1 gate-guard: a conf file must ADD gates, never make every gate word a refusal ----
 INPUT="$(json_bash 'npm test && git commit -m x f.ts')"; expect pass 0 "F1 conf present: a gate joined with && must pass" bash "$G28/gate-guard.sh"
 INPUT="$(json_bash 'npx tsc --noEmit')"; expect pass 0 "F1 conf present: npx tsc --noEmit alone must pass" bash "$G28/gate-guard.sh"
-INPUT="$(json_bash 'npm test | tee out.log')"; expect refuse 2 "F1 pair: conf present, a built-in gate piped must still refuse" bash "$G28/gate-guard.sh"
-INPUT="$(json_bash 'pytest | tee out.log')"; expect refuse 2 "F1 pair: conf present, a conf-added gate piped must still refuse" bash "$G28/gate-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log && git commit -m x')"; expect refuse 2 "F1 pair: conf present, a built-in gate piped must still refuse" bash "$G28/gate-guard.sh"
+INPUT="$(json_bash 'pytest | tee out.log && git commit -m x')"; expect refuse 2 "F1 pair: conf present, a conf-added gate piped must still refuse" bash "$G28/gate-guard.sh"
 
 # --- 2,3,6 block-dangerous-git: trailing characters, quotes, tabs, wrappers, --force ----
 for c in 'git -C /some/path reset --hard;' '(git reset --hard)' "sh -c 'git reset --hard'" 'git reset "--hard"' 'git clean --force -d' 'git clean --force' '"git" reset --hard' $'git\treset\t--hard' 'gi\t reset --hard' $'git push origin \\\n--force' 'bash -c "git push --force origin main"' 'git reset --hard>log' 'git reset --hard&&echo done'; do
@@ -968,7 +968,7 @@ if [ -f "$OL28" ]; then bad "F5 a faked SUITE_OK must not write a ledger line"; 
 rm -f "$OL28"; INPUT="$(json_bash 'SUITE_OK=1 npm test')"
 expect pass 0 "F5 pair: a real SUITE_OK at the start still passes" env OVERRIDE_LEDGER="$OL28" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HS28/heavy-suite-guard.sh"
 if [ -f "$OL28" ]; then ok; else bad "F5 pair: a real SUITE_OK must write its ledger line"; fi; pass_n=$((pass_n+1))
-rm -f "$OL28"; INPUT="$(json_bash "git commit -m 'x; GATE_OK=1 y' && npm test | tee out.log")"
+rm -f "$OL28"; INPUT="$(json_bash "git commit -m 'x; GATE_OK=1 y' && npm test | tee out.log && git commit -m z")"
 expect refuse 2 "F5 GATE_OK inside a commit message must NOT disarm gate-guard" env OVERRIDE_LEDGER="$OL28" bash "$HS28/gate-guard.sh"
 if [ -f "$OL28" ]; then bad "F5 a faked GATE_OK must not write a ledger line"; else ok; fi; refuse_n=$((refuse_n+1))
 
@@ -989,17 +989,17 @@ for c in 'npm test' 'npx playwright test --headed' 'vitest run'; do
 # --- 10 gate-guard: the gate word must be at command position ---------------------------
 for c in 'ls node_modules/.bin | grep vitest | head' 'npx tsc --version | head -1' 'grep -rn "npm test" docs | head'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "F10 must allow: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
-for c in 'npx tsc --noEmit | head -1' 'vitest run | head -3'; do
+for c in 'npx tsc --noEmit | head -1 && git commit -m x' 'vitest run | head -3 && git commit -m x'; do
   INPUT="$(json_bash "$c")"; expect refuse 2 "F10 pair, must refuse: $c" bash "$HOOKS_DIR/gate-guard.sh"; done
 
 # --- 11 gate-guard with jq but no python3: inert and loud, never a blanket refusal ------
 NOPY28="$T/h28-nopy-bin"; mkdir -p "$NOPY28"
 for b in bash cat grep jq dirname sed env tr cut date mkdir awk; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$NOPY28/$b"; done
-INPUT="$(json_bash 'ls -la')"; expect pass 0 "F11 jq present, python3 missing: an unrelated command must pass" env -i "PATH=$NOPY28" bash "$HOOKS_DIR/gate-guard.sh"
-err28="$(printf '%s' "$INPUT" | env -i "PATH=$NOPY28" bash "$HOOKS_DIR/gate-guard.sh" 2>&1 1>/dev/null)"
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "F11 jq present, python3 missing: an unrelated command must pass" env -i "PATH=$NOPY28" GUARD_PYTHON_PREFERRED=/nonexistent/python3 bash "$HOOKS_DIR/gate-guard.sh"
+err28="$(printf '%s' "$INPUT" | env -i "PATH=$NOPY28" GUARD_PYTHON_PREFERRED=/nonexistent/python3 bash "$HOOKS_DIR/gate-guard.sh" 2>&1 1>/dev/null)"
 if printf '%s' "$err28" | grep -q 'python3'; then ok; else bad "F11 the python3-missing pass must say so on stderr (got: '$err28')"; fi; pass_n=$((pass_n+1))
 INPUT="$(json_bash 'ls -la')"; expect pass 0 "F11 pair: with python3 present an unrelated command still passes" bash "$HOOKS_DIR/gate-guard.sh"
-INPUT="$(json_bash 'npm test | tee out.log')"; expect refuse 2 "F11 pair: with python3 present a piped gate is still refused" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log && git commit -m x')"; expect refuse 2 "F11 pair: with python3 present a piped gate is still refused" bash "$HOOKS_DIR/gate-guard.sh"
 
 # --- 12 gate-guard: the log-poll waiter across lines, and for-loops ---------------------
 INPUT="$(json_bash "$(printf 'while ! grep -q READY /tmp/log; do\n  sleep 2\ndone\n')")"
@@ -1431,17 +1431,17 @@ printf '#!/bin/sh\nexit 1\n' > "$PYBAD30/python3"; chmod +x "$PYBAD30/python3"
 PYQ30="$T/h30-quietpy"; mkdir -p "$PYQ30"
 printf '#!/bin/sh\nexit 0\n' > "$PYQ30/python3"; chmod +x "$PYQ30/python3"
 INPUT="$(json_bash 'git reset --hard')"
-expect refuse 2 "D1 python3 present but failing: block-dangerous-git must REFUSE" env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
-expect refuse 2 "D1 a python3 that exits 0 printing nothing must REFUSE too" env PATH="$PYQ30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
-err30="$(printf '%s' "$INPUT" | env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh" 2>&1 1>/dev/null)"
+expect refuse 2 "D1 python3 present but failing: block-dangerous-git must REFUSE" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
+expect refuse 2 "D1 a python3 that exits 0 printing nothing must REFUSE too" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYQ30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh"
+err30="$(printf '%s' "$INPUT" | env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/block-dangerous-git.sh" 2>&1 1>/dev/null)"
 if printf '%s' "$err30" | grep -qi 'parse'; then ok; else bad "D1 the refusal must say the guard could not parse its input (got: '$err30')"; fi
 refuse_n=$((refuse_n+1))
 INPUT="$(json_bash 'npm test')"
-expect refuse 2 "D1 python3 present but failing: heavy-suite-guard must REFUSE" env PATH="$PYBAD30:$PATH" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
-ex30 refuse 2 "D1 python3 present but failing: commit-pathspec-guard must REFUSE" 'git commit --all -m x' env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
-ex30 refuse 2 "D1 a silent python3 must not let a sweep through either" 'git commit --all -m x' env PATH="$PYQ30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
-INPUT="$(json_bash 'npm test | tee out.log')"
-expect refuse 2 "D1 gate-guard with a failing python3 stays closed" env PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/gate-guard.sh"
+expect refuse 2 "D1 python3 present but failing: heavy-suite-guard must REFUSE" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+ex30 refuse 2 "D1 python3 present but failing: commit-pathspec-guard must REFUSE" 'git commit --all -m x' env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+ex30 refuse 2 "D1 a silent python3 must not let a sweep through either" 'git commit --all -m x' env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYQ30:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log && git commit -m x')"
+expect refuse 2 "D1 gate-guard with a failing python3 stays closed" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$PYBAD30:$PATH" bash "$HOOKS_DIR/gate-guard.sh"
 INPUT="$(json_bash 'git status')"; expect pass 0 "D1 pair: with a working python3 a safe git command passes" bash "$HOOKS_DIR/block-dangerous-git.sh"
 INPUT="$(json_bash 'ls')"; expect pass 0 "D1 pair: heavy-suite-guard still allows an ordinary command" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
 ex30 pass 0 "D1 pair: a named-path commit still passes" 'git commit b.txt -m x'
@@ -1459,7 +1459,7 @@ for c in 'npm${IFS}test' 'T=npm; $T test'; do
   INPUT="$(json_bash "$c")"; expect refuse 2 "D2 load 25 must refuse: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"; done
 for c in 'npm${IFS}run${IFS}typecheck' 'W=x; $W/bin/lint.sh --fix'; do
   INPUT="$(json_bash "$c")"; expect pass 0 "D2 pair, load 25 must allow: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"; done
-INPUT="$(json_bash 'npx${IFS}tsc${IFS}--noEmit | head')"
+INPUT="$(json_bash 'npx${IFS}tsc${IFS}--noEmit | head && git commit -m x')"
 expect refuse 2 "D2 gate-guard: a gate spelled with \${IFS} piped into a reader must refuse" bash "$HOOKS_DIR/gate-guard.sh"
 INPUT="$(json_bash 'npx${IFS}tsc${IFS}--noEmit && git commit -m x f.ts')"
 expect pass 0 "D2 pair: the same gate joined with && must pass" bash "$HOOKS_DIR/gate-guard.sh"
@@ -1483,9 +1483,9 @@ rm -f "$OL30"; INPUT="$(json_bash 'SUITE_OK=1 true && npm test')"
 expect refuse 2 "D3 SUITE_OK on another segment must not disarm the load guard" env OVERRIDE_LEDGER="$OL30" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
 rm -f "$OL30"; INPUT="$(json_bash 'cd apps/web && SUITE_OK=1 npm test')"
 expect pass 0 "D3 pair: SUITE_OK on the heavy segment itself passes" env OVERRIDE_LEDGER="$OL30" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HOOKS_DIR/heavy-suite-guard.sh"
-rm -f "$OL30"; INPUT="$(json_bash 'GATE_OK=1 true && npm test | tee out.log')"
+rm -f "$OL30"; INPUT="$(json_bash 'GATE_OK=1 true && npm test | tee out.log && git commit -m x')"
 expect refuse 2 "D3 GATE_OK on another segment must not disarm gate-guard" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/gate-guard.sh"
-rm -f "$OL30"; INPUT="$(json_bash 'GATE_OK=1 npm test | tee out.log')"
+rm -f "$OL30"; INPUT="$(json_bash 'GATE_OK=1 npm test | tee out.log && git commit -m x')"
 expect pass 0 "D3 pair: GATE_OK on the gate's own segment still passes" env OVERRIDE_LEDGER="$OL30" bash "$HOOKS_DIR/gate-guard.sh"
 
 # --- D4 a NUL byte inside a --pathspec-from-file list ----------------------------------
@@ -1626,6 +1626,178 @@ comerr31="$(git -C "$T/idreb" push origin rb 2>&1 1>/dev/null)"
 if printf '%s' "$comerr31" | grep -q 'has a committer'; then ok; else bad "E6 pair: the committer half must still read 'has a committer' (got: $comerr31)"; fi
 pass_n=$((pass_n+1))
 
+
+# ======================================================================================
+echo "refresh 2026-09-29 (a): command-guard behaviours ported from the maintainer's live setup (A01 A06 A07 A08 A11 A12 A16 A17 A18 A21 A22 A23 A85)"
+BDG="$HOOKS_DIR/block-dangerous-git.sh"
+RAL="$T/ra-ledger.tsv"
+ra_ledger_has() { [ -f "$1" ] || return 1; cut -f3 "$1" | grep -qxF "$2"; }
+
+# --- A01 a variable elsewhere on a git line is an honest read; only a hidden SUBCOMMAND (or
+#     the arguments of a mutating one) cannot be judged ----------------------------------
+for c in 'git diff HEAD -- $paths' 'W=/tmp/x; git -C $W/repo status' 'git log --oneline -$n'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A01 a variable in a read-only git command must pass: $c" bash "$BDG"; done
+for c in 'V=push; git $V --force origin main' 'V=reset; git -C /x $V --hard' 'git -C $W/repo push origin $F'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A01 pair: a hidden subcommand, or a hidden argument of push, is still refused: $c" bash "$BDG"; done
+ex30 pass 0 "A01 commit-pathspec-guard: git diff HEAD -- \$paths is a read, not a commit" 'git diff HEAD -- $paths'
+ex30 pass 0 "A01 commit-pathspec-guard: git -C \$W/repo status is not a commit" 'W=/tmp/x; git -C $W/repo status'
+ex30 refuse 2 "A01 pair: a commit whose pathspec is a variable is still refused" 'git commit $paths -m x'
+
+# --- A06 --no-verify and -c core.hooksPath= switch off every other hook -----------------
+for c in 'git commit -m x f --no-verify' 'git -c core.hooksPath=/dev/null commit -m x f' 'git push --no-verify origin main' 'cd sub && git commit --no-verify -m y'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A06 must refuse the off-switch: $c" env OVERRIDE_LEDGER="$RAL" bash "$BDG"; done
+for c in 'git commit -m x f' 'echo "git commit --no-verify"' 'printf "%s" "git -c core.hooksPath=/dev/null commit"' 'git log --grep="--no-verify"' 'git commit -m "never use --no-verify" f'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A06 pair: honest work and quoted mentions pass: $c" env OVERRIDE_LEDGER="$RAL" bash "$BDG"; done
+rm -f "$RAL"; INPUT="$(json_bash 'GITGUARD=1 git commit --no-verify -m x f')"
+expect pass 0 "A06 GITGUARD=1 at the start of the segment approves the off-switch" env OVERRIDE_LEDGER="$RAL" bash "$BDG"
+if [ -f "$RAL" ]; then ok; else bad "A06 an honoured off-switch override must write its ledger line"; fi; pass_n=$((pass_n+1))
+rm -f "$RAL"; INPUT="$(json_bash 'git commit --no-verify -m x f && GITGUARD=1 true')"
+expect refuse 2 "A06 an override on a LATER segment must not approve the off-switch" env OVERRIDE_LEDGER="$RAL" bash "$BDG"
+RA_NOWRITE="$T/ra-nowrite"; mkdir -p "$RA_NOWRITE"; chmod 555 "$RA_NOWRITE"
+INPUT="$(json_bash 'GITGUARD=1 git commit --no-verify -m x f')"
+expect refuse 2 "A06 an override whose ledger line cannot be written is refused" env OVERRIDE_LEDGER="$RA_NOWRITE/sub/overrides.tsv" bash "$BDG"
+chmod 755 "$RA_NOWRITE"
+
+# --- A07 the going-public stop ----------------------------------------------------------
+for c in 'gh repo create x --public' 'gh repo create --public x' 'gh repo edit --visibility public' 'gh repo edit x --visibility=public' 'npm publish' 'npm publish --access public' 'cd pkg && npm publish'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A07 must refuse making something public: $c" env OVERRIDE_LEDGER="$RAL" bash "$BDG"; done
+for c in 'gh repo create x --private' 'gh repo view x' 'gh repo edit --visibility private' 'npm publish --dry-run' 'npm publish --dry-run=true' 'npm help publish' 'echo "npm publish"' 'gh pr create --title "run npm publish later" --body "gh repo create x --public"' 'git commit -m "npm publish notes" f'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A07 pair: private, read-only, dry-run and quoted mentions pass: $c" env OVERRIDE_LEDGER="$RAL" bash "$BDG"; done
+rm -f "$RAL"; INPUT="$(json_bash 'GITGUARD=1 npm publish')"
+expect pass 0 "A07 GITGUARD=1 at the start of the segment approves the publish" env OVERRIDE_LEDGER="$RAL" bash "$BDG"
+if ra_ledger_has "$RAL" GITGUARD; then ok; else bad "A07 an honoured going-public override must write its ledger line"; fi; pass_n=$((pass_n+1))
+ra7err="$(printf '%s' "$(json_bash 'npm publish')" | env OVERRIDE_LEDGER="$RAL" bash "$BDG" 2>&1 1>/dev/null)"
+if printf '%s' "$ra7err" | grep -q 'privacy check' && printf '%s' "$ra7err" | grep -q 'security review'; then ok; else bad "A07 the refusal must list the steps before going public (got: $ra7err)"; fi; refuse_n=$((refuse_n+1))
+
+# --- A08 deleting a remote branch is judged by what it holds, not refused blindly -------
+RA_BARE="$T/ra-bare.git"; git init -q --bare -b main "$RA_BARE" >/dev/null 2>&1
+RA_WC="$T/ra-wc"; git clone -q "$RA_BARE" "$RA_WC" >/dev/null 2>&1
+git -C "$RA_WC" config core.hooksPath /dev/null
+echo base > "$RA_WC/a.txt"; git -C "$RA_WC" add -A; "${ID[@]}" git -C "$RA_WC" commit -q -m base; git -C "$RA_WC" push -q origin main >/dev/null 2>&1
+ra_branch() { git -C "$RA_WC" checkout -q -b "$1" >/dev/null 2>&1
+  if [ -n "$2" ]; then echo "$1" >> "$RA_WC/a.txt"; git -C "$RA_WC" add -A; "${ID[@]}" git -C "$RA_WC" commit -q -m "$1"; fi
+  git -C "$RA_WC" push -q origin "$1" >/dev/null 2>&1; git -C "$RA_WC" checkout -q main >/dev/null 2>&1; }
+ra_branch ra-clean; ra_branch ra-clean2; ra_branch ra-clean3; ra_branch ra-clean4; ra_branch ra-dirty unique; ra_branch ra-stale
+rdel() { local kind="$1" want="$2" label="$3" c="$4" cwd="$5"   # judged in cwd, ledger in $RAL
+  jb30 "$c" "$cwd" | env OVERRIDE_LEDGER="$RAL" bash "$BDG" >/dev/null 2>&1; local got=$?
+  if [ "$got" = "$want" ]; then ok; else bad "$label (wanted exit $want, got $got)"; fi
+  if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+rdel pass 0 "A08 deleting a branch fully merged into origin's default passes with no override" 'git push origin --delete ra-clean' "$RA_WC"
+rdel pass 0 "A08 the -d spelling of a clean delete passes" 'git push origin -d ra-clean' "$RA_WC"
+rdel pass 0 "A08 the flag BEFORE the remote passes" 'git push --delete origin ra-clean' "$RA_WC"
+rdel pass 0 "A08 the :branch spelling of a clean delete passes" 'git push origin :ra-clean' "$RA_WC"
+rdel pass 0 "A08 a refs/heads/ spelling of a clean delete passes" 'git push origin --delete refs/heads/ra-clean' "$RA_WC"
+rdel pass 0 "A08 several clean branches at once pass" 'git push origin --delete ra-clean ra-clean2' "$RA_WC"
+rdel refuse 2 "A08 a branch holding commits main does not have is refused" 'git push origin --delete ra-dirty' "$RA_WC"
+rdel refuse 2 "A08 the -d spelling of a dirty delete is refused" 'git push origin -d ra-dirty' "$RA_WC"
+rdel refuse 2 "A08 the flag before the remote, dirty, is refused" 'git push --delete origin ra-dirty' "$RA_WC"
+rdel refuse 2 "A08 the :branch spelling of a dirty delete is refused" 'git push origin :ra-dirty' "$RA_WC"
+rdel refuse 2 "A08 EVERY named branch is checked: clean first, dirty second" 'git push origin --delete ra-clean ra-dirty' "$RA_WC"
+rdel refuse 2 "A08 a branch origin never had cannot be judged and is refused" 'git push origin --delete ra-ghost-never-existed' "$RA_WC"
+rdel refuse 2 "A08 deleting the default branch itself is refused (it is trivially merged into itself)" 'git push origin --delete main' "$RA_WC"
+rdel refuse 2 "A08 a remote other than origin is not judged and is refused" 'git push upstream --delete ra-clean' "$RA_WC"
+rdel refuse 2 "A08 a variable branch name cannot be judged and is refused" 'B=ra-clean; git push origin --delete $B' "$RA_WC"
+rdel refuse 2 "A08 a command word hidden in a substitution is judged by its arguments: dirty" 'GIT=git; $GIT push origin --delete ra-dirty' "$RA_WC"
+rdel pass 0 "A08 a hidden command word, clean branch: judged the same way and passes" 'GIT=git; $GIT push origin --delete ra-clean' "$RA_WC"
+rdel pass 0 "A08 a quoted mention of the delete is not a delete" 'echo "git push origin --delete ra-dirty"' "$RA_WC"
+rdel pass 0 "A08 a plain push is still allowed" 'git push origin main' "$RA_WC"
+# the moved cases: these three used to sit in section 2's must-refuse loop and reached for the network from wherever the suite ran
+rdel refuse 2 "A08 (moved from section 2) git push origin --delete feature: no such branch at origin" 'git push origin --delete feature' "$RA_WC"
+rdel refuse 2 "A08 (moved from section 2) git push origin -d feature: no such branch at origin" 'git push origin -d feature' "$RA_WC"
+rdel refuse 2 "A08 (moved from section 2) git push origin :feature: no such branch at origin" 'git push origin :feature' "$RA_WC"
+# origin gained a commit after this clone last fetched: the local origin/<b> is stale, the guard must look again
+RA_WC2="$T/ra-wc2"; git clone -q "$RA_BARE" "$RA_WC2" >/dev/null 2>&1; git -C "$RA_WC2" config core.hooksPath /dev/null
+git -C "$RA_WC2" checkout -q ra-stale >/dev/null 2>&1; echo late >> "$RA_WC2/a.txt"; git -C "$RA_WC2" add -A; "${ID[@]}" git -C "$RA_WC2" commit -q -m late; git -C "$RA_WC2" push -q origin ra-stale >/dev/null 2>&1
+rdel refuse 2 "A08 a stale local origin/<b> is refreshed first: the late commit makes it dirty" 'git push origin --delete ra-stale' "$RA_WC"
+# where the repo is: a variable set earlier in the command, ~, and git -C
+rdel refuse 2 "A08 cd \$VAR (set earlier on the line) is resolved: judged in that repo, dirty" "R=$RA_WC; cd \$R && git push origin --delete ra-dirty" "$T"
+rdel pass 0 "A08 cd \$VAR resolved: clean in that repo passes even from a folder that is no repo" "R=$RA_WC; cd \$R && git push origin --delete ra-clean3" "$T"
+ln -s "$RA_WC" "$HOME/ra-wc"
+rdel pass 0 "A08 cd ~/<folder> is resolved against the home folder" 'cd ~/ra-wc && git push origin --delete ra-clean3' "$T"
+rdel pass 0 "A08 git -C <path> is resolved" "git -C $RA_WC push origin --delete ra-clean4" "$T"
+rdel refuse 2 "A08 git -C <path>, dirty, is refused" "git -C $RA_WC push origin --delete ra-dirty" "$T"
+rm -f "$RAL"; rdel pass 0 "A08 GITGUARD=1 approves a dirty delete" 'GITGUARD=1 git push origin --delete ra-dirty' "$RA_WC"
+if ra_ledger_has "$RAL" GITGUARD; then ok; else bad "A08 an approved dirty delete must write its ledger line"; fi; pass_n=$((pass_n+1))
+rm -f "$RAL"; rdel pass 0 "A08 GITGUARD=1 approves a branch origin never had" 'GITGUARD=1 git push origin --delete ra-ghost-never-existed' "$RA_WC"
+rm -f "$RAL"; rdel pass 0 "A08 GITGUARD=1 in front of a clean delete passes" 'GITGUARD=1 git push origin --delete ra-clean' "$RA_WC"
+if [ -f "$RAL" ]; then bad "A08 an override that waived nothing must write NO ledger line"; else ok; fi; pass_n=$((pass_n+1))
+rm -f "$RAL"; rdel refuse 2 "A08 an override on a LATER segment does not approve a dirty delete" 'git push origin --delete ra-dirty && GITGUARD=1 true' "$RA_WC"
+
+# --- A11 a short flag with its value attached is not the -a cluster ----------------------
+ex30 pass 0 "A11 git commit -Cabc b.txt (a reuse-message ref holding the letter a) is not -a" 'git commit -Cabc b.txt'
+ex30 pass 0 "A11 git commit -mabc b.txt (a message attached to -m) is not -a" 'git commit -mabc b.txt'
+ex30 refuse 2 "A11 pair: git commit -am x is a genuine -a cluster" 'git commit -am "x"'
+ex30 refuse 2 "A11 pair: git commit -nam x (a cluster reaching a before m) is still -a" 'git commit -nam "x"'
+
+# --- A12 the folder of a commit: ~, a variable set earlier on the line, git -C -----------
+RA12="$HOME/ra-a12"; mkdir -p "$RA12"; git -C "$RA12" init -q -b main; git -C "$RA12" config core.hooksPath /dev/null
+echo a > "$RA12/a.txt"; git -C "$RA12" add -A; "${ID[@]}" git -C "$RA12" commit -q -m init
+RA12S="$HOME/ra-a12s"; mkdir -p "$RA12S"; git -C "$RA12S" init -q -b main; git -C "$RA12S" config core.hooksPath /dev/null
+echo a > "$RA12S/a.txt"; git -C "$RA12S" add -A; "${ID[@]}" git -C "$RA12S" commit -q -m init; echo s > "$RA12S/s.txt"; git -C "$RA12S" add s.txt
+ex30 pass 0 "A12 cd ~/<folder> is resolved: an empty-index commit there passes" 'cd ~/ra-a12 && git commit -m x'
+ex30 pass 0 "A12 cd \$W with W= set earlier on the line is resolved" "W=$RA12; cd \$W && git commit -m x"
+ex30 pass 0 "A12 cd \${W} with W= set earlier is resolved" "W=$RA12; cd \${W} && git commit -m x"
+ex30 pass 0 "A12 git -C \$W with W= set earlier is resolved" "W=$RA12; git -C \$W commit -m x"
+ex30 refuse 2 "A12 pair: the resolved folder is really judged: staged file, bare commit" 'cd ~/ra-a12s && git commit -m x'
+ex30 refuse 2 "A12 pair: the resolved folder is really judged: -a" "W=$RA12S; git -C \$W commit -a -m x"
+ex30 refuse 2 "A12 pair: a variable never set on the line stays unresolvable" 'cd $NOPE_A12 && git commit -m x'
+ex30 refuse 2 "A12 pair: \$HOME is not resolved by the guard (only the shell can expand it)" 'cd "$HOME/ra-a12" && git commit a.txt -m x'
+ex30 refuse 2 "A12 pair: git -C with a variable never set is unresolvable" 'git -C $NOPE_A12 commit -m x'
+
+# --- A16 the heavy pattern only counts at the command position --------------------------
+HSG="$HOOKS_DIR/heavy-suite-guard.sh"
+for c in 'rg vitest docs/' 'which vitest' 'echo npm test >> /tmp/notes' 'cd docs && rg vitest'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A16 a runner named as an ARGUMENT is not a run: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSG"; done
+for c in 'npm test' 'CI=1 npm test' 'time npm test' '(npm test)' 'cd apps/web && vitest run' 'T=npm; $T test' 'vitest run a.test.ts && npm test'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A16 pair: a real run is still refused: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSG"; done
+
+# --- A17 the runner reached without npx, and npm --prefix -------------------------------
+for c in 'node node_modules/.bin/vitest run' './node_modules/.bin/vitest run' 'npm --prefix apps/web test' 'npm --prefix=apps/web run test:unit'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A17 must count as a heavy run: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSG"; done
+for c in 'node scripts/build.js' 'npm --prefix apps/web run dev' './node_modules/.bin/vitest run src/a.test.ts' 'ls node_modules/.bin/vitest'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A17 pair: not a full run: $c" env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSG"; done
+
+# --- A18 the load refusal says what is true --------------------------------------------
+INPUT="$(json_bash 'npm test')"
+ra18="$(printf '%s' "$INPUT" | env HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSG" 2>&1 1>/dev/null)"
+if printf '%s' "$ra18" | grep -q 'the machine is busy (load 25'; then ok; else bad "A18 the refusal must read 'the machine is busy (load N' (got: $ra18)"; fi; refuse_n=$((refuse_n+1))
+if printf '%s' "$ra18" | grep -qi 'another heavy suite'; then bad "A18 pair: the old claim of another running suite must be gone"; else ok; fi; pass_n=$((pass_n+1))
+
+# --- A21 the pipe rule fires only when a commit or push rides on the piped gate ---------
+GGD="$HOOKS_DIR/gate-guard.sh"
+for c in 'npx vitest run x | tail -3' 'npm run typecheck 2>&1 | grep -c error' 'git commit -m x && npx vitest run x | tail -3' 'npx vitest run x | tail -3 && ls'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A21 a piped gate with no commit riding on it passes: $c" bash "$GGD"; done
+for c in 'npx vitest run x | tail -3 && git commit -m x' 'npx vitest run x | tail -3 && git push' 'npx vitest run x | tee out.log; git commit -m x' 'npx vitest run x | tail -3 && echo READY'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A21 pair: a commit or push riding on the piped gate is refused: $c" bash "$GGD"; done
+
+# --- A22 git -C <path> commit/push counts ------------------------------------------------
+for c in 'npx vitest run x; git -C d commit -m x' 'npx vitest run x | tail -3 && git -C d push' 'npx vitest run x | tail -3 && git -c user.name=x commit -m y'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A22 git with global flags before commit/push counts: $c" bash "$GGD"; done
+for c in 'npx vitest run x; git -C d status' 'npx vitest run x && git -C d commit -m x'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A22 pair: not a commit after a semicolon, or joined with &&: $c" bash "$GGD"; done
+
+# --- A23 gate vocabulary: npm t, npm -w <ws> test; readers rg and cat -------------------
+for c in 'npm t | tail -3 && git commit -m x' 'npm -w apps/web test | tail -3 && git commit -m x' 'npx vitest run x | rg PASS && git commit -m x' 'npx vitest run x | cat && git commit -m x'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "A23 must refuse: $c" bash "$GGD"; done
+for c in 'npm t && git commit -m x' 'npm -w apps/web test && git commit -m x' 'npm test | rg PASS' 'npm ls | tail -3 && git commit -m x'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "A23 pair: must pass: $c" bash "$GGD"; done
+
+# --- A85 a broken python3 earlier on PATH cannot refuse every Bash call ------------------
+BADPYA="$T/ra-badpy"; mkdir -p "$BADPYA"; printf '#!/bin/sh\nexit 1\n' > "$BADPYA/python3"; chmod +x "$BADPYA/python3"
+INPUT="$(json_bash 'git status')"; expect pass 0 "A85 block-dangerous-git: a broken PATH python3 does not refuse an honest command" env PATH="$BADPYA:$PATH" bash "$BDG"
+INPUT="$(json_bash 'git reset --hard')"; expect refuse 2 "A85 pair: the same guard, same PATH, still refuses the dangerous one (the real python ran)" env PATH="$BADPYA:$PATH" bash "$BDG"
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "A85 heavy-suite-guard: a broken PATH python3 does not refuse an honest command" env PATH="$BADPYA:$PATH" HEAVY_SUITE_LOAD_OVERRIDE=25 bash "$HSG"
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "A85 gate-guard: a broken PATH python3 does not refuse an honest command" env PATH="$BADPYA:$PATH" bash "$GGD"
+INPUT="$(json_bash 'npx vitest run x | tail -3 && git commit -m x')"; expect refuse 2 "A85 pair: gate-guard with the broken PATH python3 still judges (the real python ran)" env PATH="$BADPYA:$PATH" bash "$GGD"
+ex30 pass 0 "A85 commit-pathspec-guard: a broken PATH python3 does not refuse git status" 'git status' env PATH="$BADPYA:$PATH" bash "$HOOKS_DIR/commit-pathspec-guard.sh"
+# no /usr/bin/python3 (the preferred path is a test seam): the first python3 on PATH is used
+FBPY="$T/ra-fbpy"; mkdir -p "$FBPY"; printf '#!/bin/sh\nexec %s "$@"\n' "$(command -v python3)" > "$FBPY/python3"; chmod +x "$FBPY/python3"
+INPUT="$(json_bash 'git reset --hard')"; expect refuse 2 "A85 fallback: with no preferred python3 the PATH one judges and refuses" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$FBPY:$PATH" bash "$BDG"
+INPUT="$(json_bash 'git status')"; expect pass 0 "A85 fallback pair: and passes an honest command" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$FBPY:$PATH" bash "$BDG"
+INPUT="$(json_bash 'git status')"; expect refuse 2 "A85 fallback: with no preferred python3 a BROKEN PATH one still fails closed" env GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$BADPYA:$PATH" bash "$BDG"
+INPUT="$(json_bash 'git status')"; expect refuse 2 "A85 no python3 anywhere: block-dangerous-git fails closed" env -i "PATH=$NOPY28" GUARD_PYTHON_PREFERRED=/nonexistent/python3 bash "$BDG"
+rm -f "$HOME/ra-wc"
+# ======================================================================================
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?

@@ -45,26 +45,31 @@
 # refused. Judged on text with quoted strings removed. Every use is written to hooks/override-ledger.sh with the refusal it bypassed;
 # if that line CANNOT be written (no ledger script, unwritable path) the override is
 # REFUSED, not honoured.
-# jq, python3 and hooks/guard-lib.sh all parse the command below; if any is missing this
+# The folder is worked out where the shell would: `cd ~/x`, `cd $W` / `git -C $W` with `W=...`
+# set earlier on the same line, and plain paths. A folder still holding `$` (say `$HOME`, or a
+# variable never set on the line) is the "cannot be worked out" refusal above.
+# A short flag with its value attached (`-Cabc`, `-mabc`) is not the `-a` cluster; `-am` is.
+# A variable elsewhere in a read-only git line (`git diff HEAD -- $paths`) is not a commit.
+# jq, python3 (guard-lib.sh's GUARD_PY: /usr/bin/python3, else the first on PATH) and hooks/guard-lib.sh all parse the command below; if any is missing this
 # guard cannot read what it's being asked to run, so it refuses rather than silently
 # letting an unparsed (and therefore unmatched) command through. Hook input that is empty
 # or is not valid JSON is refused for the same reason — the one exception is a well-formed
 # call for a tool other than Bash, which carries no command to judge. Fail closed, like
 # git-hooks/pre-commit.
-# Tests: hooks/test-hooks.sh (sections 3, 3b, 23, 28, 29).
-missing=""
-command -v jq >/dev/null 2>&1 || missing="jq"
-command -v python3 >/dev/null 2>&1 || missing="${missing:+$missing and }python3"
-if [ -n "$missing" ]; then
-  echo "commit-pathspec-guard: REFUSED — $missing not found, so this guard cannot parse the command (fail closed, not open)." >&2
-  exit 2
-fi
+# Tests: hooks/test-hooks.sh (sections 3, 3b, 23, 28, 29; `refresh 2026-09-29 (a)` for A01, A11, A12, A85).
 GUARD_LIB="$(dirname "$0")/guard-lib.sh"
 if [ ! -r "$GUARD_LIB" ]; then
   echo "commit-pathspec-guard: REFUSED — hooks/guard-lib.sh is missing next to this hook, so the command cannot be normalised before matching (fail closed, not open). Reinstall the hooks (install.sh copies hooks/*.sh)." >&2
   exit 2
 fi
 . "$GUARD_LIB"
+missing=""
+command -v jq >/dev/null 2>&1 || missing="jq"
+[ -n "$GUARD_PY" ] && [ -x "$GUARD_PY" ] || missing="${missing:+$missing and }python3"
+if [ -n "$missing" ]; then
+  echo "commit-pathspec-guard: REFUSED — $missing not found, so this guard cannot parse the command (fail closed, not open)." >&2
+  exit 2
+fi
 input="$(cat)"
 if [ -z "$input" ] || ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
   echo "commit-pathspec-guard: REFUSED — the hook input is empty or is not valid JSON, so the command cannot be read (fail closed, not open)." >&2
@@ -79,7 +84,7 @@ if [ -z "$cmd" ]; then
 fi
 cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"; [ -z "$cwd" ] && cwd="$PWD"
 sid="$(printf '%s' "$input" | jq -r '.session_id // empty')"; [ -z "$sid" ] && sid="nosession"
-verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" python3 -c "$GUARD_PY_COMMON"'
+verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" "$GUARD_PY" -c "$GUARD_PY_COMMON"'
 import subprocess, shlex
 raw = sys.stdin.read()
 s = clean(raw)
@@ -125,6 +130,33 @@ def toplevel(r):
     t=git_out(r,"rev-parse","--show-toplevel").strip()
     return os.path.realpath(t) if t else None
 UNRESOLVABLE=("$", "`", "*", "?")
+# A12: a folder written with `~`, or through a variable set EARLIER ON THE SAME LINE, is worked
+# out here (a hook cannot ask the shell); anything still holding `$`, a backtick or a glob
+# after that -- `$HOME`, a variable never set on the line -- stays unreadable (None).
+assigned = {}
+_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+def resolve_dir(t):
+    if t == "~" or t.startswith("~/"):
+        t = os.path.expanduser(t)
+    t = _VAR.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)), t)
+    if any(ch in t for ch in UNRESOLVABLE):
+        return None
+    return t
+def join_dir(base, t):
+    r = resolve_dir(t)
+    if r is None: return None
+    if os.path.isabs(r): return r
+    return os.path.normpath(os.path.join(base, r)) if base else None
+def short_flag_sweeps(a):
+    # `-am` is a cluster holding -a; `-Cabc`, `-mabc`, `-Fa.txt` are a value-taking flag with
+    # its value attached, so the a inside is not a flag. Scan left to right: the first
+    # value-taking letter ends the cluster.
+    if not a.startswith("-") or a.startswith("--"):
+        return False
+    for ch in a[1:]:
+        if ch == "a": return True
+        if ch in "mFCctSu": return False
+    return False
 def read_pathspec_file(where, name, nul):
     """The paths inside a --pathspec-from-file list, or None when it cannot be read —
     a list this guard cannot open is a commit whose contents it cannot judge."""
@@ -150,6 +182,11 @@ for seg in segments(s):
     cur_sweep = override_at_start(blank_quoted(seg), "SWEEP")
     toks=toks_of(seg)
     if not toks: continue
+    if all(re.match(r"[A-Za-z_][A-Za-z0-9_]*=", t) for t in toks):
+        for t in toks:
+            k, v = t.split("=", 1)
+            assigned[k] = v            # a value that is itself unreadable stays so: see resolve_dir
+        continue
     # A git binary produced by a substitution or held in a variable cannot be matched by
     # any pattern, so it is not read as a commit it can hide behind: refuse and ask for a
     # plain `git`.
@@ -159,18 +196,15 @@ for seg in segments(s):
     # `C=commit; git $C -a -m x`, `git commit $paths -m x`. The arguments are what this
     # guard reads, so when they only exist once the shell runs, nothing can be judged.
     # A substitution inside a quoted message or value is blanked out first and still passes.
-    if substituted_args(blank_quoted(seg), "git") and not (repo and linked(repo)):
+    if substituted_args(blank_quoted(seg), "git", ("commit",)) and not (repo and linked(repo)):
         finish("REFUSE_ARGSUB")
     if toks[0]=="cd" and len(toks)>1:
-        t=toks[1]
-        if any(ch in t for ch in UNRESOLVABLE):
-            repo=None; continue           # a folder only the shell can work out: unreadable
-        repo=t if os.path.isabs(t) else (os.path.normpath(os.path.join(repo,t)) if repo else None); continue
+        repo=join_dir(repo, toks[1]); continue    # None: a folder only the shell can work out
     try: gi=toks.index("git")
     except ValueError: continue
     rest=toks[gi+1:]; seg_repo=repo; i=0
     while i<len(rest) and rest[i].startswith("-"):
-        if rest[i]=="-C" and i+1<len(rest): seg_repo=rest[i+1] if os.path.isabs(rest[i+1]) else (os.path.normpath(os.path.join(repo,rest[i+1])) if repo else None); i+=2; continue
+        if rest[i]=="-C" and i+1<len(rest): seg_repo=join_dir(repo, rest[i+1]); i+=2; continue
         if rest[i]=="-c" and i+1<len(rest): i+=2; continue
         i+=1
     if i>=len(rest) or rest[i]!="commit": continue
@@ -182,7 +216,7 @@ for seg in segments(s):
     if not seg_repo or toplevel(seg_repo) is None:
         finish("REFUSE_CD")
     if linked(seg_repo): continue   # own linked worktree: nothing else can be staged here
-    if any(a in ("-a","--all") or (a.startswith("-") and not a.startswith("--") and "a" in a[1:] and a not in VALFLAGS) for a in args):
+    if any(a in ("-a","--all") or (a not in VALFLAGS and short_flag_sweeps(a)) for a in args):
         finish("REFUSE_ALL")
     nul = "--pathspec-file-nul" in args
     paths=[]; j=0; after_dd=False
@@ -243,7 +277,7 @@ PYPROV="$(dirname "$0")/provenance.py"
 if [ -f "$PYPROV" ]; then
   printf '%s\n' "$verdict" | grep '^CHECK' | while IFS=$'\t' read -r _ repo rest; do
     IFS=$'\t' read -r -a paths <<<"$rest"
-    res="$(python3 "$PYPROV" check "$repo" "$sid" "${paths[@]}")"
+    res="$("$GUARD_PY" "$PYPROV" check "$repo" "$sid" "${paths[@]}")"
     case "$res" in
       REFUSE*)
         echo "commit-pathspec-guard: REFUSED — a named shared file holds a change this session did not make (commit only what YOU wrote, reconciled line by line). ${res#REFUSE}" | tr '\n' ' ' >&2

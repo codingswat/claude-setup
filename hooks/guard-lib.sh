@@ -37,13 +37,17 @@
 #   has_substituted_git — the same shape in front of `commit`, where the arguments alone
 #                   cannot say what will be committed: that one is refused outright.
 #   substituted_args — the mirror image, and the hole hidden_cmdword leaves open: the
-#                   command word is a plain `git`, but one of its ARGUMENTS comes from a
-#                   variable or a substitution (`R=reset; git $R --hard`). There the
-#                   arguments are exactly what cannot be read, so the shape decides
-#                   nothing and the command is refused. Read on the copy with quoted
-#                   CONTENT blanked, so a substitution inside a quoted message or value
-#                   (`git commit -m "$msg" f.ts`, `git log --author="$me"`) is not a
-#                   substituted argument and still passes.
+#                   command word is a plain `git`, but its SUBCOMMAND comes from a variable
+#                   or a substitution (`R=reset; git $R --hard`), or the subcommand is a
+#                   mutating one the guard judges by its arguments (the caller names them:
+#                   push, reset, commit...) and one of THOSE comes from a variable
+#                   (`git push origin $F`). There the arguments are exactly what cannot be
+#                   read, so the shape decides nothing and the command is refused. A
+#                   variable in a READ-ONLY command (`git diff HEAD -- $paths`, `git -C
+#                   $W/repo status`, `git log -$n`) is an honest read and passes. Read on
+#                   the copy with quoted CONTENT blanked, so a substitution inside a quoted
+#                   message or value (`git commit -m "$msg" f.ts`, `git log
+#                   --author="$me"`) is not a substituted argument and still passes.
 #   wrapped_substitution — `eval`/`sh -c`/`bash -c` handed an argument that is itself a
 #                   substitution or a bare variable (`eval "$cmd"`). unwrap can bring an
 #                   inline literal out to the top level; it cannot bring out text that
@@ -51,7 +55,19 @@
 #                   Checked BEFORE unwrap, on text that still holds the wrapper.
 # A guard that cannot find this file REFUSES the command (fail closed) — never carries on
 # with un-normalised text, which would silently reopen every bypass above.
-# Tests: hooks/test-hooks.sh (sections 28 and 30).
+# Tests: hooks/test-hooks.sh (sections 28 and 30; `refresh 2026-09-29 (a)` for A01 and A85).
+
+# guard_resolve_python — the python3 every guard runs. PREFER /usr/bin/python3, else the
+# first python3 on PATH: a broken python3 earlier on PATH (a conda or pyenv shim that exits
+# non-zero) then cannot make every Bash call fail closed. On a host with no /usr/bin/python3
+# (some Linux images) the PATH one is used, as before. GUARD_PYTHON_PREFERRED is a TEST SEAM
+# (the suite points it at a missing file to drive the PATH fallback and the failing-parser
+# cases); leave it unset in real use. Each guard checks the result is executable before use.
+guard_resolve_python() {
+  local p="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
+  if [ -x "$p" ]; then printf '%s' "$p"; else command -v python3 2>/dev/null; fi
+}
+GUARD_PY="$(guard_resolve_python)"
 
 # Python helper definitions, prepended to each guard's own python snippet:
 #   python3 -c "$GUARD_PY_COMMON"'<the guard-specific code>'
@@ -65,7 +81,7 @@ _QUOTED = re.compile(r"\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27")
 _IFS = re.compile(r"\$\{IFS\}|\$IFS(?![A-Za-z0-9_])")
 _SEGRE = re.compile(r"&&|\|\||;|\||&|\n")
 _HIDDEN = re.compile(r"(^|[;&|(\n])(\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*)(\$\{?[A-Za-z_][^\s]*|\$\([^()]*\)|[\x60][^\x60]*[\x60])")
-_SUBGIT = re.compile(r"(?:\$\{?[A-Za-z_][^\s]*|\$\([^()]*\)|[\x60][^\x60]*[\x60])\s+(?:-\S+\s+)*commit\b")
+_SUBGIT = re.compile(r"(?<!-C )(?<!-c )(?<!--git-dir )(?<!--work-tree )(?:\$\{?[A-Za-z_][^\s]*|\$\([^()]*\)|[\x60][^\x60]*[\x60])\s+(?:-\S+\s+)*commit\b")
 _ANYSUB = re.compile(r"\$\{?[A-Za-z_(0-9]|[\x60]")
 _WRAPARG = re.compile(r"\b(?:eval|(?:bash|sh|zsh)\s+-c)\s+(\"[^\"]*\"|\x27[^\x27]*\x27|[^\s;&|]+)")
 def strip_heredocs(s):
@@ -98,13 +114,31 @@ def has_substituted_git(s):
     return _SUBGIT.search(s) is not None
 def hidden_cmdword(s, standin):
     return _HIDDEN.sub(lambda m: m.group(1) + m.group(2) + standin, s)
-def substituted_args(s, binary):
-    # s: ONE segment with quoted CONTENT already blanked. True when the command word is
-    # `binary` spelled plainly and anything after it is a substitution or a variable.
+def substituted_args(s, binary, whole_for=()):
+    # s: ONE segment with quoted CONTENT already blanked. True when `binary` is spelled
+    # plainly and what it will be told to do cannot be read: (1) the SUBCOMMAND token -- the
+    # word right after `binary`, skipping global flags and their values (`-C <path>`,
+    # `-c <k>=<v>`, `--git-dir <path>`, `--work-tree <path>`) -- is itself a substitution or a
+    # bare variable (`R=reset; git $R --hard`); or (2) the subcommand is one of `whole_for`
+    # (the mutating ones the calling guard judges by their arguments: push, reset, commit...)
+    # and any LATER token is a substitution (`git push origin $F`, `git commit $paths`).
+    # A variable elsewhere in a READ-ONLY command is an honest read and passes:
+    # `git diff HEAD -- $paths`, `git -C $W/repo status`, `git log --oneline -$n`.
     m = re.match(r"\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*" + re.escape(binary) + r"(?:\s|$)", s)
     if not m:
         return False
-    return _ANYSUB.search(s[m.end():]) is not None
+    toks = s[m.end():].split()
+    i = 0
+    while i < len(toks) and toks[i].startswith("-") and toks[i] != "-":
+        if toks[i] in ("-C", "-c", "--git-dir", "--work-tree") and i + 1 < len(toks):
+            i += 2
+        else:
+            i += 1
+    if i >= len(toks):
+        return False
+    if _ANYSUB.search(toks[i]) is not None:
+        return True
+    return toks[i] in whole_for and _ANYSUB.search(" ".join(toks[i + 1:])) is not None
 def wrapped_substitution(s):
     # s: the whole command, BEFORE unwrap (the wrapper must still be in the text).
     for m in _WRAPARG.finditer(s):
