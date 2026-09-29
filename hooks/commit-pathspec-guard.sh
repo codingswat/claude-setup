@@ -5,6 +5,8 @@
 # Refuses:
 #   - `git commit` with no path arguments while the index already holds staged files
 #   - `git commit -a` / `--all` (stages and commits every tracked change, staged or not)
+#   - `git commit -i <paths>` / `--include` while the index holds staged files that are not among
+#     the named paths (`-i` commits everything already staged PLUS the paths: the same sweep)
 #   - whole-tree pathspecs: `git commit .` / `./` / `:/` / `*` / `..` / `/`, and the repo
 #     root named by its own path — every one of them is the same sweep as `-a` wearing a
 #     different hat
@@ -147,6 +149,14 @@ def join_dir(base, t):
     if r is None: return None
     if os.path.isabs(r): return r
     return os.path.normpath(os.path.join(base, r)) if base else None
+def short_flag_has(a, letter):
+    # the same cluster walk as short_flag_sweeps, for any one letter (`-im` holds -i).
+    if not a.startswith("-") or a.startswith("--"):
+        return False
+    for ch in a[1:]:
+        if ch == letter: return True
+        if ch in "mFCctSu": return False
+    return False
 def short_flag_sweeps(a):
     # `-am` is a cluster holding -a; `-Cabc`, `-mabc`, `-Fa.txt` are a value-taking flag with
     # its value attached, so the a inside is not a flag. Scan left to right: the first
@@ -234,6 +244,13 @@ for seg in segments(s):
         paths.append(a); j+=1
     if any(p in WHOLE_TREE for p in paths):
         finish("REFUSE_DOT")
+    # `-i` / `--include` commits what is ALREADY STAGED plus the named paths, so it carries
+    # the staged files of another session exactly as a bare commit does: judged like one.
+    include = any(a == "--include" or (a not in VALFLAGS and short_flag_has(a, "i")) for a in args)
+    if include:
+        named = {f for f in git_out(seg_repo,"diff","HEAD","--name-only","--",*paths).split("\n") if f.strip()} | set(paths)
+        extra = sorted(f for f in git_out(seg_repo,"diff","--cached","--name-only").split("\n") if f.strip() and f not in named)
+        if extra: finish("REFUSE_INDEX:"+", ".join(extra))
     if paths:
         tl=toplevel(seg_repo)
         if tl and any(os.path.realpath(p if os.path.isabs(p) else os.path.join(seg_repo,p))==tl for p in paths):

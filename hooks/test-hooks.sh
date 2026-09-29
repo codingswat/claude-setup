@@ -212,6 +212,7 @@ printf 'feat: x\n\nGenerated with Claude Code\n' > "$T/m3"; expect refuse 1 "'Ge
 
 echo "6 git-hooks/pre-commit"
 FAKE_HOME="$T/fakehome-pc"; mkdir -p "$FAKE_HOME/.claude/hooks"
+cp "$HOOKS_DIR/override-ledger.sh" "$FAKE_HOME/.claude/hooks/"   # PRIVACY_OK=1 now logs (attack fix F10): the seed commits below need the ledger script
 cat > "$FAKE_HOME/.claude/hooks/backup.conf" <<'EOF'
 AUTHOR=Tester <tester@example.com>
 MIRROR_DIR=
@@ -241,7 +242,7 @@ echo "clean seed" > "$pr/a.txt"; if ptry; then ok; else bad "privacy: a clean fi
 pass_n=$((pass_n+1))
 U="/User""s"; echo "see ${U}/alice/x.txt" > "$pr/b.txt"; if ptry; then bad "privacy: an absolute macOS home path must be refused"; else ok; git -C "$pr" reset -q; rm "$pr/b.txt"; fi
 refuse_n=$((refuse_n+1))
-echo "see /home/bob/project" > "$pr/h.txt"; if ptry; then bad "privacy: an absolute /home/<name>/ path must be refused"; else ok; git -C "$pr" reset -q; rm "$pr/h.txt"; fi
+echo "see /ho""me/bob/project" > "$pr/h.txt"; if ptry; then bad "privacy: an absolute /home/<name>/ path must be refused"; else ok; git -C "$pr" reset -q; rm "$pr/h.txt"; fi
 refuse_n=$((refuse_n+1))
 echo "met zebulonquixote today" > "$pr/c.txt"; if ptry; then bad "privacy: a listed name (case-insensitive) must be refused"; else ok; git -C "$pr" reset -q; rm "$pr/c.txt"; fi
 refuse_n=$((refuse_n+1))
@@ -488,7 +489,7 @@ git -C "$pr2" add -A; env HOME="$FAKE_HOME" PRIVACY_OK=1 "${ID[@]}" git -C "$pr2
 printf 'see %s/alice/x.txt\nfirst line\nsecond line\n' "$U2" > "$pr2/a.txt"
 if p2try; then ok; else bad "privacy: an old home-path line already committed must NOT be re-flagged just because the file is touched again"; fi
 pass_n=$((pass_n+1))
-echo "WORKDIR /home/node/app" > "$pr2/Dockerfile"
+echo "WORKDIR /ho""me/node/app" > "$pr2/Dockerfile"
 if p2try; then ok; else bad "privacy: Dockerfile WORKDIR /home/node/app (a known placeholder name) must pass"; fi
 pass_n=$((pass_n+1))
 echo "see https://docs.example.com/home/faq" > "$pr2/docs.txt"
@@ -582,10 +583,10 @@ EOF
 echo "hello" > "$SH/.claude/CLAUDE.md"
 env HOME="$SH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
 beforeS="$(git -C "$SH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
-echo 'DATABASE_URL=postgres://u:p4ss@host/db' >> "$SH/.claude/CLAUDE.md"
+echo "DATABASE_URL=postgres:/""/u:p4""ss@host/db" >> "$SH/.claude/CLAUDE.md"   # built from pieces: this file must pass the kit's own secret scan (B1)
 env HOME="$SH" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
 afterS="$(git -C "$SH/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$afterS" = "$beforeS" ]; then ok; else bad "a password inside a URL (DATABASE_URL=postgres://u:p4ss@host/db) must NOT be committed"; fi
+if [ "$afterS" = "$beforeS" ]; then ok; else bad "a password inside a URL (DATABASE_URL=postgres, user u, password p4ss, host) must NOT be committed"; fi
 refuse_n=$((refuse_n+1))
 sed -i.bak '/DATABASE_URL/d' "$SH/.claude/CLAUDE.md"; rm -f "$SH/.claude/CLAUDE.md.bak"
 echo 'API_KEY=' >> "$SH/.claude/CLAUDE.md"
@@ -1711,7 +1712,8 @@ rdel refuse 2 "A08 EVERY named branch is checked: clean first, dirty second" 'gi
 rdel refuse 2 "A08 a branch origin never had cannot be judged and is refused" 'git push origin --delete ra-ghost-never-existed' "$RA_WC"
 rdel refuse 2 "A08 deleting the default branch itself is refused (it is trivially merged into itself)" 'git push origin --delete main' "$RA_WC"
 rdel refuse 2 "A08 a remote other than origin is not judged and is refused" 'git push upstream --delete ra-clean' "$RA_WC"
-rdel refuse 2 "A08 a variable branch name cannot be judged and is refused" 'B=ra-clean; git push origin --delete $B' "$RA_WC"
+rdel refuse 2 "A08 a variable branch name cannot be judged and is refused" 'B=$(echo ra-clean); git push origin --delete $B' "$RA_WC"
+rdel pass 0 "A08 (F2 attack fix) a branch name assigned a plain value earlier on the same line is judged as that name" 'B=ra-clean; git push origin --delete $B' "$RA_WC"
 rdel refuse 2 "A08 a command word hidden in a substitution is judged by its arguments: dirty" 'GIT=git; $GIT push origin --delete ra-dirty' "$RA_WC"
 rdel pass 0 "A08 a hidden command word, clean branch: judged the same way and passes" 'GIT=git; $GIT push origin --delete ra-clean' "$RA_WC"
 rdel pass 0 "A08 a quoted mention of the delete is not a delete" 'echo "git push origin --delete ra-dirty"' "$RA_WC"
@@ -2976,6 +2978,156 @@ env HOME="$DH6" INSTALL_PRETEND_MISSING=node bash "$REPOD2/install.sh" --yes >/d
 S6="$DH6/.claude/settings.json"
 if [ "$d2rc" = 0 ] && [ "$(d2_field "$S6" SessionStart clock-in-context.sh timeout)" = "10" ] && [ "$(d2_field "$S6" UserPromptSubmit doorman.sh timeout)" = "10" ] \
    && [ "$(d2_count "$S6" UserPromptSubmit)" = 2 ] && [ "$(d2_field "$S6" PreToolUse agent-model-guard.sh matcher)" = "Agent" ]; then ok; else bad "d2 the python3 branch (no node) must upgrade timeouts, add the agent guard, and not duplicate (rc=$d2rc)"; fi
+pass_n=$((pass_n+1))
+
+echo "attack fixes (1): the blind attack round's findings in the command guards, git hooks and override ledger (F1 F2 F3 F6 F9 F10 F12 B1 M9)"
+AF_BDG="$HOOKS_DIR/block-dangerous-git.sh"
+# ---- F1 force-push in every honest spelling ----
+for c in 'git push -uf origin main' 'git push -fu origin main' 'git push -ufv origin main' 'git push origin main -uf' \
+         'git push --force-with-lease=main origin main' 'git push origin main --force-with-lease=refs/heads/main' \
+         'git push --force-if-includes origin main' 'git push --force-with-lease --force-if-includes origin main' \
+         'git push --force=x origin main' 'git push origin +main' 'git push origin +HEAD:main' 'git push --force-with-lease origin main'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "F1 must refuse: $c" bash "$AF_BDG"
+done
+for c in 'git push -u origin main' 'git push --follow-tags origin main' 'git push origin feature-fix' 'git push -v origin main' \
+         'git push --set-upstream origin fix-flag' 'git push origin main:staging-fix' 'git push --tags'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "F1 must pass: $c" bash "$AF_BDG"
+done
+# ---- F2 a variable set EARLIER IN THE SAME COMMAND is read; an unreadable one says how to fix it ----
+for c in 'B=feature; git push origin $B' 'B=feature; git push origin HEAD:$B' 'B=feature; git checkout $B' 'NEW=topic; git checkout -b $NEW' \
+         'F=file.ts; git restore $F' 'BASE=HEAD~1; git reset --soft $BASE' 'OLD=feature; git branch -d $OLD' 'B="feature"; git push origin ${B}' \
+         'A=feat; B=$A; git push origin $B' 'R=status; git $R'; do
+  INPUT="$(json_bash "$c")"; expect pass 0 "F2 must pass (value known on the same line): $c" bash "$AF_BDG"
+done
+for c in 'B=--force; git push origin $B' 'R=reset; git $R --hard' 'M=--hard; git reset $M' 'G=git; $G push --force origin main' \
+         'git push origin $BRANCH' 'B=$(git branch --show-current); git push origin $B' 'B=x; B=$(git branch --show-current); git push origin $B' \
+         'D=main; git push origin --delete $D'; do
+  INPUT="$(json_bash "$c")"; expect refuse 2 "F2 must refuse (force, or value unreadable): $c" bash "$AF_BDG"
+done
+INPUT="$(json_bash 'git push origin $BRANCH')"; af_err="$(printf '%s' "$INPUT" | bash "$AF_BDG" 2>&1 >/dev/null)"
+if printf '%s' "$af_err" | grep -qi 'write the value out'; then ok; else bad "F2: the unreadable-variable refusal must say 'write the value out' (got: $af_err)"; fi
+refuse_n=$((refuse_n+1))
+# ---- F6 commit -i / --include carries the whole index ----
+AFR="$T/af-f6"; mkdir -p "$AFR"; git -C "$AFR" init -q -b main; git -C "$AFR" config core.hooksPath /dev/null
+echo a > "$AFR/a.txt"; git -C "$AFR" add -A; "${ID[@]}" git -C "$AFR" commit -q -m init
+af_cp() { local kind="$1" want="$2" label="$3" c="$4"; python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]},"cwd":sys.argv[2]}))' "$c" "$AFR" | bash "$HOOKS_DIR/commit-pathspec-guard.sh" >/dev/null 2>&1; local got=$?; if [ "$got" = "$want" ]; then ok; else bad "$label (wanted $want, got $got)"; fi; if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+echo b > "$AFR/b.txt"; echo c > "$AFR/c.txt"; git -C "$AFR" add c.txt
+af_cp refuse 2 "F6 must refuse: git commit -i b.txt with another file already staged" 'git commit -i b.txt -m x'
+af_cp refuse 2 "F6 must refuse: git commit --include b.txt with another file already staged" 'git commit --include b.txt -m x'
+af_cp refuse 2 "F6 must refuse: git commit -im x b.txt (clustered)" 'git commit -im x b.txt'
+af_cp pass 0 "F6 control: a plain pathspec commit still passes" 'git commit b.txt -m x'
+git -C "$AFR" reset -q
+af_cp pass 0 "F6 must pass: git commit -i b.txt with an EMPTY index" 'git commit -i b.txt -m x'
+git -C "$AFR" add b.txt
+af_cp pass 0 "F6 must pass: git commit -i b.txt when the only staged file is b.txt itself" 'git commit -i b.txt -m x'
+# ---- F3 / M9 the one secret list: shapes it missed, and placeholders it refused ----
+AFX="$(printf 'a%.0s' {1..24})"; AFY="$(printf 'Q7%.0s' {1..24})"
+AF_SKL="sk""-${AFY}"; AF_SKLIVE="sk""_live_${AFX}"; AF_RKLIVE="rk""_live_${AFX}"; AF_HF="hf""_${AFY}"; AF_NPM="npm""_${AFY}"
+AF_PW="postgres:/""/u:p4""ss@host/db"
+RBH="$(rb_home main)"; RB_WANT='key-shaped'
+rb_case refuse "F3: a legacy sk- key" "$RBH" a.txt "OPENAI is $AF_SKL"
+rb_case refuse "F3: an sk_live_ Stripe key" "$RBH" a.txt "stripe $AF_SKLIVE"
+rb_case refuse "F3: an rk_live_ Stripe key" "$RBH" a.txt "stripe $AF_RKLIVE"
+rb_case refuse "M9: JSON env STRIPE_SECRET_KEY" "$RBH" s.json "  \"STRIPE_SECRET_KEY\": \"$AF_SKLIVE\""
+rb_case refuse "M9: JSON env HF_TOKEN" "$RBH" s.json "  \"HF_TOKEN\": \"$AF_HF\""
+rb_case refuse "M9: JSON env NPM_TOKEN" "$RBH" s.json "  \"NPM_TOKEN\": \"$AF_NPM\""
+rb_case refuse "M9: JSON env MY_SERVICE_API_KEY with a 40-char value" "$RBH" s.json "  \"MY_SERVICE_API_KEY\": \"${AFY}${AFY:0:8}\""
+rb_case refuse "F3: a real-looking password in a URL is still refused" "$RBH" a.env "DATABASE_URL=$AF_PW"
+rb_case refuse "F3: an hf_ token on its own" "$RBH" a.txt "tok $AF_HF"
+rb_case refuse "F3: an npm_ token on its own" "$RBH" a.txt "tok $AF_NPM"
+RB_WANT='.'
+for pw in password pass changeme xxxxxxxx 'your-password' '${DB_PASS}' example-pw passwd; do
+  rb_case pass "F3: a placeholder URL password ($pw) passes" "$RBH" a.env "DATABASE_URL=postgres://user:${pw}@localhost:5432/app"
+done
+rb_case pass "F3: an empty JSON key value passes" "$RBH" s.json '  "API_KEY": ""'
+rb_case pass "F3: a JSON key with a placeholder value passes" "$RBH" s.json '  "OPENAI_API_KEY": "<your key here>"'
+rb_case pass "F3: a JSON key whose value has spaces (prose) passes" "$RBH" s.json '  "PRIMARY_KEY": "the column that identifies each row"'
+rb_case pass "F3: a bare 64-hex string (a git hash) passes" "$RBH" a.txt "commit $(printf 'ab%.0s' {1..32})"
+rb_case pass "F3: a pragma line with a real-shaped key passes" "$RBH" a.txt "$AF_SKL # pragma: allow-secret"
+rb_case pass "F3: a hyphenated word ending in sk- inside prose passes" "$RBH" a.txt "the desk-lamp-with-a-long-hyphenated-name-for-the-css-class-x"
+# the backup hook reads the same list
+AFB="$T/af-backup"; mkdir -p "$AFB/.claude/hooks"; git -C "$AFB/.claude" init -q -b main
+git -C "$AFB/.claude" config user.name Tester; git -C "$AFB/.claude" config user.email tester@example.com
+printf 'AUTHOR=Tester <tester@example.com>\nMIRROR_DIR=\n' > "$AFB/.claude/hooks/backup.conf"
+echo hello > "$AFB/.claude/CLAUDE.md"; env HOME="$AFB" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+af_n0="$(git -C "$AFB/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+printf '{"env": {"HF_TOKEN": "%s"}}\n' "$AF_HF" > "$AFB/.claude/settings.json"
+env HOME="$AFB" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+af_n1="$(git -C "$AFB/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$af_n1" = "$af_n0" ]; then ok; else bad "M9: the backup must NOT commit a settings.json holding a JSON HF_TOKEN"; fi
+refuse_n=$((refuse_n+1))
+printf '{"env": {}}\n' > "$AFB/.claude/settings.json"; echo 'DATABASE_URL=postgres://user:password@localhost/app' >> "$AFB/.claude/CLAUDE.md"
+env HOME="$AFB" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+af_n2="$(git -C "$AFB/.claude" log --oneline 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$af_n2" -gt "$af_n1" ]; then ok; else bad "F3: the backup must commit a user:password@localhost placeholder URL"; fi
+pass_n=$((pass_n+1))
+# ---- F9 the ledger never stores a secret in clear text ----
+AF_TOK="gh""p_${AFY}"
+AFL="$T/af-ledger.tsv"; rm -f "$AFL"
+env OVERRIDE_LEDGER="$AFL" bash "$HOOKS_DIR/override-ledger.sh" SUITE_OK "SUITE_OK=1 API_KEY=$AF_TOK npm test" "heavy suite"
+if [ -s "$AFL" ] && ! grep -qF "$AF_TOK" "$AFL" && grep -qF 'API_KEY=***' "$AFL"; then ok; else bad "F9: a KEY=value in the command must be masked in the ledger: $(cat "$AFL" 2>/dev/null)"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$AFL"; env OVERRIDE_LEDGER="$AFL" bash "$HOOKS_DIR/override-ledger.sh" GITGUARD "GITGUARD=1 git push https://u:${AF_TOK}@host/o/r.git --force" "force"
+if [ -s "$AFL" ] && ! grep -qF "$AF_TOK" "$AFL" && grep -qF '://u:***@host' "$AFL"; then ok; else bad "F9: a URL password must be masked in the ledger: $(cat "$AFL" 2>/dev/null)"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$AFL"; env OVERRIDE_LEDGER="$AFL" bash "$HOOKS_DIR/override-ledger.sh" GITGUARD "git push https://${AF_TOK}@host/o/r.git --force" "force"
+if [ -s "$AFL" ] && ! grep -qF "$AF_TOK" "$AFL"; then ok; else bad "F9: a token used as the URL user must be masked in the ledger: $(cat "$AFL" 2>/dev/null)"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$AFL"; env OVERRIDE_LEDGER="$AFL" bash "$HOOKS_DIR/override-ledger.sh" X "MY_SECRET='$AF_TOK' DB_PASSWORD=\"$AF_TOK\" run" "p"
+if [ -s "$AFL" ] && ! grep -qF "$AF_TOK" "$AFL" && grep -qF ' run' "$AFL"; then ok; else bad "F9: quoted SECRET/PASSWORD values must be masked: $(cat "$AFL" 2>/dev/null)"; fi
+refuse_n=$((refuse_n+1))
+rm -f "$AFL"; env OVERRIDE_LEDGER="$AFL" bash "$HOOKS_DIR/override-ledger.sh" GITGUARD "GITGUARD=1 FOO=bar git reset --hard origin/main" "reset --hard"
+if grep -qF 'GITGUARD=1 FOO=bar git reset --hard origin/main' "$AFL"; then ok; else bad "F9 control: an ordinary command must be logged unchanged: $(cat "$AFL" 2>/dev/null)"; fi
+pass_n=$((pass_n+1))
+rm -f "$AFL"; printf '%s' "$(json_bash "GITGUARD=1 git push https://u:${AF_TOK}@host/o/r.git --force")" | env OVERRIDE_LEDGER="$AFL" bash "$AF_BDG" >/dev/null 2>&1
+if [ -s "$AFL" ] && ! grep -qF "$AF_TOK" "$AFL"; then ok; else bad "F9: through the real guard, the force-push URL token must not reach the ledger: $(cat "$AFL" 2>/dev/null)"; fi
+refuse_n=$((refuse_n+1))
+# ---- F10 PRIVACY_OK logs like every other override ----
+HPV="$(rb_home privok)"; RPL="$RB/privok-ledger.tsv"; rm -f "$RPL"
+RB_WANT='.'
+rb_case pass "F10: PRIVACY_OK=1 still lets a listed name through" "$HPV" n.txt "met zebulonquixote today" PRIVACY_OK=1 OVERRIDE_LEDGER="$RPL"
+if ledger_has "$RPL" PRIVACY_OK && [ "$(wc -l < "$RPL" | tr -d ' ')" = 1 ]; then ok; else bad "F10: PRIVACY_OK=1 must write exactly one ledger line: $(cat "$RPL" 2>/dev/null)"; fi
+refuse_n=$((refuse_n+1))
+if grep -qi 'zebulon' "$RPL" 2>/dev/null; then bad "F10: the ledger line must not carry the listed name"; else ok; fi
+pass_n=$((pass_n+1))
+rm -f "$RPL"; rb_case pass "F10: PRIVACY_OK=1 on a clean commit passes with no ledger line" "$HPV" ok.txt "nothing sensitive" PRIVACY_OK=1 OVERRIDE_LEDGER="$RPL"
+if [ ! -s "$RPL" ]; then ok; else bad "F10: an unneeded PRIVACY_OK=1 must not write a ledger line"; fi
+pass_n=$((pass_n+1))
+RB_WANT='ledger'
+rb_case refuse "F10: PRIVACY_OK=1 with an unwritable ledger is refused" "$HPV" n.txt "met zebulonquixote today" PRIVACY_OK=1 OVERRIDE_LEDGER="/nonexistent-$$/deep/overrides.tsv"
+HPV2="$(rb_home privok2)"; rm -f "$HPV2/.claude/hooks/override-ledger.sh"
+rb_case refuse "F10: PRIVACY_OK=1 with no override-ledger.sh at all is refused" "$HPV2" n.txt "met zebulonquixote today" PRIVACY_OK=1
+RB_WANT='real name|listed name|matches'
+rb_case refuse "F10 control: without PRIVACY_OK the listed name is still refused" "$HPV" n.txt "met zebulonquixote today" OVERRIDE_LEDGER="$RPL"
+RB_WANT='.'
+# ---- F12 the by-hand names list: section headers are not needles ----
+AFN="$T/af-names.local"
+sed -n "/^\[ -f ~\/.claude\/.redaction-names.local \] || cat > /,/^EOF\$/p" "$REPOD2/INSTALL.md" | sed '1d;$d' > "$AFN"
+if [ -s "$AFN" ] && ! grep -qE '^\[' "$AFN"; then ok; else bad "F12: INSTALL.md's by-hand names list must not hold a bare [section] line (lines: $(wc -l < "$AFN" 2>/dev/null))"; fi
+refuse_n=$((refuse_n+1))
+HF12="$RB/home-f12"; mkdir -p "$HF12/.claude/hooks"; cp "$HOOKS_DIR/override-ledger.sh" "$HF12/.claude/hooks/"
+cp "$AFN" "$HF12/.claude/.redaction-names.local"; printf 'ZebulonQuixote\n' >> "$HF12/.claude/.redaction-names.local"
+rb_case pass "F12: a file that mentions [guard] commits under the by-hand names list" "$HF12" d.md "the [guard] and [redact-only] sections"
+RB_WANT='real name|listed name|matches'; rb_case refuse "F12 control: a listed name under the by-hand list is still refused" "$HF12" d.md "met zebulonquixote"
+RB_WANT='.'
+HF12B="$RB/home-f12b"; mkdir -p "$HF12B/.claude/hooks"; cp "$HOOKS_DIR/override-ledger.sh" "$HF12B/.claude/hooks/"
+printf '[guard]\nZebulonQuixote\n[redact-only]\n' > "$HF12B/.claude/.redaction-names.local"
+rb_case pass "F12: a list that holds bare [guard] / [redact-only] lines (old by-hand install) does not refuse [guard]" "$HF12B" d.md "the [guard] section"
+RB_WANT='real name|listed name|matches'; rb_case refuse "F12 control: the name in the same old-style list still refuses" "$HF12B" d.md "met zebulonquixote"
+RB_WANT='.'
+# ---- B1 the kit's own shipped files pass the kit's own secret scan ----
+AFK="$(rb_new)"; AFKH="$(rb_home shipped)"; printf "# no names: this case is about the KEY scan only\n" > "$AFKH/.claude/.redaction-names.local"; af_files=0
+while IFS= read -r rel; do
+  [ -f "$REPOD2/$rel" ] || continue
+  mkdir -p "$AFK/$(dirname "$rel")"; cp "$REPOD2/$rel" "$AFK/$rel"; af_files=$((af_files+1))
+done < <(grep -oE '"\$SRC/[^"]+"' "$REPOD2/install.sh" | tr -d '"' | sed 's#^\$SRC/##' | sort -u; ls "$REPOD2"/git-hooks/* 2>/dev/null | sed "s#^$REPOD2/##")
+if [ "$af_files" -ge 20 ]; then ok; else bad "B1: the scan must cover every file install.sh copies (found only $af_files)"; fi
+refuse_n=$((refuse_n+1))
+# The key scan (4b) runs BEFORE the privacy limb and refuses with "key-shaped": that word must be absent. (The privacy
+# limb may still name the kit's own documented noreply address in its identity checks; that is not a secret.)
+git -C "$AFK" add -A >/dev/null 2>&1
+af_err="$(env HOME="$AFKH" "${ID[@]}" git -C "$AFK" commit -q -m t 2>&1 >/dev/null)"; af_rc=$?
+if [ "$af_rc" = 0 ] || { ! printf '%s' "$af_err" | grep -q 'key-shaped' && ! printf '%s' "$af_err" | grep -q 'cannot read SECRET_RE'; }; then ok; else bad "B1: a file install.sh copies ($af_files files) trips the kit's own secret scan: $af_err"; fi
 pass_n=$((pass_n+1))
 
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"

@@ -27,12 +27,22 @@ mkdir -p "${L%/*}" 2>/dev/null
 toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"
 folder="${toplevel:+${toplevel##*/}}"
 folder="${folder:-${PWD##*/}}"
-flat="$(printf '%s' "$2" | tr '\n\t' '  ')"
+# A ledger is a file to be read and reviewed, so it never holds a secret in clear text: the
+# value of any NAME=value whose NAME holds KEY, TOKEN, SECRET, PASSWORD or PASS, and the
+# credentials in a URL (user, colon, password, then @host after the scheme; or a long bare token as the user), are replaced by *** before
+# the line is cut and written. Tests: hooks/test-hooks.sh, `attack fixes (1)` (F9).
+mask_secrets() {
+  sed -E \
+    -e "s/([-A-Za-z0-9_]*([Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss])[A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|[^ ]*)/\\1=***/g" \
+    -e 's#(://[^/: @]*):[^@ /]*@#\1:***@#g' \
+    -e 's#(://)[^/:@ ]{20,}@#\1***@#g'
+}
+flat="$(printf '%s' "$2" | tr '\n\t' '  ' | mask_secrets)"
 if [ "${#flat}" -gt 240 ]; then
   excerpt="${flat:0:120} ... ${flat: -120}"
 else
   excerpt="$flat"
 fi
-pattern="$(printf '%s' "$3" | tr '\n\t' '  ')"
+pattern="$(printf '%s' "$3" | tr '\n\t' '  ' | mask_secrets)"
 { printf '%s\t%s\t%s\t%s\t%s\n' "$(date '+%Y-%m-%d %H:%M')" "$folder" "$1" "$pattern" "$excerpt" >> "$L"; } 2>/dev/null || exit 1
 exit 0

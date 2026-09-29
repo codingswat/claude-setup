@@ -124,13 +124,14 @@ changed_files() {
 # Limits, stated plainly: the scan is LINE BY LINE, so a secret split across two lines is
 # not caught, and neither is a base64- or otherwise encoded one. It is a catcher of
 # accidents, not a defence against someone deliberately hiding a key in your config.
-SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|Bearer [A-Za-z0-9._-]{20,}|_TOKEN=[^ ]{16,}|_KEY=[^ ]{16,}|_SECRET=[^ ]{16,}|://[^/ :]+:[^@ ]+@|-----BEGIN [A-Z ]*PRIVATE KEY'
-SECRET_HINT="If a line is a placeholder or a test fixture, put '# pragma: allow-secret' on it (a value containing your-, example, xxxx or <…> is ignored already)."
+SECRET_RE='sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{40,}|[sr]k_live_[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{30,}|npm_[A-Za-z0-9]{30,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|Bearer [A-Za-z0-9._-]{20,}|_TOKEN=[^ ]{16,}|_KEY=[^ ]{16,}|_SECRET=[^ ]{16,}|"[A-Z0-9_]*(KEY|TOKEN|SECRET)" *: *"[^" ]{16,}"|://[^/ :]+:[^@ ]+@|-----BEGIN [A-Z ]*PRIVATE KEY'
+# The ONE placeholder list (case-insensitive, matched against the MATCHED text, never the whole line),
+# read by git-hooks/pre-commit exactly like SECRET_RE: a doc showing the SHAPE of a key is not a key.
+# A URL password that is only a stand-in (`user:password@`, `pass`, `changeme`, `xxx…`, a `$VAR`) passes.
+PLACEHOLDER_RE='your-|example|xxxx|<|>|://[^/ :]+:(password|pass|passwd|pwd|changeme|xxx[^@]*|[$][^@]*|[*]+)@'
+SECRET_HINT="If a line is a placeholder or a test fixture, put '# pragma: allow-secret' on it (a value containing your-, example, xxxx or <…>, or a URL password like user:password@, is ignored already)."
 is_placeholder() {   # $1 = the matched text, not the whole line
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-    *your-*|*example*|*xxxx*|*'<'*|*'>'*) return 0 ;;
-  esac
-  return 1
+  printf '%s' "$1" | grep -qiE "$PLACEHOLDER_RE"
 }
 # One file -> prints a line number per REAL hit (placeholders and pragma lines dropped).
 file_secret_lines() {

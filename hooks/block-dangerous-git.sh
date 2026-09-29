@@ -116,7 +116,13 @@ pre=normalize_ws(strip_messages(strip_heredocs(raw)))
 wrapsub="1" if wrapped_substitution(pre) else "0"
 s=clean(raw)
 recs=[]
+assigned={}
 for seg in segments(s):
+    # A variable given a plain value EARLIER IN THE SAME COMMAND (`B=feature; git push origin $B`)
+    # is read as that value, on segments that start with git or a variable command word.
+    note_assignments(seg, assigned)
+    if re.match(r"\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:git\b|\$)", seg):
+        seg=resolve_assigned(seg, assigned)
     m=strip_quotechars(seg).replace("\n", " ")
     q=blank_quoted(seg).replace("\n", " ")
     flag="1" if override_at_start(q, "GITGUARD") else "0"
@@ -144,7 +150,7 @@ patterns=(
   "${W}git${G} +checkout${A} +\\.${E}"
   "${W}git${G} +checkout${A} +(-f|--force)${E}"
   "${W}git${G} +restore${A} +\\.${E}"
-  "${W}git${G} +push${A} +(--force|-f|--force-with-lease)${E}"
+  "${W}git${G} +push${A} +(--force(-with-lease|-if-includes)?(=[^ ;&|]*)?|-[a-zA-Z]*f[a-zA-Z]*)${E}"
   "${W}git${G} +push${A} +\\+[A-Za-z0-9]"
   "${W}git${G} +(filter-branch|filter-repo)${E}"
 )
@@ -364,7 +370,7 @@ if [ -n "$matched" ]; then
   exit 2
 fi
 if [ "$argsub_hit" = 1 ]; then
-  echo "block-dangerous-git: REFUSED — an ARGUMENT of this git command comes from a variable or a substitution (\`\$R\`, \`\${R}\`, \`\$(…)\`, backticks), so what git will be told to do cannot be read before it runs: \`R=reset; git \$R --hard\` is a hard reset no pattern can see. Write the git command plainly: git <subcommand> <arguments> … A substitution inside a quoted message or value (git commit -m \"\$msg\" f.ts, git log --author=\"\$me\") is fine and is not what this refuses. Once approved: GITGUARD=1 <command>" >&2
+  echo "block-dangerous-git: REFUSED — an ARGUMENT of this git command comes from a variable or a substitution (\`\$R\`, \`\${R}\`, \`\$(…)\`, backticks), so what git will be told to do cannot be read before it runs: \`R=reset; git \$R --hard\` is a hard reset no pattern can see. Write the value out: git push origin feature-x instead of git push origin \$B (or set it earlier in the SAME command: B=feature-x; git push origin \$B — a plain value assigned there is read). A variable whose value comes from \$(…) or an earlier command cannot be read. A substitution inside a quoted message or value (git commit -m \"\$msg\" f.ts, git log --author=\"\$me\") is fine and is not what this refuses. Once approved: GITGUARD=1 <command>" >&2
   exit 2
 fi
 if [ "$offswitch_hit" = 1 ]; then

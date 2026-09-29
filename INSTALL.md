@@ -162,9 +162,9 @@ Then open it and fill it in. It is written as a form and explains what each sect
 #   [guard]        names that must never reach a public commit
 #   [redact-only]  names you'd rather flag than hard-stop on
 
-[guard]
+# --- [guard] — add names below this line ---
 
-[redact-only]
+# --- [redact-only] — add names below this line ---
 EOF
 ```
 

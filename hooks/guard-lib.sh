@@ -141,6 +141,38 @@ def substituted_args(s, binary, whole_for=()):
     if _ANYSUB.search(toks[i]) is not None:
         return True
     return toks[i] in whole_for and _ANYSUB.search(" ".join(toks[i + 1:])) is not None
+_ASSIGN_ONE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|\x27[^\x27]*\x27|\$\([^()]*\)|[\x60][^\x60]*[\x60]|[^\s\"\x27]*)")
+_VARREF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_LEADASSIGN = re.compile(r"\s*((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s*)+)")
+def resolve_assigned(s, assigned):
+    # Replace every `$VAR` / `${VAR}` whose value was assigned EARLIER IN THE SAME COMMAND
+    # (`B=feature; git push origin $B`) with that value; one that was never assigned, or whose
+    # value only the shell can work out, is left as written. A hook cannot ask the shell.
+    return _VARREF.sub(lambda m: assigned.get(m.group(1) or m.group(2), m.group(0)), s)
+def note_assignments(seg, assigned):
+    # Call once per segment, in order. A segment made ONLY of `NAME=value` words records those
+    # values (a value that holds `$`, a backtick or `$(...)` after resolving is unreadable, so
+    # the name is forgotten -- a stale earlier value must never stand in for it). Any other
+    # segment that starts with NAME=... only sets a per-command variable: forget those names.
+    m = _LEADASSIGN.match(seg)
+    if not m:
+        return
+    pure = seg[m.end():].strip() == "" and _ASSIGN_ONE.sub("", m.group(1)).strip() == ""
+    for a in _ASSIGN_ONE.finditer(m.group(1)):
+        name, v = a.group(1), a.group(2)
+        if not pure:
+            assigned.pop(name, None); continue
+        if v[:1] == "\x27":
+            v = v[1:-1]
+            assigned.pop(name, None) if ("$" in v or "\x60" in v) else assigned.__setitem__(name, v)
+            continue
+        if v[:1] == "\"":
+            v = v[1:-1]
+        v = resolve_assigned(v, assigned)
+        if "$" in v or "\x60" in v:
+            assigned.pop(name, None)
+        else:
+            assigned[name] = v
 def wrapped_substitution(s):
     # s: the whole command, BEFORE unwrap (the wrapper must still be in the text).
     for m in _WRAPARG.finditer(s):
