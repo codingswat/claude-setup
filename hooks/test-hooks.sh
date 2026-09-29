@@ -1948,6 +1948,311 @@ RB_WANT='.'; rb_case pass "A86 fallback: no preferred python3, the PATH one judg
 RB_WANT='name'; rb_case refuse "A86 fallback: no preferred python3, the PATH one still refuses a listed name" "$RBH" a.txt 'met zebulonquixote' GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$GOODPYB:$PATH"
 unset RB_WANT RB_ADD
 
+echo "refresh 2026-09-29 (c1): default session-hook behaviours ported from the maintainer's live setup (A26 A27 A28 A29 A33 A62 A63 A64 A65 A66 A67 A68 A87)"
+C1H="$HOOKS_DIR/clock-in-context.sh"
+C1="$T/c1"; mkdir -p "$C1"
+# c1_tr <path> <spec>... : a fake transcript, file order = argument order. Spec = kind:minutes-ago[:arg]
+#   human:M[:text]  your own typed line (default text "status?")   tool:M  a tool result (a "user" line, must not count)
+#   usage:M:K       an assistant line whose usage sums to K thousand tokens   zero:M  an all-zero usage line (an API-error line)
+#   compact:M       a compact-boundary system line   asst:M  an assistant line with no usage
+#   filler:M:BYTES  a tool-result line of that many bytes (pushes older lines out of a fixed tail window)
+c1_tr() { python3 - "$@" <<'PY3'
+import sys, datetime, json
+path = sys.argv[1]; lines = []
+for spec in sys.argv[2:]:
+    parts = spec.split(':', 2); kind = parts[0]; mins = int(parts[1]); arg = parts[2] if len(parts) > 2 else ''
+    ts = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=mins)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    if kind == 'human':
+        d = {"type": "user", "timestamp": ts, "promptId": "p1", "message": {"role": "user", "content": (arg or "status?").replace('\\n', '\n')}}
+    elif kind == 'tool':
+        d = {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+    elif kind == 'filler':
+        d = {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "z" * int(arg)}]}}
+    elif kind == 'usage':
+        k = int(arg); d = {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "usage": {"input_tokens": 1000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": (k - 1) * 1000, "output_tokens": 5}}}
+    elif kind == 'zero':
+        d = {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "model": "<synthetic>", "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}}}
+    elif kind == 'compact':
+        d = {"type": "system", "subtype": "compact_boundary", "timestamp": ts, "content": "Conversation compacted"}
+    else:
+        d = {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [{"type": "text", "text": "x"}]}}
+    lines.append(json.dumps(d, separators=(',', ':')))
+open(path, 'w').write('\n'.join(lines) + '\n')
+PY3
+}
+# c1_in <event> <transcript> [prompt] [cwd] : the hook's stdin JSON; no prompt argument = no prompt field
+c1_in() { python3 -c '
+import json,sys
+d={"session_id":"c1s","hook_event_name":sys.argv[1],"transcript_path":sys.argv[2],"cwd":sys.argv[4] if len(sys.argv)>4 else "/tmp"}
+if len(sys.argv)>3: d["prompt"]=sys.argv[3].replace("\\n","\n")
+print(json.dumps(d))' "$@"; }
+c1_run() { local json="$1"; shift; printf '%s' "$json" | env "$@" bash "$C1H" 2>/dev/null; }
+c1_fire() { local l="$1" out="$2" pat="$3"; if printf '%s' "$out" | grep -qE "$pat"; then ok; else bad "$l: MUST show /$pat/ (got: $(printf '%s' "$out" | head -c 300))"; fi; refuse_n=$((refuse_n+1)); }
+c1_quiet() { local l="$1" out="$2" pat="$3"; if printf '%s' "$out" | grep -qE "$pat"; then bad "$l: must NOT show /$pat/ (got: $(printf '%s' "$out" | head -c 300))"; else ok; fi; pass_n=$((pass_n+1)); }
+RET='YOU ARE RETURNING after'
+TRC="$C1/t.jsonl"
+
+echo "  A62 the away detector fires only for the owner's own TYPED prompt; machine text is never the current or the previous message"
+c1_tr "$TRC" human:120 tool:60 human:0
+c1_fire "A62 baseline: typed prompt, previous typed message 120 min ago" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET 1[12][0-9] minutes"
+c1_tr "$TRC" human:120 human:1:'<task-notification>helper done</task-notification>' human:0
+c1_fire "A62 a helper hand-back one minute ago is not the owner's previous message" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET 1[12][0-9] minutes"
+c1_tr "$TRC" human:120 human:5:'<agent-message from=x>hi</agent-message>' human:4:'<cross-session-message from=y>hi</cross-session-message>' human:3:'Another Claude session sent a message: hi' human:2:'<bash-input>ls</bash-input>' human:1:'<<autonomous-loop>>' human:0
+c1_fire "A62 every machine shape between two typed messages is skipped, whatever the count" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET 1[12][0-9] minutes"
+c1_tr "$TRC" human:120 human:3:'[Cross-session delivery notice] a note arrived' human:0
+c1_fire "A62 a past delivery notice (a whole-message notice) is not the owner's previous message" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET 1[12][0-9] minutes"
+c1_tr "$TRC" human:120 human:5 human:0
+c1_quiet "A62 pair: a real typed message 5 min ago IS the previous message (no fire)" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET"
+c1_tr "$TRC" human:120 human:3:'please read <task-notification> tags for me' human:0
+c1_quiet "A62 pair: a typed message that merely MENTIONS the frame mid-text is still typed (no fire)" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET"
+c1_tr "$TRC" human:120 human:3:'[Cross-session delivery notice] a note\nplease also do the other thing' human:0
+c1_quiet "A62 pair: a message that starts with the notice frame but carries real text after it is typed (no fire)" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'status?')")" "$RET"
+c1_tr "$TRC" human:120 human:0
+for mp in '<task-notification>helper finished</task-notification>' '<agent-message from=x>hi' '<cross-session-message from=y>hi' 'Another Claude session sent a message: hi' '<bash-input>ls -la</bash-input>' '<<autonomous-loop>>' '   <task-notification>after leading spaces' '[Cross-session delivery notice] one line' '[Cross-session delivery notice] one\n[Cross-session delivery notice] two'; do
+  o="$(c1_run "$(c1_in UserPromptSubmit "$TRC" "$mp")")"
+  c1_quiet "A62 the CURRENT prompt is machine text ($(printf '%s' "$mp" | head -c 30)): no return notice, no full card" "$o" "$RET|HOW TO TALK TO ME"
+done
+c1_fire "A62 pair: an ordinary typed prompt with the same transcript fires" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'what is next?')")" "$RET"
+c1_fire "A62 pair: a prompt that starts with the notice frame but adds real text is typed (fires)" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '[Cross-session delivery notice] x\nand now do this')")" "$RET"
+c1_quiet "A62 SessionStart is not a typed prompt: the return notice never fires there" "$(c1_run "$(c1_in SessionStart "$TRC")")" "$RET"
+c1_fire "A62 pair: the SAME SessionStart still injects the full card" "$(c1_run "$(c1_in SessionStart "$TRC")")" "HOW TO TALK TO ME"
+# the classifier a later hook can call: clock-in-context.sh --classify-prompt reads the text on stdin, exit 0 = machine text, exit 1 = typed
+c1_cls() { local want="$1" label="$2" text="$3"; printf '%s' "$text" | bash "$C1H" --classify-prompt >/dev/null 2>&1; local got=$?; if [ "$got" = "$want" ]; then ok; else bad "classifier: $label (wanted $want, got $got)"; fi; if [ "$want" = 0 ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+c1_cls 0 "a task notification is machine text" '<task-notification>x</task-notification>'
+c1_cls 0 "leading whitespace before a machine prefix" $'  \n <cross-session-message>x'
+c1_cls 0 "a whole-message delivery notice (two frames, one blank line between)" $'[Cross-session delivery notice] a\n\n[Cross-session delivery notice] b'
+c1_cls 1 "an ordinary sentence is typed" 'please fix the build'
+c1_cls 1 "an empty prompt is typed" ''
+c1_cls 1 "a delivery notice followed by a plain line is typed" $'[Cross-session delivery notice] a\nplease do this'
+c1_cls 1 "the frame in the middle of a sentence is typed" 'see the <task-notification> tag'
+
+echo "  A67 a long paste must not outrun the hook (the prefix test reads a bounded head; a notice-only test is capped)"
+LONGM="$(python3 -c 'print("<task-notification>" + "x " * 100000, end="")')"
+c1_tr "$TRC" human:120 human:0
+s0=$(date +%s); o="$(c1_run "$(c1_in UserPromptSubmit "$TRC" "$LONGM")")"; s1=$(date +%s)
+c1_quiet "A67 a 200 KB machine-prefixed prompt is still recognised as machine (no return notice)" "$o" "$RET"
+if [ $((s1 - s0)) -le 3 ]; then ok; else bad "A67 a 200 KB prompt took $((s1 - s0)) s (limit 3 s)"; fi; pass_n=$((pass_n+1))
+LONGT="$(python3 -c 'print("please review " + "word " * 40000, end="")')"
+s0=$(date +%s); o="$(c1_run "$(c1_in UserPromptSubmit "$TRC" "$LONGT")")"; s1=$(date +%s)
+c1_fire "A67 pair: a 200 KB typed paste is typed (fires)" "$o" "$RET"
+if [ $((s1 - s0)) -le 3 ]; then ok; else bad "A67 a 200 KB typed prompt took $((s1 - s0)) s (limit 3 s)"; fi; pass_n=$((pass_n+1))
+LONGN="$(python3 -c 'print("\n".join(["[Cross-session delivery notice] line %d" % i for i in range(700)]), end="")')"
+c1_cls 1 "a notice-only test is capped: 700 notice lines (over 16 KB) is treated as typed" "$LONGN"
+SHORTN="$(python3 -c 'print("\n".join(["[Cross-session delivery notice] line %d" % i for i in range(20)]), end="")')"
+c1_cls 0 "pair: 20 notice lines (under the cap) is machine text" "$SHORTN"
+c1_cls 0 "a 200 KB machine-prefixed text classifies in bounded time" "$LONGM"
+
+echo "  A62 with no jq on the machine the prompt is cut out of the JSON by awk (CIC_NO_JQ=1 forces that reader)"
+c1_tr "$TRC" human:120 human:0
+c1_quiet "A62 no-jq: a machine prompt is still recognised" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '<task-notification>x</task-notification>')" CIC_NO_JQ=1)" "$RET"
+c1_fire "A62 no-jq pair: a typed prompt still fires" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'what now? say "hi"')" CIC_NO_JQ=1)" "$RET"
+c1_quiet "A62 no-jq: a two-line notice-only prompt (JSON-escaped newline) is machine" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '[Cross-session delivery notice] a\n[Cross-session delivery notice] b')" CIC_NO_JQ=1)" "$RET"
+c1_fire "A62 no-jq pair: a notice frame followed by real text is typed" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '[Cross-session delivery notice] a\nplease do this')" CIC_NO_JQ=1)" "$RET"
+s0=$(date +%s); o="$(c1_run "$(c1_in UserPromptSubmit "$TRC" "$LONGM")" CIC_NO_JQ=1)"; s1=$(date +%s)
+c1_quiet "A67 no-jq: a 200 KB machine-prefixed prompt is machine" "$o" "$RET"
+if [ $((s1 - s0)) -le 3 ]; then ok; else bad "A67 no-jq: a 200 KB prompt took $((s1 - s0)) s (limit 3 s)"; fi; pass_n=$((pass_n+1))
+
+echo "  A63 the context line reads the whole transcript, newest first, skips all-zero usage lines, and stays silent after a compaction"
+c1_tr "$TRC" usage:200:6 filler:190:300000 human:0
+c1_fire "A63 a usage line more than 200 KB before the end is still found" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used: 6k tokens'
+c1_tr "$TRC" usage:200:6 filler:190:9500000 human:0
+c1_fire "A63 a usage line more than 8 MB before the end (past the growing windows) is still found" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used: 6k tokens'
+c1_tr "$TRC" filler:200:300000 usage:20:7 compact:10 human:0
+c1_quiet "A63 a compaction after the usage line inside the first window of a big file: unknown, print nothing" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used:'
+c1_tr "$TRC" filler:200:300000 usage:20:7 human:0
+c1_fire "A63 pair: the same big file with no compaction measures normally" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used: 7k tokens'
+c1_tr "$TRC" usage:200:6 filler:190:300000 compact:100 human:0
+c1_quiet "A63 a compaction newer than the last usage line, the usage line being outside the first window: unknown" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used:'
+c1_tr "$TRC" usage:20:6 zero:10 human:0
+c1_fire "A63 a newer all-zero usage line is skipped (the value is 6k, not 0k)" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used: 6k tokens'
+c1_tr "$TRC" usage:20:6 usage:10:9 human:0
+c1_fire "A63 pair: the NEWEST non-zero usage line wins" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used: 9k tokens'
+c1_tr "$TRC" zero:10 human:0
+c1_quiet "A63 an all-zero usage line alone is no measurement: no context line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used:'
+c1_tr "$TRC" usage:20:6 compact:10 human:0
+c1_quiet "A63 a compaction after the last usage line: the number is unknown, print nothing" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used:'
+c1_tr "$TRC" usage:20:6 compact:15 zero:10 human:0
+c1_quiet "A63 a compaction followed only by an all-zero line is still unknown" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used:'
+c1_tr "$TRC" compact:20 usage:10:7 human:0
+c1_fire "A63 pair: a usage line AFTER the compaction measures normally" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" '^Context used: 7k tokens'
+
+echo "  A64 override count on return: one line, from the ledger, since the owner's previous typed message"
+c1_ledger() { python3 - "$@" <<'PY4'
+import sys, datetime
+path = sys.argv[1]; out = []
+for spec in sys.argv[2:]:
+    name, mins = spec.split(':')
+    ts = (datetime.datetime.now() - datetime.timedelta(minutes=int(mins))).strftime('%Y-%m-%d %H:%M')
+    out.append("%s\tsomefolder\t%s\tpattern\tsome command" % (ts, name))
+out.append("garbage line with no tabs")
+open(path, 'w').write('\n'.join(out) + '\n')
+PY4
+}
+LED="$C1/ledger.tsv"
+c1_tr "$TRC" human:120 human:0
+c1_ledger "$LED" GITGUARD:30 GITGUARD:10 SWEEP:5 OLDONE:300
+c1_fire "A64 overrides since the previous typed message are counted by name" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")" OVERRIDE_LEDGER="$LED")" '^Overrides while you were away: GITGUARD 2, SWEEP 1$'
+c1_quiet "A64 an override from BEFORE the previous typed message is not counted" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")" OVERRIDE_LEDGER="$LED")" 'OLDONE'
+c1_ledger "$LED" SAMEMIN:120 EARLIER:125
+c1_fire "A64 the compare is at the ledger's minute resolution: an override in the very minute of the previous message counts" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")" OVERRIDE_LEDGER="$LED")" 'Overrides while you were away: SAMEMIN 1$'
+c1_ledger "$LED" OLDONE:300 OLDTWO:200
+c1_quiet "A64 pair: none written since the previous message: no line at all" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")" OVERRIDE_LEDGER="$LED")" 'Overrides while'
+c1_tr "$TRC" human:2 human:0
+c1_ledger "$LED" GITGUARD:1
+c1_quiet "A64 pair: not returning (previous message 2 min ago): no override line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")" OVERRIDE_LEDGER="$LED")" 'Overrides while'
+c1_tr "$TRC" human:120 human:0
+c1_ledger "$LED" GITGUARD:10
+c1_quiet "A64 pair: a machine prompt is not a return: no override line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '<task-notification>x</task-notification>')" OVERRIDE_LEDGER="$LED")" 'Overrides while'
+c1_quiet "A64 pair: a missing ledger file is silent" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")" OVERRIDE_LEDGER="$C1/no-such-ledger.tsv")" 'Overrides while'
+
+echo "  A68 the returning line names the summarize skill"
+c1_tr "$TRC" human:120 human:0
+c1_fire "A68 the return notice tells the model to invoke the summarize skill" "$(c1_run "$(c1_in UserPromptSubmit "$TRC")")" "$RET.*summarize skill"
+c1_tr "$TRC" human:2 human:0
+c1_quiet "A68 pair: an ordinary prompt carries no summarize-skill instruction" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 'summarize skill'
+
+echo "  A66 the fullness note: from 400k the owner's typed prompt asks the reply to open with how full the chat is"
+c1_tr "$TRC" usage:1:450 human:0
+c1_fire "A66 450k, typed prompt: the fullness note prints" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 'open your reply with one line on how full'
+c1_tr "$TRC" usage:1:400 human:0
+c1_fire "A66 exactly 400k prints (the threshold is inclusive)" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 'open your reply with one line on how full'
+c1_tr "$TRC" usage:1:399 human:0
+c1_quiet "A66 399k: no note" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 'how full'
+c1_tr "$TRC" usage:1:450 human:0
+c1_quiet "A66 a machine prompt at 450k gets no note" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '<task-notification>x</task-notification>')")" 'how full'
+c1_quiet "A66 SessionStart at 450k gets no note (typed prompts only)" "$(c1_run "$(c1_in SessionStart "$TRC")")" 'how full'
+mkdir -p "$C1/subagents"; cp "$TRC" "$C1/subagents/agent-1.jsonl"
+c1_quiet "A66 a helper's own transcript (a subagents/ path) gets no note" "$(c1_run "$(c1_in UserPromptSubmit "$C1/subagents/agent-1.jsonl" 'go on')")" 'how full'
+c1_tr "$TRC" usage:1:250 human:0
+c1_fire "A66 the threshold is adjustable: CONTEXT_NOTE_K=200 at 250k prints" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" CONTEXT_NOTE_K=200)" 'how full'
+c1_quiet "A66 pair: the default threshold at 250k prints nothing" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 'how full'
+c1_tr "$TRC" human:100 usage:90:450 human:0
+c1_fire "A66 60+ minutes since the chat's newest line: the re-read note is added" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 're-read the whole chat'
+c1_tr "$TRC" human:100 usage:5:450 human:0
+c1_quiet "A66 pair: the chat's own newest line is 5 min old (it was working while you were silent): no re-read note" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 're-read the whole chat'
+c1_quiet "A66 the context line carries no leftover floor suffix" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')")" 'floor'
+
+echo "  A65 the backup watchdog: one line on a typed prompt when the settings repo has been dirty over 60 minutes or holds unpushed commits (only where backup.conf exists)"
+W65="$C1/wd"; W65R="$C1/wd-remote.git"; mkdir -p "$W65/hooks"
+git init -q --bare "$W65R"; git -C "$W65" init -q -b main; git -C "$W65" config core.hooksPath /dev/null; git -C "$W65" remote add origin "$W65R"
+printf '# placeholder\n' > "$W65/hooks/backup.conf"; echo seed > "$W65/seed.txt"
+git -C "$W65" add -A; "${ID[@]}" git -C "$W65" commit -q -m seed; git -C "$W65" push -q -u origin main >/dev/null 2>&1
+c1_tr "$TRC" human:0
+c1_quiet "A65 clean and pushed: silent" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$W65")" 'WATCHDOG'
+echo fresh > "$W65/fresh.txt"
+c1_quiet "A65 dirty for a minute only: silent" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$W65")" 'WATCHDOG'
+echo old > "$W65/old.txt"; touch -t "$(python3 -c 'import datetime;print((datetime.datetime.now()-datetime.timedelta(minutes=125)).strftime("%Y%m%d%H%M"))')" "$W65/old.txt"
+c1_fire "A65 a changed file older than 60 minutes: the watchdog line prints" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$W65")" '^WATCHDOG: .*uncommitted'
+c1_quiet "A65 a machine prompt never gets the watchdog line" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" '<task-notification>x</task-notification>')" WATCHDOG_CLAUDE_DIR="$W65")" 'WATCHDOG'
+c1_quiet "A65 SessionStart gets no watchdog line" "$(c1_run "$(c1_in SessionStart "$TRC")" WATCHDOG_CLAUDE_DIR="$W65")" 'WATCHDOG'
+mv "$W65/hooks/backup.conf" "$W65/hooks/backup.conf.off"
+c1_quiet "A65 no hooks/backup.conf (the backup is not set up): silent even when dirty" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$W65")" 'WATCHDOG'
+mv "$W65/hooks/backup.conf.off" "$W65/hooks/backup.conf"
+rm -f "$W65/old.txt" "$W65/fresh.txt"; echo local > "$W65/local.txt"; git -C "$W65" add -A >/dev/null 2>&1; "${ID[@]}" git -C "$W65" commit -q -m local-only >/dev/null 2>&1
+c1_fire "A65 a commit not pushed to the remote: the watchdog line prints" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$W65")" '^WATCHDOG: .*not pushed'
+git -C "$W65" push -q >/dev/null 2>&1
+c1_quiet "A65 pair: pushed again: silent" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$W65")" 'WATCHDOG'
+mkdir -p "$C1/nogit/hooks"; printf '# placeholder\n' > "$C1/nogit/hooks/backup.conf"
+c1_quiet "A65 a folder that is not a git repo: silent" "$(c1_run "$(c1_in UserPromptSubmit "$TRC" 'go on')" WATCHDOG_CLAUDE_DIR="$C1/nogit")" 'WATCHDOG'
+
+echo "  A33 the projects-root folder's own CLAUDE.md never counts as a project's"
+CCM1="$T/c1-ccm-home"; mkdir -p "$CCM1/.claude/hooks" "$CCM1/repos/newproj/sub" "$CCM1/repos/oldproj/deep"
+printf '## PROCESS RULES (enforced)\n1. x\n' > "$CCM1/.claude/CLAUDE.md"
+printf 'ZzqInterviewMarkerC1\n' > "$CCM1/.claude/hooks/interview.md"
+printf '%s\n' "$CCM1/repos" > "$CCM1/.claude/hooks/project-roots.conf"
+printf 'shared rules\n' > "$CCM1/repos/CLAUDE.md"; printf 'own\n' > "$CCM1/repos/oldproj/CLAUDE.md"
+ccm1() { printf '{"cwd":"%s"}' "$1" | env HOME="$CCM1" bash "$HOOKS_DIR/check-claude-md.sh" 2>/dev/null; }
+if ccm1 "$CCM1/repos/newproj" | grep -q ZzqInterviewMarkerC1; then ok; else bad "A33 a new project must get the interview even when a shared CLAUDE.md sits at the projects root"; fi
+refuse_n=$((refuse_n+1))
+if ccm1 "$CCM1/repos/newproj/sub" | grep -q ZzqInterviewMarkerC1; then ok; else bad "A33 a subfolder of a new project must get the interview when the root holds a CLAUDE.md"; fi
+refuse_n=$((refuse_n+1))
+if ccm1 "$CCM1/repos/oldproj" | grep -q ZzqInterviewMarkerC1; then bad "A33 pair: a project with its OWN CLAUDE.md must not get the interview"; else ok; fi
+pass_n=$((pass_n+1))
+if ccm1 "$CCM1/repos/oldproj/deep" | grep -q ZzqInterviewMarkerC1; then bad "A33 pair: a subfolder of a project that has its own CLAUDE.md must not get the interview"; else ok; fi
+pass_n=$((pass_n+1))
+if ccm1 "$CCM1/elsewhere" | grep -q ZzqInterviewMarkerC1; then bad "A33 pair: a folder outside every root must not get the interview"; else ok; fi
+pass_n=$((pass_n+1))
+
+echo "  A87 the provenance wrappers prefer the fixed system python3 and fall back to the first on PATH"
+PV="$C1/prov"; mkdir -p "$PV" "$C1/prov-state" "$C1/badpy" "$C1/goodpy" "$C1/onlydirname"
+cp "$HOOKS_DIR/channel-provenance-pre.sh" "$HOOKS_DIR/channel-provenance-post.sh" "$HOOKS_DIR/provenance.py" "$PV/"
+printf 'NOTES.md\n' > "$PV/channel-ceiling.conf"
+PVR="$C1/provrepo"; mkdir -p "$PVR"; git -C "$PVR" init -q -b main; git -C "$PVR" config core.hooksPath /dev/null
+echo seed > "$PVR/NOTES.md"; git -C "$PVR" add -A; "${ID[@]}" git -C "$PVR" commit -q -m init
+REALPY3="$(command -v python3)"; BASH_BIN="$(command -v bash)"
+printf '#!/bin/sh\nexit 1\n' > "$C1/badpy/python3"; chmod +x "$C1/badpy/python3"
+printf '#!/bin/sh\nexec %s "$@"\n' "$REALPY3" > "$C1/goodpy/python3"; chmod +x "$C1/goodpy/python3"
+ln -sf "$(command -v dirname)" "$C1/onlydirname/dirname"
+pvjson() { python3 -c 'import json,sys;print(json.dumps({"tool_name":"Bash","tool_input":{"command":"echo x >> NOTES.md"},"cwd":sys.argv[1],"session_id":sys.argv[2]}))' "$PVR" "$1"; }
+pv_run() { local sid="$1"; shift; rm -f "$C1/prov-state/$sid.json"; printf '%s' "$(pvjson "$sid")" | env PROVENANCE_STATE_DIR="$C1/prov-state" "$@" "$BASH_BIN" "$PV/channel-provenance-pre.sh" >/dev/null 2>&1; local rc=$?; [ -f "$C1/prov-state/$sid.json" ] && echo "written rc=$rc" || echo "none rc=$rc"; }
+if [ "$(pv_run s87a GUARD_PYTHON_PREFERRED="$REALPY3" PATH="$C1/badpy:$PATH")" = "written rc=0" ]; then ok; else bad "A87 pre wrapper: a broken python3 first on PATH must not stop the snapshot (the preferred python runs)"; fi
+refuse_n=$((refuse_n+1))
+if [ "$(pv_run s87b GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$C1/goodpy:$PATH")" = "written rc=0" ]; then ok; else bad "A87 pre wrapper: with no preferred python3 the first on PATH is used"; fi
+pass_n=$((pass_n+1))
+if [ "$(pv_run s87c GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$C1/onlydirname")" = "none rc=0" ]; then ok; else bad "A87 pre wrapper: no python3 anywhere: exit 0 quietly, nothing written"; fi
+pass_n=$((pass_n+1))
+pv_post() { printf '%s' "$(pvjson s87d)" | env PROVENANCE_STATE_DIR="$C1/prov-state" GUARD_PYTHON_PREFERRED="$REALPY3" PATH="$C1/badpy:$PATH" "$BASH_BIN" "$PV/channel-provenance-pre.sh" >/dev/null 2>&1
+  echo "session note" >> "$PVR/NOTES.md"
+  printf '%s' "$(pvjson s87d)" | env PROVENANCE_STATE_DIR="$C1/prov-state" GUARD_PYTHON_PREFERRED="$REALPY3" PATH="$C1/badpy:$PATH" "$BASH_BIN" "$PV/channel-provenance-post.sh" >/dev/null 2>&1; echo "rc=$?"; }
+rm -f "$C1/prov-state/s87d.json"; PVOUT="$(pv_post)"
+if [ "$PVOUT" = "rc=0" ] && grep -q '"last_after"' "$C1/prov-state/s87d.json" 2>/dev/null; then ok; else bad "A87 post wrapper: with a broken PATH python3 the write must still be recorded (rc/out: $PVOUT; state: $(head -c 200 "$C1/prov-state/s87d.json" 2>/dev/null))"; fi
+refuse_n=$((refuse_n+1))
+
+echo "  A27 the target is the first token whose BASENAME is the channel name, not the first substring hit"
+CSC="$C1/csz"; mkdir -p "$CSC/gitrepo/docs/plans" "$CSC/gitrepo/other"; cp "$HOOKS_DIR/channel-size-guard.sh" "$HOOKS_DIR/channel-size-post.sh" "$CSC/"
+printf 'LIMIT=100\nNOTES.md words 10 20\n' > "$CSC/channel-ceiling.conf"
+CW="$CSC/work"; mkdir -p "$CW"
+w25c="$(python3 -c "print(' '.join(['w']*25))")"
+printf '%s' "$w25c" > "$CW/NOTES.md"; printf 'a b c' > "$CW/proof-notes.md"; printf 'a b c' > "$CW/x.notes.md"
+c1b() { INPUT="$(jb2 "$4" "$CW")"; expect "$1" "$2" "$3" bash "$CSC/channel-size-guard.sh"; }
+c1b refuse 2 "A27 a look-alike file named first must not hide the real over-stop NOTES.md (tee -a proof-notes.md NOTES.md)" 'echo x | tee -a proof-notes.md NOTES.md'
+c1b refuse 2 "A27 same with a dotted look-alike (tee -a x.notes.md NOTES.md)" 'echo x | tee -a x.notes.md NOTES.md'
+c1b pass 0 "A27 pair: appending only to the look-alike proof-notes.md is allowed" 'echo x | tee -a proof-notes.md'
+c1b pass 0 "A27 pair: NOTES.md.bak is not NOTES.md" 'echo x | tee -a NOTES.md.bak'
+c1b refuse 2 "A27 pair: the real NOTES.md over its stop is still refused" 'cat proof-notes.md >> NOTES.md'
+
+echo "  A28 a conf pattern with a slash matches the repo-relative path, not the bare file name"
+CSD="$C1/csz-path"; mkdir -p "$CSD"; cp "$HOOKS_DIR/channel-size-guard.sh" "$HOOKS_DIR/channel-size-post.sh" "$CSD/"
+printf 'LIMIT=100\ndocs/plans/NOTES.md words 10 20\n' > "$CSD/channel-ceiling.conf"
+PR="$C1/pathrepo"; mkdir -p "$PR/docs/plans" "$PR/other"; git -C "$PR" init -q -b main
+printf '%s' "$w25c" > "$PR/docs/plans/NOTES.md"; printf '%s' "$w25c" > "$PR/other/NOTES.md"
+INPUT="$(je "$PR/docs/plans/NOTES.md" "w" "w w w w w w")"; expect refuse 2 "A28 growing the file at the conf's exact repo path is refused" bash "$CSD/channel-size-guard.sh"
+INPUT="$(je "$PR/other/NOTES.md" "w" "w w w w w w")"; expect pass 0 "A28 the same name at another path in the repo is NOT the channel file (allowed)" bash "$CSD/channel-size-guard.sh"
+INPUT="$(jb2 'echo x >> docs/plans/NOTES.md' "$PR")"; expect refuse 2 "A28 Bash append onto the exact repo path is refused" bash "$CSD/channel-size-guard.sh"
+INPUT="$(jb2 'echo x >> other/NOTES.md' "$PR")"; expect pass 0 "A28 Bash append onto a same-named file elsewhere in the repo is allowed" bash "$CSD/channel-size-guard.sh"
+NOGIT="$C1/pathnogit/docs/plans"; mkdir -p "$NOGIT"; printf '%s' "$w25c" > "$NOGIT/NOTES.md"
+INPUT="$(je "$NOGIT/NOTES.md" "w" "w w w w w w")"; expect refuse 2 "A28 outside any git repo there is no repo path: the bare name is the whole test (refused)" bash "$CSD/channel-size-guard.sh"
+printf '%s' "$w25c" > "$PR/other/NOTES.md"
+o="$(printf '%s' "$(je "$PR/other/NOTES.md" old new)" | bash "$CSD/channel-size-post.sh" 2>&1)"
+c1_quiet "A28 the post hook agrees: a same-named file elsewhere in the repo is not measured" "$o" 'NOTES.md'
+o="$(printf '%s' "$(je "$PR/docs/plans/NOTES.md" old new)" | bash "$CSD/channel-size-post.sh" 2>&1)"
+c1_fire "A28 pair: the post hook still names the file at the conf's path" "$o" 'NOTES.md'
+
+echo "  A29 no band NOTE on stderr (nobody reads exit-0 stderr); the hard stop still refuses"
+CSE="$C1/csz-note"; mkdir -p "$CSE/r"; cp "$HOOKS_DIR/channel-size-guard.sh" "$CSE/"
+printf 'LIMIT=100\nNOTES.md words 10 20\n' > "$CSE/channel-ceiling.conf"
+w15c="$(python3 -c "print(' '.join(['w']*15))")"; printf '%s' "$w15c" > "$CSE/r/NOTES.md"
+o="$(printf '%s' "$(je "$CSE/r/NOTES.md" w "w w")" | bash "$CSE/channel-size-guard.sh" 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && [ -z "$o" ]; then ok; else bad "A29 growth inside the band must print nothing and exit 0 (rc=$rc out='$o')"; fi
+pass_n=$((pass_n+1))
+o="$(printf '%s' "$(jb2 'echo x >> NOTES.md' "$CSE/r")" | bash "$CSE/channel-size-guard.sh" 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && [ -z "$o" ]; then ok; else bad "A29 a Bash append inside the band must print nothing and exit 0 (rc=$rc out='$o')"; fi
+pass_n=$((pass_n+1))
+o="$(printf '%s' "$(je "$CSE/r/NOTES.md" w "w w w w w w w w")" | bash "$CSE/channel-size-guard.sh" 2>&1)"; rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$o" | grep -q 'REFUSED'; then ok; else bad "A29 pair: growth past the hard stop is still refused with a message (rc=$rc out='$o')"; fi
+refuse_n=$((refuse_n+1))
+
+echo "  A26 (partial) a python open(...,'a') appending to a watched file is judged on its current size, heredoc or -c"
+CSF="$C1/csz-py"; mkdir -p "$CSF/r"; cp "$HOOKS_DIR/channel-size-guard.sh" "$CSF/"
+printf 'LIMIT=100\nNOTES.md words 10 20\n' > "$CSF/channel-ceiling.conf"
+printf '%s' "$w25c" > "$CSF/r/NOTES.md"; mkdir -p "$CSF/small"; printf 'a b c' > "$CSF/small/NOTES.md"
+INPUT="$(jb2 "python3 -c \"open('NOTES.md','a').write('x')\"" "$CSF/r")"; expect refuse 2 "A26 python -c open(NOTES.md,'a') on an over-stop file is refused" bash "$CSF/channel-size-guard.sh"
+INPUT="$(jb2 $'python3 - <<\'E\'\nopen("NOTES.md", "a").write("x")\nE' "$CSF/r")"; expect refuse 2 "A26 the same inside a python heredoc is refused" bash "$CSF/channel-size-guard.sh"
+INPUT="$(jb2 "python3 -c \"open('NOTES.md','a').write('x')\"" "$CSF/small")"; expect pass 0 "A26 pair: the same append on a small file is allowed" bash "$CSF/channel-size-guard.sh"
+INPUT="$(jb2 "python3 -c \"print(open('NOTES.md').read())\"" "$CSF/r")"; expect pass 0 "A26 pair: a python READ of an over-stop file is allowed" bash "$CSF/channel-size-guard.sh"
+INPUT="$(jb2 "python3 -c \"open('proof-notes.md','a').write('x')\"" "$CSF/r")"; expect pass 0 "A26 pair: a python append to a look-alike file is allowed" bash "$CSF/channel-size-guard.sh"
+INPUT="$(jb2 "sed -i '' '5,\$d' NOTES.md" "$CSF/r")"; expect pass 0 "A26 deferred forms stay allowed (M8): sed -i, a sweep, on an over-stop file" bash "$CSF/channel-size-guard.sh"
+
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
 printf '%s\n' "$HL_OUT" | tail -3

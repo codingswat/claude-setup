@@ -3,19 +3,25 @@
 #   - git-hooks/pre-commit's channel-file insertion ceiling: refuses a COMMIT that adds
 #     more than LIMIT lines to one of these files in one go (a sign two sessions' entries
 #     landed together).
-#   - hooks/channel-size-guard.sh's growth band: warns once a file's TOTAL size crosses a
-#     "sweep it soon" band, and refuses further growth once it crosses a hard stop —
-#     checked live, on every Write/Edit/MultiEdit/Bash-append, not only at commit time.
+#   - hooks/channel-size-guard.sh's hard stop: refuses further growth once a file's TOTAL size
+#     crosses the hard stop — checked live, on every Write/Edit/MultiEdit/Bash-append, not only
+#     at commit time. (The <band> column below is the size an edit may always end at or under,
+#     and the "sweep down to" target in hooks/channel-size-post.sh's message; the guard prints
+#     no note between band and stop, since stderr on an exit-0 hook is not read.)
 #
 # One optional LIMIT line (default 100, used only by pre-commit), then one line per file:
 #   <repo-relative glob pattern>  [<unit> <band> <hard-stop>]
 # The pattern is matched with a plain bash `case` glob — "NOTES.md" matches only a
-# top-level file, "*/NOTES.md" matches one in any folder. <unit> is "words" or "lines".
-# Leave the last three fields off a line to add a pattern to pre-commit's ceiling ONLY —
-# channel-size-guard.sh ignores a line with no unit/band/stop. A pattern can appear on more
-# than one line with a different unit (a file watched on both its word count and its line
-# count). channel-size-guard.sh matches by the pattern's own BASENAME (it can't always see
-# a file's full repo-relative path), so `*/NOTES.md` there just means "any NOTES.md".
+# top-level file for pre-commit's ceiling, "*/NOTES.md" one in any folder. <unit> is "words"
+# or "lines" (or "bytes"). Leave the last three fields off a line to add a pattern to
+# pre-commit's ceiling ONLY — channel-size-guard.sh ignores a line with no unit/band/stop.
+# A pattern can appear on more than one line with a different unit (a file watched on both
+# its word count and its line count). channel-size-guard.sh (and its post-write companion)
+# read a pattern like this: WITHOUT a slash it matches by BASENAME, so `NOTES.md` there means
+# any file called NOTES.md; WITH a slash it matches the file's repo-relative path, so
+# `docs/plans/NOTES.md` watches that one file and `*/NOTES.md` any nested NOTES.md (a top-level
+# one needs its own `NOTES.md` line). Outside a git work tree there is no repo path, so the
+# bare file name is compared with the pattern's own basename instead.
 #
 # No file at all: neither guard does anything for any file — the safe default for a repo
 # with no shared files several people or sessions append to.

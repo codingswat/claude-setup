@@ -19,6 +19,8 @@
 #     A file can sit under a word ceiling and still be enormous: one 100,000-character
 #     "word", a pasted base64 blob, a minified paste. A `bytes` line in the conf is used
 #     as an exact ceiling if you write one.
+# A conf pattern with a slash matches the file's repo-relative path, one without matches the bare
+# name — the same reading as channel-size-guard.sh (A28; the header there says it in full).
 # Never blocks, never changes anything, always exits 0. No jq, no conf file, or no file it
 # can resolve: silent.
 # Tests: hooks/test-hooks.sh (section 29).
@@ -28,15 +30,32 @@ tool="$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)"
 CONF="$(dirname "$0")/channel-ceiling.conf"
 [ -f "$CONF" ] || exit 0
 
-bands_for() { # $1 basename -> zero or more "unit band hardstop" lines
-  local lb; lb="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+rel_path() { # $1 file path -> its repo-relative path (lower-cased), or nothing when it is not inside a git work tree
+  local d top base
+  d="$(dirname "$1")"; d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0
+  top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  [ -n "$top" ] || return 0
+  top="$(cd "$top" 2>/dev/null && pwd -P)" || return 0
+  base="$(basename "$1")"
+  lower "${d#"$top"}/$base" | sed 's#^/##'
+}
+bands_for() { # $1 basename, $2 (optional) full path -> zero or more "unit band hardstop" lines
+  [ -f "$CONF" ] || return
+  local lb full="$2" rel="" relset=0; lb="$(lower "$1")"
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|'#'*|LIMIT=*) continue ;; esac
     set -- $line
     local pat="$1" unit="$2" band="$3" stop="$4"
     [ -n "$unit" ] && [ -n "$band" ] && [ -n "$stop" ] || continue
-    local patbase; patbase="$(printf '%s' "${pat##*/}" | tr '[:upper:]' '[:lower:]')"
-    case "$lb" in $patbase) echo "$unit $band $stop" ;; esac
+    local lp; lp="$(lower "$pat")"
+    case "$lp" in
+      */*)
+        if [ "$relset" = 0 ]; then rel=""; [ -n "$full" ] && rel="$(rel_path "$full")"; relset=1; fi
+        if [ -n "$rel" ]; then case "$rel" in $lp) echo "$unit $band $stop" ;; esac
+        else case "$lb" in ${lp##*/}) echo "$unit $band $stop" ;; esac; fi ;;
+      *) case "$lb" in $lp) echo "$unit $band $stop" ;; esac ;;
+    esac
   done < "$CONF"
 }
 all_watched_basenames() {
@@ -84,7 +103,7 @@ check_file() { # absolute or cwd-relative path
       cur="$(measure bytes "$f")"
       [ "$cur" -gt "$bc" ] && loud_bytes "$b" "$cur" "$bc" "$stop" "$unit"
     fi
-  done <<<"$(bands_for "$b")"
+  done <<<"$(bands_for "$b" "$f")"
 }
 
 case "$tool" in

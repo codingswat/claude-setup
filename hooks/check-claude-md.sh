@@ -50,14 +50,17 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < <(cat "$ROOTS_CONF" 2>/dev/null)
 
-# Inside a project root: does the project (or any parent up to the root)
-# already have a CLAUDE.md?
+# Inside a project root: does the project (or any parent BELOW the root) already have a
+# CLAUDE.md? The projects-root folder's OWN CLAUDE.md never counts as a project's — a shared
+# rules file (or a link to one) can sit there, and counting it would mean the new-project
+# interview never fires. The root test comes BEFORE the file test on purpose.
+# Tests: hooks/test-hooks.sh, "refresh 2026-09-29 (c1)" A33.
 found=""
 if [ -n "$root" ]; then
   dir="$cwd"
   while :; do
-    if [ -f "$dir/CLAUDE.md" ]; then found="yes"; break; fi
     [ "$dir" = "$root" ] && break
+    if [ -f "$dir/CLAUDE.md" ]; then found="yes"; break; fi
     dir=$(dirname "$dir")
   done
 fi
