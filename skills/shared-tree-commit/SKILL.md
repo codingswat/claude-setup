@@ -65,7 +65,7 @@ automatic everywhere you clone.
 | The message | Meaning | Do |
 |---|---|---|
 | `rejected … non-fast-forward` | The shared branch moved since your rebase | `git fetch origin && git rebase origin/main`, then push again |
-| A conflict on a shared channel file | Another session landed an entry at the same spot | Keep both entries, yours above theirs; continue the rebase; say so |
+| A conflict on a shared channel file | Another session landed an entry at the same spot | Keep both entries, yours above theirs; then drop from the kept side any entry the file already carries an archive pointer for (a rebase can re-add entries the other session had just archived); continue the rebase; say so |
 | `pre-push … typecheck failed on commit …` | The pushed COMMIT doesn't type-check (your folder may be fine) | Fix it, commit again, push again |
 | `fatal: '<branch>' is already checked out` | You tried to check out the shared branch inside your own worktree | You never need it locally — land with `git push origin HEAD:main` |
 

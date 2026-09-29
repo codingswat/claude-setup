@@ -119,11 +119,9 @@ Two writes, both into files that already exist — nothing new is created.
 **The plan or order file** is the record of what landed and what is open. Mark every task you
 touched with its honest state: DONE-and-reviewed / DONE-but-unreviewed / NOT-STARTED /
 PARKED-by-<who>. **IN-FLIGHT is not a legal state once Step 0 is done** — a run you waited out
-gets the state it ENDED in, never what it was doing when the pause was called. Tested: 2 of 3
-drafts waited half an hour and still tabled the run with its pre-wait numbers. Anything the
+gets the state it ENDED in, never what it was doing when the pause was called. Anything the
 work FOUND that outlives the task — a bug, a behaviour change, a leak fixed inside unreviewed
-work — goes on the task's line in the plan, not in your head: in testing, drafts that reported
-machine state perfectly lost the single most consequential fact because no slot asked for it.
+work — goes on the task's line in the plan, not in your head.
 
 **Every gate command you ran goes on the task's plan line with its exit code and the count it
 printed**: the command as typed, `exit 0` or `exit 1`, and "142 tests / 2 files" or "no count
@@ -161,7 +159,8 @@ repo, not your transcript.
 - **Commit and push the plan file and the state file together**, with the paper-trail edits they
   refer to — the notes entry, the decision record. Pathspec commits only.
 - **Paste the push confirmation.** `git log --oneline -1` plus an empty
-  `git log --oneline origin/main..HEAD` are the two lines that prove it. If the push failed, say so
+  `git log --oneline @{upstream}..HEAD` are the two lines that prove it (an error there means
+  the branch has no upstream, so nothing is pushed). If the push failed, say so
   and make it the reader's first action — the same rule as Step 1's preservation claim.
 - In a shared working tree, read `git diff --cached --name-only` with **no path filter** before
   committing: a path you did not stage is another session's work.
@@ -214,7 +213,6 @@ greetings, it is doing the wrong job.
 | "The next session can find it, it's in the repo" | The state file is at the fixed path the role boots from; the prompt names it. |
 | "The prompt is the owner's job" | You know the most and will not be there. Write it. |
 | "Stopping now is what pause means" | It is not. Pause = start nothing new and let running work land. Stop = interrupt immediately, and nobody asked for that. |
-| "They said pause, so I should wind up now" | Pause means start nothing new and let running work land — not abandon it mid-flight. |
 
 ## Common mistakes
 

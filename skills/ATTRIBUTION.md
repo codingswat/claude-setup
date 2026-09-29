@@ -52,9 +52,9 @@ noted per skill.
 Source: https://github.com/mattpocock/skills (MIT license)
 
 - **wait-what/** — stop and re-explain in plain language when the user is lost.
-  Modified locally: unlocked for model invocation (the original is user-invoked
-  only) — in both the SKILL.md frontmatter and agents/openai.yaml — and given
-  trigger guidance ("use sparingly, on real confusion signals").
+  Modified locally: given trigger guidance ("use sparingly, on real confusion
+  signals"). It stays user-invoked only, as in the original — both the SKILL.md
+  frontmatter and agents/openai.yaml say so.
 - **teach/** — multi-session teaching workspace with lessons and learning
   records. Modified locally: unlocked for model invocation (frontmatter and
   agents/openai.yaml), with a "propose before starting" guardrail since it

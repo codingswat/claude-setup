@@ -39,6 +39,14 @@ be split before it's briefed, not handed over whole. Reviews are cheaper when th
 their findings first and only re-verify the clusters that matter, on the cheapest model that
 can check them.
 
+**Size the helper before briefing.** One task is about 150k tokens of work, with a ceiling
+near 200k; the brief lists the file sections to read (a big file is read by section, in every
+helper brief); a bigger task splits before it is sent. The size the last similar helper
+actually used sets the next brief. After a build helper reports, a cheap fact-checker can
+re-run the report's counts (the test total and failure count, the diff summary against the
+brief's file list, both sides of any two-sided test present) instead of you reading the logs
+yourself; it checks the numbers and never judges whether the goal was met.
+
 ## Shape of a brief
 
 The task in one sentence → the files it may touch, and no others (read before the brief is

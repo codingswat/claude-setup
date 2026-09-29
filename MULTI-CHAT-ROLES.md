@@ -296,10 +296,14 @@ handover; the state file is the note on the desk.
 **The doorman** (shipped here as part of the opt-in multi-chat group; see INSTALL.md). The floor can be enforced rather than hoped for: a hook that runs when a
 turn ends reads the chat's context use and, at or over the role's floor, writes a "retired"
 marker that makes every later message to that chat bounce to the next holder's inbox. The
-same hook refuses to let a turn end with changed tracked files unless the state file is among
-them — so the state file is always current when the doorman closes the door. One caution from
-its own blind review: "idle" must mean the chat has stopped working, never that the *owner*
-has been silent for a while.
+same hook refuses to let a turn end unless the state file was updated during that turn — it
+compares against a snapshot taken when the turn started — so the state file is always current
+when the doorman closes the door. The doorman itself holds a typed message only at the
+context cut-off: it saves the message, refuses it once ("don't retype"), and lets the next
+message through carrying the saved one. There is no idle trigger: an earlier version had one,
+and "idle" must never mean that the *owner* has been silent for a while, so it was removed. A dev seat also gets one wrap-up stop the
+first time a turn ends past 600 thousand tokens, asking it to finish, land and update its state
+file; an unattended run (below) skips it.
 
 ---
 
@@ -319,7 +323,8 @@ that wakes a later seat in the relay is still only a notification — the go-ahe
 is the one the owner already gave, beforehand, in that seat's own chat, and if that isn't there,
 the seat holds rather than treating a peer's message as the missing permission. This came from a
 near miss: a stray message once woke a paused seat, and a loosely worded declaration nearly let
-a peer's message stand in for the owner's own yes.
+a peer's message stand in for the owner's own yes. For a run like this, the wrap-up stop
+above can be switched off by an end-time file — see INSTALL.md, "An unattended run".
 
 ---
 

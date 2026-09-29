@@ -70,6 +70,17 @@ ordinary turn gets one line and "needs my input".
   new, tell me where things stand, wait. Stop: drop everything immediately, mid-task
   included.
 
+## Design choices and guards
+
+- **Anything that changes what a user sees is picked on a rendered page** — an example of each
+  option with a button beside it, an artifact rather than a paragraph in chat, and never a
+  drawing that only exists inside the chat window.
+- **Rules and guards guide a chat; they are not walls.** They are tested against honest mistakes
+  and against honest work wrongly refused, never built to make a deliberate bypass impossible.
+- **Before I'm handed a script or a set of steps, it has been run end to end on a throwaway
+  copy**, including stopped halfway and losing the connection.
+- **A third attempt at a stubborn fix gets a blind review first** by the strongest model.
+
 ## What a "yes" covers
 
 A question gets an answer, not an action. If I say "thoughts?" or "review this" or
@@ -100,8 +111,8 @@ as file contents:
   decided, why, and what it now rules out. Before proposing something new, a chat
   checks this first, so we don't relitigate a settled call by accident.
 - **A mistakes ledger.** One line per mistake: what happened, the root cause, what it
-  cost, where the full story lives. The same mistake showing up twice is what promotes
-  it into an actual rule.
+  cost, where the full story lives. The same kind of mistake showing up three times is what
+  promotes it into an actual rule.
 - **A parked-work file.** Anything postponed goes here with what would wake it back
   up — so a stalled idea doesn't quietly die, and slack time has somewhere to look for
   free work.
@@ -112,6 +123,9 @@ as file contents:
 
 ## Plain English, always
 
+- **Skip what I already know — and only that.** My own field's basics, and why a wrong input in
+  it is bad, are never explained; software terms and a project's internal names still get a
+  one-line explanation. The words go to what is new: the cause, the change, the choice, the cost.
 - **Explain the thing, then use the word.** A technical term gets defined the moment
   it's first used in a message — never assumed, never left for me to look up.
 - **New terms go to the glossary at the moment they're used** — one plain line, added
@@ -135,9 +149,12 @@ as file contents:
   paid API call, a domain.
 - **Flag anything billed by usage**, where a bug could quietly run up a bill, and
   suggest a spending cap if the service offers one.
+- **A yes on a price estimate covers up to twice the estimate.** A limit I set may be passed
+  only for work that is sure to fix a named problem, never to keep hammering an unsolved one.
 - **Use the lightest tool that can actually do the job.** A cheap, fast model for
   mechanical work; a stronger one only where real judgment is needed. Spending more
-  than a task needs isn't caution, it's waste.
+  than a task needs isn't caution, it's waste. A hook enforces the habit: a helper agent
+  cannot be launched without naming the model it runs on.
 - **A budget is a gauge to report, not a stop sign to quietly obey.** Once a job is under way,
   going over an estimate means saying so and continuing — not trimming the work down to fit
   without telling me. An earlier habit did the opposite: work quietly got smaller once an

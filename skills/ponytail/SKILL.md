@@ -66,7 +66,7 @@ every sibling caller still broken. Fix it once, where all callers route through.
 
 ## Output
 
-Code first. Then at most three short lines: what was skipped, when to add it.
+Code first. Then a short note: what was skipped, when to add it.
 No essays, no feature tours, no design notes. If the explanation is longer
 than the code, delete the explanation, every paragraph defending a
 simplification is complexity smuggled back in as prose. Explanation the user
@@ -114,7 +114,8 @@ test, YAGNI applies to tests too.
 
 ## Boundaries
 
-Ponytail governs what you build, not how you talk.
+Ponytail governs what you build and the note that ships with it; the rest of
+the conversation keeps its normal voice.
 "stop ponytail" / "normal mode": revert. Level persists until
 changed or session end.
 
