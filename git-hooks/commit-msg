@@ -11,15 +11,23 @@
 #     is not also the first one. Prose is not a trailer: a subject line such as
 #     `docs: explain why we never add Co-Authored-By: Claude lines` is a sentence ABOUT
 #     the rule and passes.
-#   - the generated-with signature line (`Generated with … Claude …`), wherever it sits;
+#   - the generated-with signature line, matched by its own shape (`Generated with Claude
+#     Code` or `Generated with [Claude Code]`), wherever it sits — so a subject such as
+#     "room labels generated with the Claude API" (a tool the work used) passes;
 #   - `noreply@anthropic.com` anywhere in the message;
 #   - the COMMITTER identity (`git var GIT_COMMITTER_IDENT`) naming Claude or Anthropic —
 #     `GIT_COMMITTER_NAME=Claude git commit` writes that name into the commit object even
 #     when the author line is yours. No readable committer identity: that half is skipped.
+#   - a name from $HOME/.claude/.redaction-names.local typed into the MESSAGE (pre-commit only
+#     reads staged content). Same list format as pre-commit: `word:` prefix, and an entry
+#     under six characters matches as a whole word only. No list file: this check is skipped
+#     (pre-commit refuses on that case itself). No override.
+#   The python3 is /usr/bin/python3 when present, else the first on PATH (a broken shim earlier
+#   on PATH cannot refuse honest work; GUARD_PYTHON_PREFERRED is a test seam).
 # Zero-width characters (U+200B/C/D, U+2060, U+FEFF) are stripped before any of this, so
 # `Cla<zero-width>ude` is read as `Claude`. Comment lines (`#`) are dropped, as git drops
 # them itself.
-# Tests: hooks/test-hooks.sh (sections 5 and 29).
+# Tests: hooks/test-hooks.sh (sections 5 and 29; `refresh 2026-09-29 (b)`).
 msg_file="$1"
 [ -f "$msg_file" ] || exit 0
 
@@ -35,8 +43,32 @@ refuse() {
 }
 
 # (a) the generated-with signature, and an Anthropic no-reply address, anywhere.
-hit="$(printf '%s\n' "$msg" | grep -niE 'noreply@anthropic\.com|Generated with .*[Cc]laude')"
+hit="$(printf '%s\n' "$msg" | grep -niE 'noreply@anthropic\.com|Generated with \[?Claude Code')"
 [ -n "$hit" ] && refuse "the message carries Claude/Anthropic attribution." "$hit"
+
+# (a2) a redaction-list name typed into the message itself.
+names_file="$HOME/.claude/.redaction-names.local"
+if [ -r "$names_file" ]; then
+  PY="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
+  [ -x "$PY" ] || PY="$(command -v python3 2>/dev/null)"
+  nhit="$(printf '%s\n' "$msg" | "$PY" -c '
+import re, sys
+text = sys.stdin.read().lower()
+n = 0
+for ln in open(sys.argv[1], encoding="utf-8"):
+    s = ln.strip()
+    if not s or s.startswith("#"): continue
+    word = False
+    if s.lower().startswith("word:"): s = s[5:].strip(); word = True
+    if not s: continue
+    if len(s) < 6: word = True
+    nd = s.lower()
+    if word: n += len(re.findall(r"(?<![A-Za-z0-9])" + re.escape(nd) + r"(?![A-Za-z0-9])", text))
+    elif nd in text: n += 1
+print(n)
+' "$names_file" 2>/dev/null)" || refuse "the redaction-list check could not run (no working python3), so the message is not judged. Install python3 or fix PATH."
+  [ "${nhit:-0}" != "0" ] && refuse "the commit MESSAGE holds a name from the redaction list (${nhit} match(es)); remove it and commit again. There is no override."
+fi
 
 # (b) the trailer block: the LAST paragraph, when it is not also the first one and every
 #     one of its lines is `Key: value`. Anything else is prose and is left alone.

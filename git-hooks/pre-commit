@@ -67,9 +67,31 @@
 #       authority. Deliberate override, one commit: `PRIVACY_OK=1 git commit ...` (skips
 #       all of (4)).
 #
+#   (4b) key-shaped secrets — the ADDED lines, staged paths and binary blobs are scanned
+#       with the ONE SECRET_RE in hooks/auto-backup.sh (read from that file at run time, so
+#       the backup hook and this one can never drift; if the file is missing the commit is
+#       REFUSED). A placeholder value (your-, example, xxxx, <…>) and a line carrying
+#       `# pragma: allow-secret` pass. PRIVACY_OK does NOT lift this: a real key belongs in
+#       .env, never in history. Runs on merge commits too.
+#   (3b) staged size — the staged files' total is capped (default 10 MB; hooks/commit-size.conf
+#       sets `LIMIT_MB=<n>`, see hooks/commit-size.conf.example). Deliberate one commit:
+#       `SIZE_OK=1 git commit ...` — writes one line in hooks/override-ledger.sh's ledger and
+#       is REFUSED if that line cannot be written.
+#   Privacy exceptions: a repo whose toplevel is listed (one absolute path per line, # comments)
+#       in ~/.claude/.privacy-name-exceptions.local skips the NAMES limb only (a repo that
+#       legitimately documents the guard's own names); home-path, email and key checks still
+#       bind there. A repo whose toplevel is ~/.claude itself skips the EMAIL limb only
+#       (vendored skill text carries example addresses).
+#   The python3 run here is /usr/bin/python3 when present, else the first on PATH, so a broken
+#       shim earlier on PATH cannot refuse honest work (GUARD_PYTHON_PREFERRED is a test seam).
+#
 # git-hooks/pre-merge-commit runs check (4) alone on a merge commit, which no pre-commit
 # hook ever sees; it calls this script back with PRE_COMMIT_PRIVACY_ONLY=1.
-# Tests: hooks/test-hooks.sh (sections 6, 6b, 12, 13, 13b, 19, 24, 29).
+# Tests: hooks/test-hooks.sh (sections 6, 6b, 12, 13, 13b, 19, 24, 29; `refresh 2026-09-29 (b)`).
+
+PY="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
+[ -x "$PY" ] || PY="$(command -v python3 2>/dev/null)"
+if [ -z "$PY" ]; then echo "pre-commit hook: REFUSED — no python3 found, so the privacy check cannot run." >&2; exit 1; fi
 
 if [ "${PRE_COMMIT_PRIVACY_ONLY:-0}" = "1" ]; then
   HOOK_LABEL="${HOOK_LABEL:-pre-commit hook}"
@@ -163,11 +185,96 @@ else
     fi
   done < <(git diff --cached --name-only --diff-filter=AMRC)
 fi
+# ---- (3b) staged size ceiling ----
+LIMIT_MB=10
+SIZE_CONF="$HOME/.claude/hooks/commit-size.conf"
+if [ -f "$SIZE_CONF" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in LIMIT_MB=*) LIMIT_MB="${line#LIMIT_MB=}" ;; esac
+  done < "$SIZE_CONF"
+fi
+case "$LIMIT_MB" in ''|*[!0-9]*|0) LIMIT_MB=10 ;; esac
+total=0
+while IFS= read -r -d '' path; do
+  sz="$(git cat-file -s ":$path" 2>/dev/null)"
+  total=$((total + ${sz:-0}))
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+if [ "$total" -gt $((LIMIT_MB * 1048576)) ]; then
+  if [ "${SIZE_OK:-0}" != "1" ]; then
+    echo "pre-commit hook: REFUSED — staged files total $((total / 1048576)) MB, over the ${LIMIT_MB} MB ceiling (hooks/commit-size.conf). Deliberate: SIZE_OK=1 git commit ..." >&2
+    exit 1
+  fi
+  L="$HOME/.claude/hooks/override-ledger.sh"
+  if ! { [ -f "$L" ] && bash "$L" SIZE_OK "git commit (pre-commit: the ${LIMIT_MB} MB ceiling lifted)" "$total bytes staged"; }; then
+    echo "pre-commit hook: REFUSED — the SIZE_OK override could not be recorded in the override ledger (hooks/override-ledger.sh is missing, or its ledger file cannot be written), so it is NOT honoured. Fix the ledger path, then commit again." >&2
+    exit 1
+  fi
+fi
 fi   # end of the checks pre-merge-commit skips
+
+# ---- (4b) key-shaped secrets: ADDED lines, staged paths, binary blobs; PRIVACY_OK does not lift it ----
+# One list: SECRET_RE is read from hooks/auto-backup.sh (next to git-hooks/ in the kit and in an
+# install), so the backup hook's scan and this one cannot drift. Missing file = REFUSED.
+_here="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
+SECRET_RE_SRC=""
+for _ab in "$_here/../hooks/auto-backup.sh" "$HOME/.claude/hooks/auto-backup.sh"; do
+  if [ -f "$_ab" ]; then
+    SECRET_RE_SRC="$(sed -n "s/^SECRET_RE='\(.*\)'\$/\1/p" "$_ab" | head -1)"
+    [ -n "$SECRET_RE_SRC" ] && break
+  fi
+done
+if [ -z "$SECRET_RE_SRC" ]; then
+  echo "${HOOK_LABEL:-pre-commit hook}: REFUSED — cannot read SECRET_RE from hooks/auto-backup.sh (missing or changed), so the key scan cannot run. Restore that file." >&2
+  exit 1
+fi
+HOOK_LABEL="${HOOK_LABEL:-pre-commit hook}" SECRET_RE_SRC="$SECRET_RE_SRC" "$PY" - <<'PY' || exit 1
+import os, re, subprocess, sys
+LABEL = os.environ.get("HOOK_LABEL") or "pre-commit hook"
+SECRET_RE = re.compile(os.environ["SECRET_RE_SRC"])
+def placeholder(m):
+    low = m.lower()
+    return any(t in low for t in ("your-", "example", "xxxx", "<", ">"))
+def hits(text):
+    return sum(1 for m in SECRET_RE.finditer(text) if not placeholder(m.group(0)))
+def git_bytes(args):
+    return subprocess.run(["git"] + args, capture_output=True).stdout
+bad = {}
+text = git_bytes(["diff", "--cached", "-U0", "--no-color"]).decode("utf-8", "surrogateescape")
+cur = None
+for line in text.splitlines():
+    if line.startswith("+++ "):
+        p = line[4:]; cur = None if p == "/dev/null" else (p[2:] if p.startswith(("a/", "b/")) else p); continue
+    if not line.startswith("+") or line.startswith("+++") or "pragma: allow-secret" in line:
+        continue
+    n = hits(line[1:])
+    if n and cur: bad[cur] = bad.get(cur, 0) + n
+for p in [q for q in git_bytes(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape").split("\0") if q]:
+    n = hits(p)
+    if n: bad[p] = bad.get(p, 0) + n
+raw = git_bytes(["diff", "--cached", "--numstat", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape").split("\0")
+i = 0
+while i < len(raw):
+    rec = raw[i]; i += 1
+    parts = rec.split("\t")
+    if len(parts) < 3: continue
+    path = parts[2]
+    if not path:
+        path = raw[i + 1] if i + 1 < len(raw) else ""; i += 2
+    if parts[0] == "-" and parts[1] == "-" and path:
+        blob = git_bytes(["show", ":" + path])[:2_000_000]
+        n = hits(blob.decode("utf-8", "ignore")) + hits(blob.decode("utf-16", "ignore"))
+        if n: bad[path] = bad.get(path, 0) + n
+if bad:
+    print(f"{LABEL}: REFUSED — a key-shaped token is in the ADDED lines, a staged file NAME or a staged binary blob "
+          "(file -> match count, never the matched text): " + ", ".join(f"{k} -> {v}" for k, v in bad.items()), file=sys.stderr)
+    print("  Remove it, re-stage, commit again. PRIVACY_OK does not lift this: a real key belongs in .env, gitignored. "
+          "A placeholder (your-key-here, example, xxxx, <key>) or a line with '# pragma: allow-secret' passes.", file=sys.stderr)
+    sys.exit(1)
+PY
 
 # ---- (4) privacy: the ADDED lines, the staged PATHS, and any staged binary blob ----
 [ "${PRIVACY_OK:-}" = "1" ] && exit 0
-HOOK_LABEL="$HOOK_LABEL" python3 - <<'PY' || exit 1
+HOOK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" HOOK_LABEL="$HOOK_LABEL" "$PY" - <<'PY' || exit 1
 import re, subprocess, sys, os
 
 LABEL = os.environ.get("HOOK_LABEL") or "pre-commit hook"
@@ -200,6 +307,21 @@ for ln in open(names_file, encoding="utf-8"):
     if len(s) < 6:
         word_only = True
     needles.append((s.lower(), word_only))
+
+# A76: a repo whose toplevel is listed (one absolute path per line, # comments) in
+# ~/.claude/.privacy-name-exceptions.local skips the NAMES limb only; home-path, email and key
+# checks still bind. A73: a repo whose toplevel IS ~/.claude skips the EMAIL limb only.
+_root = os.environ.get("HOOK_ROOT", "")
+skip_email = False
+if _root:
+    _root = os.path.realpath(_root)
+    skip_email = _root == os.path.realpath(os.path.expanduser("~/.claude"))
+    try:
+        with open(os.path.expanduser("~/.claude/.privacy-name-exceptions.local"), encoding="utf-8") as fh:
+            if _root in {os.path.realpath(x.strip()) for x in fh if x.strip() and not x.strip().startswith("#")}:
+                needles = []
+    except OSError:
+        pass
 
 EXCLUDED = {"node", "runner", "user", "app", "USERNAME", "username", "you", "yourname", "example"}
 home_path = re.compile(r"/(?:Users|home)/([A-Za-z0-9_.-]+)/")
@@ -260,7 +382,7 @@ for line in text.splitlines():
         continue
     added = line[1:]
     add_offender(cur_file, name_hits(added) + home_hits(added))
-    if cur_file:
+    if cur_file and not skip_email:
         scp_spans = [m.span() for m in SCP_RE.finditer(added)]
         for m in EMAIL_RE.finditer(added):
             if any(s <= m.start() and m.end() <= e for s, e in scp_spans):

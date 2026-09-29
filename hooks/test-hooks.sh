@@ -1799,6 +1799,155 @@ INPUT="$(json_bash 'git status')"; expect refuse 2 "A85 no python3 anywhere: blo
 rm -f "$HOME/ra-wc"
 # ======================================================================================
 
+echo "refresh 2026-09-29 (b): git-hook behaviours ported from the maintainer's live setup (A73 A74 A75 A76 A81 A82 A86)"
+# Helpers. Every case gets a fresh throwaway repo with core.hooksPath at the hooks under
+# test and its own HOME, so nothing here touches the real ~/.claude. Secret-shaped strings
+# are built at run time from pieces so this file never holds a token-looking literal.
+RB="$T/refresh-b"; mkdir -p "$RB"
+rb_home() {   # name -> a HOME with a names list, the ledger script and no other config
+  local h="$RB/home-$1"; mkdir -p "$h/.claude/hooks"
+  cp "$HOOKS_DIR/override-ledger.sh" "$h/.claude/hooks/"
+  printf '# list\nZebulonQuixote\nword:Pat\n' > "$h/.claude/.redaction-names.local"
+  printf '%s' "$h"
+}
+rb_new() { local r; r="$(mktemp -d "$RB/r.XXXXXX")"; git -C "$r" init -q -b main; git -C "$r" config core.hooksPath "$GIT_HOOKS_DIR"; printf '%s' "$r"; }
+# rb_run <refuse|pass> <label> <repo> <home> [env assignments...]: stage and commit; a refuse
+# case must fail AND say REFUSED with $RB_WANT in its message (so it is refused for the right reason).
+rb_run() {
+  local kind="$1" label="$2" r="$3" h="$4"; shift 4
+  git -C "$r" add ${RB_ADD:--A} >/dev/null 2>&1
+  local err rc; err="$(env HOME="$h" "${ID[@]}" "$@" git -C "$r" commit -q -m t 2>&1 >/dev/null)"; rc=$?
+  if [ "$kind" = refuse ]; then
+    if [ "$rc" != 0 ] && printf '%s' "$err" | grep -q 'REFUSED' && printf '%s' "$err" | grep -qE "${RB_WANT:-.}"; then ok; else bad "$label (must refuse for '${RB_WANT:-.}'; rc=$rc err='$err')"; fi
+    refuse_n=$((refuse_n+1))
+  else
+    if [ "$rc" = 0 ]; then ok; else bad "$label (must pass; rc=$rc err='$err')"; fi
+    pass_n=$((pass_n+1))
+  fi
+}
+rb_case() {   # kind label home file content [env...]: one file, one commit
+  local kind="$1" label="$2" h="$3" fn="$4" content="$5"; shift 5
+  local r; r="$(rb_new)"; mkdir -p "$r/$(dirname "$fn")"; printf '%s\n' "$content" > "$r/$fn"
+  rb_run "$kind" "$label" "$r" "$h" "$@"
+}
+RBH="$(rb_home main)"
+RBX="$(printf 'a%.0s' {1..24})"      # 24 filler characters
+
+# built from pieces so no whole address sits in this file (a machine-wide email scan reads it)
+STRANGER_MAIL="ops"'@'"stranger-corp.io"
+echo "  A73 the email check is skipped in the settings repo itself (toplevel = ~/.claude), names and paths still bind"
+H73="$(rb_home a73)"; R73="$H73/.claude"; git -C "$R73" init -q -b main; git -C "$R73" config core.hooksPath "$GIT_HOOKS_DIR"
+RB_ADD="edge.txt"
+RB_WANT='.'
+printf 'write to %s\n' "$STRANGER_MAIL" > "$R73/edge.txt"; rb_run pass "A73: a non-allowlisted address in the ~/.claude repo must pass" "$R73" "$H73"
+printf 'met zebulonquixote today\n' > "$R73/edge.txt"; RB_WANT='real name|listed name|matches'; rb_run refuse "A73: a listed name still binds inside ~/.claude" "$R73" "$H73"
+git -C "$R73" reset -q
+U73="/User""s"; printf 'see %s/alice/x\n' "$U73" > "$R73/edge.txt"; rb_run refuse "A73: a home path still binds inside ~/.claude" "$R73" "$H73"
+unset RB_ADD; RB_WANT='email'
+rb_case refuse "A73 twin: the same non-allowlisted address in any other repo is refused" "$H73" note.txt "write to $STRANGER_MAIL"
+RB_WANT='.'
+
+echo "  A74 key-shaped tokens in staged content are refused (no PRIVACY_OK); placeholders and prose pass"
+RB_WANT='key-shaped'
+S_ANT="sk-""ant-${RBX}"; S_GHP="gh""p_${RBX}"; S_PAT="github""_pat_${RBX}"; S_AWS="AK""IA$(printf 'Q%.0s' {1..16})"; S_SLACK="xo""xb-${RBX}"; S_PEM="-----BEGIN ""RSA PRIVATE KEY-----"
+rb_case refuse "A74: an sk-ant- key in a file" "$RBH" a.env "TOKEN_VAR is $S_ANT"
+rb_case refuse "A74: a ghp_ token" "$RBH" a.txt "token $S_GHP"
+rb_case refuse "A74: a github_pat_ token" "$RBH" a.txt "token $S_PAT"
+rb_case refuse "A74: an AWS access key id" "$RBH" a.txt "id $S_AWS"
+rb_case refuse "A74: a Slack xox token" "$RBH" a.txt "slack $S_SLACK"
+rb_case refuse "A74: a private-key header" "$RBH" a.txt "$S_PEM"
+rb_case refuse "A74: PRIVACY_OK=1 does NOT lift the key refusal" "$RBH" a.txt "token $S_GHP" PRIVACY_OK=1
+rb_case refuse "A74: a key-shaped FILE NAME" "$RBH" "notes-$S_GHP.md" "harmless body"
+r74="$(rb_new)"; printf 'old %s\n' "$S_GHP" > "$r74/a.txt"; git -C "$r74" add -A; env HOME="$RBH" "${ID[@]}" git -C "$r74" commit -q --no-verify -m seed >/dev/null 2>&1
+printf 'old %s\nnew clean line\n' "$S_GHP" > "$r74/a.txt"; unset RB_ADD; rb_run pass "A74: a key already in history is not re-flagged when the file is touched (added lines only)" "$r74" "$RBH"
+rb_case pass "A74: sk-ant-your-key-here (placeholder) passes" "$RBH" a.md 'ANTHROPIC key: sk-ant-your-key-here'
+rb_case pass "A74: sk-ant- followed by a run of x passes" "$RBH" a.md "key: sk-""ant-xxxxxxxxxxxxxxxx"
+rb_case pass "A74: the AWS docs example key (ends EXAMPLE) passes" "$RBH" a.md "id AK""IAIOSFODNN7EXAMPLE"
+rb_case pass "A74: prose naming the prefixes passes" "$RBH" a.md 'we refuse anything starting ghp_ or sk-ant- or AKIA in a commit'
+rb_case pass "A74: a line marked '# pragma: allow-secret' passes (the backup hook's fixture marker)" "$RBH" a.sh "fixture=$S_GHP # pragma: allow-secret"
+rb_case pass "A74: an honest file passes" "$RBH" a.txt 'nothing secret here'
+# one list: the commit hook reads SECRET_RE out of hooks/auto-backup.sh, so the two cannot drift
+if grep -q "^SECRET_RE=" "$HOOKS_DIR/auto-backup.sh" && grep -q 'auto-backup.sh' "$GIT_HOOKS_DIR/pre-commit"; then ok; else bad "A74: pre-commit must read the one SECRET_RE in hooks/auto-backup.sh"; fi
+pass_n=$((pass_n+1))
+# and a token shape only the shared list knows (a Google API key) is refused by it too
+S_AIZA="AI""za$(printf 'B%.0s' {1..35})"
+rb_case refuse "A74: the shared (wider) list catches a Google API key too" "$RBH" a.txt "g $S_AIZA"
+# no auto-backup.sh next to the hooks: fail closed, not silently unscanned
+NB="$RB/nobackup"; mkdir -p "$NB/git-hooks" "$NB/hooks"; cp "$GIT_HOOKS_DIR"/pre-commit "$GIT_HOOKS_DIR"/commit-msg "$NB/git-hooks/"
+r74b="$(rb_new)"; git -C "$r74b" config core.hooksPath "$NB/git-hooks"; printf 'clean\n' > "$r74b/a.txt"
+RB_WANT='SECRET_RE'; rb_run refuse "A74: no auto-backup.sh to read SECRET_RE from must refuse (fail closed)" "$r74b" "$RBH"; RB_WANT='.'
+
+echo "  A75 staged files over the size limit (default 10 MB, hooks/commit-size.conf LIMIT_MB) are refused unless SIZE_OK=1, which writes one ledger line"
+HSZ="$(rb_home size)"; printf 'LIMIT_MB=1\n' > "$HSZ/.claude/hooks/commit-size.conf"
+mkbig() { head -c "$2" /dev/zero > "$1"; }
+RB_WANT='MB'
+r=$(rb_new); mkbig "$r/big.bin" 2097152; rb_run refuse "A75: a 2 MB file over LIMIT_MB=1 is refused" "$r" "$HSZ"
+r=$(rb_new); mkbig "$r/a.bin" 450000; mkbig "$r/b.bin" 450000; mkbig "$r/c.bin" 450000; rb_run refuse "A75: three files that TOTAL over the limit are refused" "$r" "$HSZ"
+r=$(rb_new); mkbig "$r/small.bin" 500000; RB_WANT='.'; rb_run pass "A75: a 0.5 MB file under LIMIT_MB=1 passes" "$r" "$HSZ"
+r=$(rb_new); mkbig "$r/mid.bin" 3000000; rb_run pass "A75: no conf at all: 3 MB is under the built-in 10 MB and passes" "$r" "$RBH"
+r=$(rb_new); mkbig "$r/huge.bin" 11534336; RB_WANT='MB'; rb_run refuse "A75: no conf at all: 11 MB is over the built-in 10 MB default" "$r" "$RBH"
+RSL="$RB/size-ledger.tsv"; rm -f "$RSL"
+r=$(rb_new); mkbig "$r/big.bin" 2097152; RB_WANT='.'; rb_run pass "A75: SIZE_OK=1 lets the big commit through" "$r" "$HSZ" SIZE_OK=1 OVERRIDE_LEDGER="$RSL"
+if ledger_has "$RSL" SIZE_OK && [ "$(wc -l < "$RSL" | tr -d ' ')" = 1 ]; then ok; else bad "A75: SIZE_OK=1 must write exactly one ledger line"; fi
+pass_n=$((pass_n+1))
+rm -f "$RSL"
+r=$(rb_new); mkbig "$r/small.bin" 500000; rb_run pass "A75: SIZE_OK=1 on a small commit passes without a ledger line" "$r" "$HSZ" SIZE_OK=1 OVERRIDE_LEDGER="$RSL"
+if [ ! -s "$RSL" ]; then ok; else bad "A75: an unneeded SIZE_OK=1 must not write a ledger line"; fi
+pass_n=$((pass_n+1))
+r=$(rb_new); mkbig "$r/big.bin" 2097152; RB_WANT='ledger'; rb_run refuse "A75: SIZE_OK=1 with an unwritable ledger is refused" "$r" "$HSZ" SIZE_OK=1 OVERRIDE_LEDGER="/nonexistent-$$/deep/overrides.tsv"
+HSZ2="$(rb_home size2)"; printf 'LIMIT_MB=1\n' > "$HSZ2/.claude/hooks/commit-size.conf"; rm -f "$HSZ2/.claude/hooks/override-ledger.sh"
+r=$(rb_new); mkbig "$r/big.bin" 2097152; rb_run refuse "A75: SIZE_OK=1 with no override-ledger.sh at all is refused" "$r" "$HSZ2" SIZE_OK=1
+RB_WANT='.'
+
+echo "  A76 privacy names skipped for repos listed in ~/.claude/.privacy-name-exceptions.local; home path, email and keys still bind"
+HEX="$(rb_home exc)"; REXC="$(rb_new)"; REXC_REAL="$(cd "$REXC" && pwd -P)"
+printf '# repos that legitimately document the guard names\n\n%s\n' "$REXC_REAL" > "$HEX/.claude/.privacy-name-exceptions.local"
+RB_ADD=; printf 'the guard refuses zebulonquixote\n' > "$REXC/n.txt"; rb_run pass "A76: a listed name in a listed repo passes" "$REXC" "$HEX"
+mkdir -p "$REXC/zebulonquixote-docs"; printf 'x\n' > "$REXC/zebulonquixote-docs/f.txt"; rb_run pass "A76: a listed name in a PATH of a listed repo passes" "$REXC" "$HEX"
+printf 'see %s/alice/x\n' "$U73" > "$REXC/p.txt"; RB_WANT='home path'; rb_run refuse "A76: a home path still binds in a listed repo" "$REXC" "$HEX"; git -C "$REXC" reset -q; rm "$REXC/p.txt"
+printf '%s\n' "$STRANGER_MAIL" > "$REXC/e.txt"; RB_WANT='email'; rb_run refuse "A76: an email still binds in a listed repo" "$REXC" "$HEX"; git -C "$REXC" reset -q; rm "$REXC/e.txt"
+printf 'k %s\n' "$S_GHP" > "$REXC/k.txt"; RB_WANT='key-shaped'; rb_run refuse "A76: a key still binds in a listed repo" "$REXC" "$HEX"; git -C "$REXC" reset -q; rm "$REXC/k.txt"
+unset RB_ADD; RB_WANT='name'
+rb_case refuse "A76: the same name in an UNLISTED repo is refused" "$HEX" n.txt 'the guard refuses zebulonquixote'
+HEX2="$(rb_home exc2)"; printf '%s/somewhere-else\n' "$RB" > "$HEX2/.claude/.privacy-name-exceptions.local"
+rb_case refuse "A76: a list naming only other repos does not exempt this one" "$HEX2" n.txt 'the guard refuses zebulonquixote'
+RB_WANT='.'
+
+echo "  A81 the attribution line is matched by its own shape, so 'generated with the Claude API' in a subject passes"
+printf 'feat: room labels generated with the Claude API\n' > "$T/b81a"; expect pass 0 "A81: a subject about the Claude API passes" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b81a"
+printf 'feat: x\n\nGenerated with [Claude Code](https://claude.com/claude-code)\n' > "$T/b81b"; expect refuse 1 "A81: the bracketed footer is refused" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b81b"
+printf 'feat: x\n\ngenerated with claude code\n' > "$T/b81c"; expect refuse 1 "A81: the footer in lower case is refused" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b81c"
+printf 'feat: x\n\nThe labels are generated with Claude models at build time.\n' > "$T/b81d"; expect pass 0 "A81: prose about work done with Claude passes" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b81d"
+
+echo "  A82 a redaction-list name typed into the commit MESSAGE is refused"
+INPUT=""
+printf 'fix: thanks to ZebulonQuixote for the report\n' > "$T/b82a"; expect refuse 1 "A82: a listed name in the message" env HOME="$RBH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82a"
+printf 'fix: thanks to Zebulon%sQuixote for the report\n' "$(printf '\342\200\213')" > "$T/b82b"; expect refuse 1 "A82: a listed name split by a zero-width character" env HOME="$RBH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82b"
+printf 'fix: pair with Pat on the parser\n' > "$T/b82c"; expect refuse 1 "A82: a short listed name as a whole word" env HOME="$RBH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82c"
+printf 'fix: the pattern matcher and a patch\n' > "$T/b82d"; expect pass 0 "A82: a short listed name inside longer words passes" env HOME="$RBH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82d"
+printf 'fix: nothing sensitive in this message\n' > "$T/b82e"; expect pass 0 "A82: an honest message passes" env HOME="$RBH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82e"
+printf '# ZebulonQuixote in a comment line git drops\nfix: honest subject\n' > "$T/b82f"; expect pass 0 "A82: a name only in a # comment line (dropped by git) passes" env HOME="$RBH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82f"
+NOLIST82="$RB/home-nolist"; mkdir -p "$NOLIST82/.claude"
+expect pass 0 "A82: no names list at all: the message check does not run (pre-commit fails closed on that)" env HOME="$NOLIST82" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82a"
+r=$(rb_new); printf 'clean\n' > "$r/a.txt"; git -C "$r" add -A
+env HOME="$RBH" "${ID[@]}" git -C "$r" commit -q -m "thanks ZebulonQuixote" >/dev/null 2>&1; rc=$?
+if [ "$rc" != 0 ] && ! git -C "$r" log -1 >/dev/null 2>&1; then ok; else bad "A82: a real git commit whose -m holds a listed name must be refused (rc=$rc)"; fi
+refuse_n=$((refuse_n+1))
+
+echo "  A86 a broken python3 earlier on PATH must not refuse honest commits (the git hooks prefer /usr/bin/python3)"
+REALPY="$(command -v python3)"
+BADPYB="$RB/badpy"; mkdir -p "$BADPYB"; printf '#!/bin/bash\nexit 1\n' > "$BADPYB/python3"; chmod +x "$BADPYB/python3"
+RB_WANT='.'
+rb_case pass "A86: pre-commit with a broken PATH python3 still passes honest work" "$RBH" a.txt 'honest' GUARD_PYTHON_PREFERRED="$REALPY" PATH="$BADPYB:$PATH"
+RB_WANT='name'; rb_case refuse "A86: pre-commit with a broken PATH python3 still refuses a listed name (the real python judged it)" "$RBH" a.txt 'met zebulonquixote' GUARD_PYTHON_PREFERRED="$REALPY" PATH="$BADPYB:$PATH"
+expect pass 0 "A86: commit-msg with a broken PATH python3 passes an honest message" env HOME="$RBH" GUARD_PYTHON_PREFERRED="$REALPY" PATH="$BADPYB:$PATH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82e"
+expect refuse 1 "A86: commit-msg with a broken PATH python3 still refuses a listed name" env HOME="$RBH" GUARD_PYTHON_PREFERRED="$REALPY" PATH="$BADPYB:$PATH" bash "$GIT_HOOKS_DIR/commit-msg" "$T/b82a"
+# with no preferred python3 the first one on PATH is used
+GOODPYB="$RB/goodpy"; mkdir -p "$GOODPYB"; printf '#!/bin/sh\nexec %s "$@"\n' "$REALPY" > "$GOODPYB/python3"; chmod +x "$GOODPYB/python3"
+RB_WANT='.'; rb_case pass "A86 fallback: no preferred python3, the PATH one judges honest work" "$RBH" a.txt 'honest' GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$GOODPYB:$PATH"
+RB_WANT='name'; rb_case refuse "A86 fallback: no preferred python3, the PATH one still refuses a listed name" "$RBH" a.txt 'met zebulonquixote' GUARD_PYTHON_PREFERRED=/nonexistent/python3 PATH="$GOODPYB:$PATH"
+unset RB_WANT RB_ADD
+
 echo "27 hooks/test-helper-ledger.sh and hooks/test-rules-cap.sh: run as their own suites, fold into RESULT"
 HL_OUT="$(HOOKS_DIR="$HOOKS_DIR" bash "$HOOKS_DIR/test-helper-ledger.sh" 2>&1)"; HL_RC=$?
 printf '%s\n' "$HL_OUT" | tail -3

@@ -1,0 +1,6 @@
+# Copy to hooks/commit-size.conf to change the staged-size ceiling of git-hooks/pre-commit.
+# LIMIT_MB is the most the files of ONE commit may total, in megabytes. No file, or a value
+# that is not a positive whole number, means the built-in default: 10.
+# A deliberate bigger commit: `SIZE_OK=1 git commit ...` (logged in the override ledger; refused
+# if the ledger line cannot be written).
+LIMIT_MB=10
