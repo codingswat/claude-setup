@@ -40,7 +40,7 @@ a starting set rather than a complete one.
 - **Frontend** — what you see and touch; buttons and screens, running on YOUR device.
 - **Git** — the tool that tracks code history on my machine; my undo button and safety net.
 - **GitHub** — the website that stores a cloud copy of git's history; backup and sharing.
-- **Golden test** — a test that compares the program's output against a known-correct reference answer (e.g. a published textbook example); if they differ, the code is wrong.
+- **Golden test** — a test that compares the program's output against a known-correct reference answer (e.g. an answer worked out by hand in advance); if they differ, the code is wrong.
 - **Hook** — a script the app itself runs at a fixed moment; enforcement, not a suggestion a model can forget.
 - **Hosting** — renting a computer that never sleeps to run your backend.
 - **HTTPS** — the S means encrypted; without it, passwords cross the internet readable.
@@ -53,7 +53,7 @@ a starting set rather than a complete one.
 - **Merge conflict** — when two branches changed the same lines and git can't decide which version wins; a human (or careful AI) must pick line by line.
 - **Migration** — changing a database's table shapes while carefully preserving live data. Back up first, always.
 - **npm / pip** — app stores for code packages (JavaScript / Python).
-- **OCR** — software that reads text out of a picture or scan; the only way to get words or numbers out of a page that is just an image, like text in a scanned page.
+- **OCR** — software that reads text out of a picture or scan; the only way to get words or numbers out of a page that is just an image, like a photographed receipt.
 - **Package** — ready-made code by other developers that my project pulls in instead of writing from scratch.
 - **Plugin (Claude Code)** — a bundle of skills and settings you install into Claude Code once and it works in every project; can auto-update itself.
 - **PostgreSQL / SQLite** — database brands; SQLite for small personal tools, PostgreSQL for real users.

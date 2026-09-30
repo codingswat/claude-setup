@@ -26,7 +26,7 @@ support team to look up order history" beats "a web application".>
   "helpfully" modernised.>
 - <Backend, database, ORM.>
 - <Any hard constraint: licences you cannot use, platforms you must support, a language
-  whose text direction or encoding is a real requirement rather than an afterthought.>
+  whose sorting rules or encoding are a real requirement rather than an afterthought.>
 
 ## Run it
 
@@ -51,8 +51,8 @@ examples of the shape:>
 
 - <"The design system is X — use its components, not plain HTML elements, even where a native
   element would work. Visual consistency wins.">
-- <"The calculation engine is pure: no AI, no network, no randomness. AI lives only in the
-  input-parsing layer, and it never does arithmetic.">
+- <"The core logic is pure: no AI, no network, no randomness. AI lives only at the
+  edges, and it never makes the final decision.">
 - <"User files are never stored on the server; they are processed and discarded.">
 - <"Every user-facing string exists in all supported languages. Layout is tested in each
   direction, not assumed.">

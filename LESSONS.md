@@ -180,7 +180,7 @@ by someone who did not build it, before it is called done.
 **Lesson** — a claim that a change moves no result is only as good as the set of inputs it was
 measured over; use the inputs the deciding tests use, not the handful you had open.
 **What happened** — a build was reported as moving no output across seventeen sample cases, and
-landed. One of the deciding tests sweeps eight locations, and the output moved at one of them.
+landed. One of the deciding tests sweeps a wider set of inputs, and the output moved on one of them.
 **The rule to copy** — a "nothing moves" claim names the input set it was run over, and that set
 is the one the judging tests sweep, not a convenient subset.
 **Enforced by** — habit.

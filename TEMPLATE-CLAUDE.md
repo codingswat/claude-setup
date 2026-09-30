@@ -190,7 +190,7 @@ This is not a biography. Everything here should change what Claude *does*.
 Things worth answering:
 
 - **The languages your product ships in.** If it is more than one, say whether the second is
-  a first-class language or a translation layer — and whether text direction, sorting, or
+  a first-class language or a translation layer — and whether date formats, sorting, or
   encoding are real requirements. This is the difference between support that works and
   support that was bolted on at the end.
 - **Your operating system.** Shell, package manager, and path conventions all follow from it.
