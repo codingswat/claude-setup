@@ -316,7 +316,12 @@ else
   {
     printf '# One project-root folder per line. Blank lines and # comments ignored.\n'
     printf '# The new-project interview only fires inside these folders.\n'
-    [ -n "$roots" ] && printf '%s\n' "$roots"
+    # Stored as ~/... : an expanded home path in a file under ~/.claude/hooks/ would trip the
+    # home-path check on every backup commit (check-claude-md.sh expands ~/ when it reads it).
+    # Tests: hooks/test-hooks.sh `review fixes (critical)` 4.
+    if [ -n "$roots" ]; then
+      case "$roots" in "$HOME"/*) printf '%s\n' "~/${roots#"$HOME"/}" ;; *) printf '%s\n' "$roots" ;; esac
+    fi
   } > "$ROOTS_CONF"
   if [ -n "$roots" ]; then
     ok "Interview enabled for: $roots"
@@ -807,7 +812,11 @@ if [ -n "$PREV_HP" ] && [ "$PREV_HP" != "$DEST/git-hooks" ]; then
   say "  It stops running for every repo the moment this is on; it is saved to"
   say "  ~/.claude/.setup-prev-hookspath and the undo line below puts it back."
 fi
-if ask "Set git's global core.hooksPath to ~/.claude/git-hooks?" "n"; then
+if [ "$HAVE_PY" = 0 ]; then
+  # pre-commit's privacy check needs a python3 that runs; without one it refuses EVERY commit in
+  # every repo. Tests: hooks/test-hooks.sh `review fixes (critical)` 1.
+  skip "Not offered — no python3 that runs was found, and these hooks would refuse every commit without one. Install python3, then run this again."
+elif ask "Set git's global core.hooksPath to ~/.claude/git-hooks?" "n"; then
   if [ "$PREV_HP" != "$DEST/git-hooks" ] || [ ! -f "$PREV_HP_FILE" ]; then
     if [ "$PREV_HP" = "$DEST/git-hooks" ]; then PREV_HP=""; fi
     ( umask 077; printf '%s\n' "${PREV_HP:-unset}" > "$PREV_HP_FILE" ) 2>/dev/null

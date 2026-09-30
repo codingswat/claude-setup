@@ -54,8 +54,8 @@ runs and returns nothing leaves the guard with an empty command, which matches n
 so an unreadable command is refused rather than waved through. So the installer registers those three only when **both**
 are present, with a warning naming what to install. The size pair (`channel-size-guard.sh`
 and its `PostToolUse` half `channel-size-post.sh`) needs `jq` alone and is registered
-whenever `jq` is there; without `jq` both are inert, so neither is registered. A fifth, `gate-guard.sh`, is different: it degrades safely with no `jq` (a cruder
-text match instead of a refusal), and with no `python3` it passes every command with a
+whenever `jq` is there; without `jq` both are inert, so neither is registered. A fifth, `gate-guard.sh`, is different: with no `jq` it warns once ("install jq")
+and passes, and with no `python3` it passes every command with a
 one-line warning — it is the one guard allowed to fail OPEN, because it protects no data and
 only enforces a habit about exit codes. The installer still gates it on `python3`, now for
 cost rather than safety: without `python3` it could never say no, so registering it would

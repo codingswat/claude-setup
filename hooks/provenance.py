@@ -38,6 +38,9 @@ Modes (hook JSON on stdin for pre/post):
           file changed after this session's last write), stale-chain (HEAD moved and the
           file changed afterwards without a recorded write)
 
+`check` answers OK for a session that has no state file at all: the recorder never ran for it (the
+multi-chat group is not installed, or this chat's hooks are off), so "no-record" would only ever
+refuse the person's own edits.
 State: $PROVENANCE_STATE_DIR or ~/.claude/state/provenance/<session_id>.json (local, never
 backed up). Never blocks by itself; only `check` produces refusals.
 RETIRED FOR LINKED WORKTREES: in a checkout made by `git worktree add`, no other session's
@@ -346,6 +349,12 @@ def mode_check(argv):
     repo, sid, paths = argv[0], argv[1], argv[2:]
     root = repo_root(repo) or repo
     if linked_worktree(root):
+        print("OK")
+        return
+    if not os.path.exists(state_path(sid)):
+        # The recorder (channel-provenance-pre/post, the multi-chat group) never saw this session:
+        # without it every commit would read as "no-record" and refuse the person's own edits.
+        # Tests: hooks/test-hooks.sh `review fixes (critical)` 3.
         print("OK")
         return
     st = load(sid)

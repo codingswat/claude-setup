@@ -266,17 +266,19 @@ elif git -C "$MIRROR_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     warn "mirror repo: NOT refreshed, nothing committed or pushed — it has $mirror_ahead commit(s) of yours not yet pushed to its upstream, and the backup must not push those. Push or drop them, then the copies refresh. Tell the user."
     exit 0
   fi
+  # settings.json legitimately carries an `env` block, which is where a live API key would
+  # sit — scan the four SOURCES first, same as the config repo above, and copy nothing on a hit
+  # (a copy left in the mirror folder — often a project repo — is a leak of its own).
+  # Tests: hooks/test-hooks.sh `review fixes (critical)` 5.
+  mirror_hits="$(files_have_secret "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/hooks/check-claude-md.sh" "$CLAUDE_DIR/settings.json" "$CLAUDE_DIR/hooks/auto-backup.sh")"
+  if [ -n "$mirror_hits" ]; then
+    warn "mirror repo: possible secret in: $mirror_hits — NOT copied, NOT committed, NOT pushed. Remove it from the source; the next turn refreshes normally once it's gone. $SECRET_HINT"
+    exit 0
+  fi
   cp "$CLAUDE_DIR/CLAUDE.md"             "$MIRROR_DIR/global-copy.md"       2>/dev/null
   cp "$CLAUDE_DIR/hooks/check-claude-md.sh" "$MIRROR_DIR/hook-copy.sh"      2>/dev/null
   cp "$CLAUDE_DIR/settings.json"         "$MIRROR_DIR/settings-copy.json"   2>/dev/null
   cp "$CLAUDE_DIR/hooks/auto-backup.sh"  "$MIRROR_DIR/auto-backup-copy.sh"  2>/dev/null
-  # settings.json legitimately carries an `env` block, which is where a live API key would
-  # sit — scan the four copies too, same as the config repo above, before they are staged.
-  mirror_hits="$(files_have_secret "$MIRROR_DIR/global-copy.md" "$MIRROR_DIR/hook-copy.sh" "$MIRROR_DIR/settings-copy.json" "$MIRROR_DIR/auto-backup-copy.sh")"
-  if [ -n "$mirror_hits" ]; then
-    warn "mirror repo: possible secret in: $mirror_hits — NOT committed, NOT pushed. Remove it from the source; the next turn refreshes normally once it's gone. $SECRET_HINT"
-    exit 0
-  fi
   cd "$MIRROR_DIR" || exit 0
   if [ -n "$(git status --porcelain -- global-copy.md hook-copy.sh settings-copy.json auto-backup-copy.sh 2>/dev/null)" ]; then
     files=$(git status --porcelain -- global-copy.md hook-copy.sh settings-copy.json auto-backup-copy.sh | awk '{printf "%s ", $NF}')

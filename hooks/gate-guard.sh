@@ -43,9 +43,10 @@
 # `true`; if that line CANNOT be written (no
 # ledger script, unwritable path) the override is REFUSED, not honoured.
 #
-# WHAT IT DOES WITHOUT ITS TOOLS. jq missing: fails CLOSED (exit 2) on input it cannot
-# parse ONLY when the raw text still carries gate-shaped vocabulary (test, typecheck,
-# vitest, privacy, READY, commit, push); anything else passes untouched. python3 missing:
+# WHAT IT DOES WITHOUT ITS TOOLS. jq missing: warns once on stderr ("install jq") and passes.
+# jq present but the input unparseable: fails CLOSED (exit 2) ONLY when the raw text still
+# carries gate-shaped vocabulary (test, typecheck, vitest, privacy, READY, commit, push);
+# anything else passes untouched. python3 missing:
 # this guard passes everything with a one-line warning on stderr — it is INERT, not
 # strict. That is deliberate and it is the one guard where failing OPEN is acceptable:
 # it protects no data and can destroy nothing; it only enforces a habit about exit codes.
@@ -60,6 +61,16 @@ if [ ! -r "$GUARD_LIB" ]; then
 fi
 . "$GUARD_LIB"
 input="$(< /dev/stdin)"; [ -z "$input" ] && exit 0
+# jq missing: this guard is a nudge, so it warns once and PASSES (never refuses on a word such as
+# "test" inside a folder name). Tests: hooks/test-hooks.sh `review fixes (critical)` 2.
+if ! command -v jq >/dev/null 2>&1; then
+  GG_MARK="${GATE_GUARD_STATE_DIR:-$HOME/.claude/state}/gate-guard-nojq-warned"
+  if [ ! -e "$GG_MARK" ]; then
+    echo "gate-guard: jq not found — this check is OFF (it passes every command); install jq to enable this check." >&2
+    mkdir -p "$(dirname "$GG_MARK")" 2>/dev/null && : > "$GG_MARK" 2>/dev/null
+  fi
+  exit 0
+fi
 if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
   if printf '%s' "$input" | grep -Eq 'test|typecheck|vitest|privacy|READY|commit|push'; then
     echo "gate-guard: REFUSED — unparseable hook input carrying gate vocabulary (fail closed)" >&2; exit 2

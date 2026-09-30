@@ -3529,5 +3529,120 @@ printf 'alpha 2\nbeta 2\n' > "$M10C2/NOTES.md"
 m10p post "$(m10j MultiEdit "$M10C2/NOTES.md" "$M10C2" m10sc "$E2")"
 f3_chk pass "M10 pair: a clean MultiEdit is credited" bash -c "[ \"$(m10chk "$M10C2" m10sc)\" = OK ]"
 
+echo "review fixes (critical)"
+RFC="$T/rfc"; mkdir -p "$RFC"
+# ---- 1: a stub /usr/bin/python3 (Mac without the Command Line Tools) must not refuse every commit ----
+RFC_STUB="$RFC/stub"; mkdir -p "$RFC_STUB"; printf '#!/bin/sh\nexit 1\n' > "$RFC_STUB/python3"; chmod +x "$RFC_STUB/python3"
+RFC_REALPY="$(command -v python3)"
+RFC_H="$(rb_home rfc1)"; RB_WANT='.'
+# the pre-commit hook itself (run directly: git-hooks/commit-msg, outside this fix, has the same stub gap)
+rfc1_run() {   # <file content> -> exit code of pre-commit on one staged file, stub preferred python3
+  local r; r="$(rb_new)"; printf '%s\n' "$1" > "$r/a.txt"; git -C "$r" add -A >/dev/null 2>&1
+  ( cd "$r" && env HOME="$RFC_H" GUARD_PYTHON_PREFERRED="$RFC_STUB/python3" bash "$GIT_HOOKS_DIR/pre-commit" >/dev/null 2>&1 ); echo $?
+}
+if [ "$(rfc1_run 'honest')" = 0 ]; then ok; else bad "review fix 1: pre-commit with a stub preferred python3 and a working PATH python3 passes honest work"; fi
+pass_n=$((pass_n+1))
+if [ "$(rfc1_run 'met zebulonquixote')" = 1 ]; then ok; else bad "review fix 1 pair: the same setup still refuses a listed name (the PATH python judged it)"; fi
+refuse_n=$((refuse_n+1))
+# the same gap in commit-msg (a2): a stub preferred python3 must not refuse every commit message
+rfc1m_run() { printf '%s\n' "$1" > "$RFC/msg1m.txt"; env HOME="$RFC_H" GUARD_PYTHON_PREFERRED="$RFC_STUB/python3" bash "$GIT_HOOKS_DIR/commit-msg" "$RFC/msg1m.txt" >/dev/null 2>&1; echo $?; }
+if [ "$(rfc1m_run 'fix a typo in the readme')" = 0 ]; then ok; else bad "review fix 1 (commit-msg): a stub preferred python3 and a working PATH python3 pass an honest message"; fi
+pass_n=$((pass_n+1))
+if [ "$(rfc1m_run 'thanks zebulonquixote')" = 1 ]; then ok; else bad "review fix 1 pair (commit-msg): the same setup still refuses a listed name"; fi
+refuse_n=$((refuse_n+1))
+# the installer must not offer the machine-wide git hooks when no python3 runs at all (they would refuse every commit)
+rfc_pty() { local h="$1" outp="$2"; shift 2; env HOME="$h" "$@" "$RFC_REALPY" - "$h" "$REPOD2/install.sh" "$outp" <<'PY'
+import os,pty,sys,select,re
+home,script,outp=sys.argv[1:4]
+pid,fd=pty.fork()
+if pid==0:
+    os.environ["HOME"]=home
+    os.execvp("bash",["bash",script])
+buf=b""; answered=0
+while True:
+    r,_,_=select.select([fd],[],[],0.5)
+    if r:
+        try: d=os.read(fd,4096)
+        except OSError: break
+        if not d: break
+        buf+=d
+    elif len(buf)>answered:
+        tail=buf[-400:].decode("utf8","ignore")
+        if re.search(r"(\] |: |\? )$",tail):
+            os.write(fd,b"y\n" if tail.rstrip().endswith("[y/N]") and "core.hooksPath" in tail else b"\n"); answered=len(buf)
+open(outp,"wb").write(buf)
+_,st=os.waitpid(pid,0); sys.exit(os.waitstatus_to_exitcode(st))
+PY
+}
+RFC1A="$RFC/h1a"; mkdir -p "$RFC1A"
+rfc_pty "$RFC1A" "$RFC/h1a.out" PATH="$RFC_STUB:$PATH" GUARD_PYTHON_PREFERRED=/nonexistent/python3 >/dev/null 2>&1
+if [ -z "$(env HOME="$RFC1A" git config --global core.hooksPath 2>/dev/null)" ]; then ok; else bad "review fix 1: with no python3 that runs, the installer must NOT set the global git hooks path"; fi
+refuse_n=$((refuse_n+1))
+RFC1B="$RFC/h1b"; mkdir -p "$RFC1B"
+rfc_pty "$RFC1B" "$RFC/h1b.out" >/dev/null 2>&1
+if [ "$(env HOME="$RFC1B" git config --global core.hooksPath 2>/dev/null)" = "$RFC1B/.claude/git-hooks" ]; then ok; else bad "review fix 1 pair: with a working python3 the installer still sets the global git hooks path when asked"; fi
+pass_n=$((pass_n+1))
+
+# ---- 2: gate-guard with jq missing warns and passes; it never refuses on a word inside the text ----
+RFC_NOJQ="$RFC/nojq"; mkdir -p "$RFC_NOJQ"
+for b in bash cat grep dirname sed env tr cut date mkdir awk python3 touch; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$RFC_NOJQ/$b"; done
+RFC2H="$RFC/h2"; mkdir -p "$RFC2H/.claude"
+INPUT="$(json_bash 'cd ~/repos/committee-tests && ls')"
+expect pass 0 "review fix 2: no jq, a folder name holding 'test' and 'commit' passes" env -i "PATH=$RFC_NOJQ" HOME="$RFC2H" bash "$HOOKS_DIR/gate-guard.sh"
+err2="$(printf '%s' "$INPUT" | env -i "PATH=$RFC_NOJQ" HOME="$RFC2H" bash "$HOOKS_DIR/gate-guard.sh" 2>&1 1>/dev/null)"
+err2b="$(printf '%s' "$INPUT" | env -i "PATH=$RFC_NOJQ" HOME="$RFC2H" bash "$HOOKS_DIR/gate-guard.sh" 2>&1 1>/dev/null)"
+RFC2W="$RFC/h2w"; mkdir -p "$RFC2W/.claude"
+err2w="$(printf '%s' "$INPUT" | env -i "PATH=$RFC_NOJQ" HOME="$RFC2W" bash "$HOOKS_DIR/gate-guard.sh" 2>&1 1>/dev/null)"
+if printf '%s' "$err2w" | grep -q 'install jq'; then ok; else bad "review fix 2: the first no-jq pass must warn 'install jq' on stderr (got: '$err2w')"; fi
+pass_n=$((pass_n+1))
+if [ -z "$err2b" ]; then ok; else bad "review fix 2: the warning is given once, not on every command (got: '$err2b')"; fi
+pass_n=$((pass_n+1))
+INPUT="$(json_bash 'ls -la')"; expect pass 0 "review fix 2: no jq, an unrelated command passes" env -i "PATH=$RFC_NOJQ" HOME="$RFC2H" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'npm test | tee out.log && git commit -m x')"; expect refuse 2 "review fix 2 pair: WITH jq a piped gate is still refused" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT='not json but says test and commit'; expect refuse 2 "review fix 2 pair: WITH jq, unparseable input carrying gate words still fails closed" bash "$HOOKS_DIR/gate-guard.sh"
+
+# ---- 3: provenance refuses only when the multi-chat recorder is actually running this session ----
+RFC3="$RFC/prov"; mkdir -p "$RFC3/state"; cp "$HOOKS_DIR/provenance.py" "$RFC3/"; printf 'NOTES.md\n' > "$RFC3/channel-ceiling.conf"
+RFC3R="$RFC/provrepo"; mkdir -p "$RFC3R"; git -C "$RFC3R" init -q -b main; git -C "$RFC3R" config core.hooksPath /dev/null
+printf 'a\n' > "$RFC3R/NOTES.md"; git -C "$RFC3R" add -A; "${ID[@]}" git -C "$RFC3R" commit -q -m init
+printf 'my own edit made with no recorder installed\n' >> "$RFC3R/NOTES.md"
+rfc3chk() { env PROVENANCE_STATE_DIR="$RFC3/state" python3 "$RFC3/provenance.py" check "$RFC3R" "$1" NOTES.md | head -1; }
+if [ "$(rfc3chk never-recorded)" = OK ]; then ok; else bad "review fix 3: a session the recorder never saw (multi-chat group not installed) must not be refused on the person's own edit"; fi
+pass_n=$((pass_n+1))
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"'"$RFC3R"'","session_id":"recorded"}' | env PROVENANCE_STATE_DIR="$RFC3/state" python3 "$RFC3/provenance.py" pre
+if [ "$(rfc3chk recorded)" = REFUSE ]; then ok; else bad "review fix 3 pair: a session the recorder IS recording still refuses a change it did not make"; fi
+refuse_n=$((refuse_n+1))
+
+# ---- 4: the installer writes the projects folder as ~/..., not an expanded home path ----
+RFC4="$RFC/h4"; mkdir -p "$RFC4"
+env HOME="$RFC4" bash "$REPOD2/install.sh" --yes >/dev/null 2>&1
+if [ -f "$RFC4/.claude/hooks/project-roots.conf" ] && ! grep -qF "$RFC4" "$RFC4/.claude/hooks/project-roots.conf"; then ok; else bad "review fix 4: project-roots.conf must not hold the expanded home path"; fi
+refuse_n=$((refuse_n+1))
+rfc4n() { printf '{"cwd":"%s","hook_event_name":"SessionStart"}' "$1" | env HOME="$RFC4" bash "$HOOKS_DIR/check-claude-md.sh" 2>/dev/null | grep -c 'has no CLAUDE.md yet'; }
+mkdir -p "$RFC4/projects/newone"
+if [ "$(rfc4n "$RFC4/projects/newone")" -ge 1 ]; then ok; else bad "review fix 4 pair: the ~/ line the installer writes must still switch the interview on"; fi
+pass_n=$((pass_n+1))
+printf '%s\n' "$RFC4/projects" > "$RFC4/.claude/hooks/project-roots.conf"
+if [ "$(rfc4n "$RFC4/projects/newone")" -ge 1 ]; then ok; else bad "review fix 4 pair: an older, already-expanded value keeps working"; fi
+pass_n=$((pass_n+1))
+
+# ---- 5: a secret in settings.json leaves NO copy in the mirror folder ----
+RFC5="$RFC/h5"; RFC5M="$RFC/m5"; mkdir -p "$RFC5/.claude/hooks" "$RFC5M"
+git -C "$RFC5/.claude" init -q -b main; git -C "$RFC5/.claude" config core.hooksPath /dev/null; git -C "$RFC5/.claude" config user.name Tester; git -C "$RFC5/.claude" config user.email tester@example.com
+git -C "$RFC5M" init -q -b main; git -C "$RFC5M" config core.hooksPath /dev/null; git -C "$RFC5M" config user.name Tester; git -C "$RFC5M" config user.email tester@example.com
+printf 'AUTHOR=Tester <tester@example.com>\nMIRROR_DIR=%s\n' "$RFC5M" > "$RFC5/.claude/hooks/backup.conf"
+echo hello > "$RFC5/.claude/CLAUDE.md"; echo '#!/bin/bash' > "$RFC5/.claude/hooks/check-claude-md.sh"; echo '#!/bin/bash' > "$RFC5/.claude/hooks/auto-backup.sh"
+printf '{"env":{"key":"%s"}}' "sk-ant-""zzzzzzzzzz1234567890" > "$RFC5/.claude/settings.json"
+git -C "$RFC5/.claude" add -A; git -C "$RFC5/.claude" commit -q -m seed
+env HOME="$RFC5" STATE_CHECK_STATE_DIR="$RFC5/state" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+if [ -z "$(ls "$RFC5M" | grep -v '^\.git$')" ]; then ok; else bad "review fix 5: a secret in settings.json must leave NO copy in the mirror folder (found: $(ls "$RFC5M" | tr '\n' ' '))"; fi
+refuse_n=$((refuse_n+1))
+if [ -s "$RFC5/state/notices/auto-backup" ] && grep -qi 'secret' "$RFC5/state/notices/auto-backup"; then ok; else bad "review fix 5: the notice about the secret is still written"; fi
+refuse_n=$((refuse_n+1))
+printf '{"name":"clean"}' > "$RFC5/.claude/settings.json"; git -C "$RFC5/.claude" add -A; git -C "$RFC5/.claude" commit -q -m clean
+env HOME="$RFC5" STATE_CHECK_STATE_DIR="$RFC5/state" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
+if [ -f "$RFC5M/settings-copy.json" ]; then ok; else bad "review fix 5 pair: once the secret is gone the copy is made"; fi
+pass_n=$((pass_n+1))
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

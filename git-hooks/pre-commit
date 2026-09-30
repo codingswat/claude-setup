@@ -89,8 +89,16 @@
 # hook ever sees; it calls this script back with PRE_COMMIT_PRIVACY_ONLY=1.
 # Tests: hooks/test-hooks.sh (sections 6, 6b, 12, 13, 13b, 19, 24, 29; `refresh 2026-09-29 (b)`).
 
-PY="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
-[ -x "$PY" ] || PY="$(command -v python3 2>/dev/null)"
+# Same run-probe as the other guards (hooks/guard-lib.sh guard_resolve_python): the preferred
+# interpreter must RUN (`-c ''`), else the PATH python3 — a Mac's /usr/bin/python3 stub that exits
+# non-zero must not refuse every commit. Sourced when installed next to this hook's folder; the
+# inline copy below is only for a kit whose guard-lib.sh is missing. Tests: `review fixes (critical)` 1.
+GUARD_LIB_PC="$(dirname "$0")/../hooks/guard-lib.sh"
+if [ -r "$GUARD_LIB_PC" ]; then . "$GUARD_LIB_PC"; PY="$GUARD_PY"
+else
+  PY="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
+  if ! { [ -x "$PY" ] && "$PY" -c '' >/dev/null 2>&1; }; then PY="$(command -v python3 2>/dev/null)"; fi
+fi
 if [ -z "$PY" ]; then echo "pre-commit hook: REFUSED — no python3 found, so the privacy check cannot run." >&2; exit 1; fi
 
 if [ "${PRE_COMMIT_PRIVACY_ONLY:-0}" = "1" ]; then
