@@ -2434,10 +2434,10 @@ c2_chk pass "A40 no snapshot at all: still a note, never a block" has 'no turn s
 git -C "$R" checkout -q -- README.md 2>/dev/null
 c2_prompt "$R" ""; c2_chk refuse "A40 the prompt hook with no session id writes a snapshot under a folder-name key" test -s "$S/turnsnap/nosid-myapp-dev5"
 
-echo "  A71 the writer half: the prompt hook writes four tab-separated fields the Stop hook compares against"
+echo "  A71 the writer half: the prompt hook writes five tab-separated fields the Stop hook compares against"
 R="$C2/myapp-dev6"; c2_repo "$R"; S="$C2/s-a71"; c2_prompt "$R" s71
 snapline="$(cat "$S/turnsnap/s71" 2>/dev/null)"
-c2_chk refuse "A71 the snapshot is four tab-separated fields" bash -c "[ \"\$(printf '%s' '$snapline' | awk -F'\t' '{print NF}')\" = 4 ]"
+c2_chk refuse "A71 the snapshot is five tab-separated fields (the fifth is the repo folder: attack fixes (3) M4)" bash -c "[ \"\$(printf '%s' '$snapline' | awk -F'\t' '{print NF}')\" = 5 ]"
 c2_chk pass "A71 field 1 is HEAD" eq "$(printf '%s' "$snapline" | cut -f1)" "$(git -C "$R" rev-parse HEAD)"
 c2_chk pass "A71 field 2 is the state file's hash" eq "$(printf '%s' "$snapline" | cut -f2)" "$(git -C "$R" hash-object "$R/state/dev.md")"
 c2_chk pass "A71 field 3 is the hash of the tracked diff (a clean tree: the empty hash)" eq "$(printf '%s' "$snapline" | cut -f3)" "$(: | git -C "$R" hash-object --stdin)"
@@ -2450,11 +2450,11 @@ echo "  A41 the FIRST Current task / Next step lines are canonical; a prose ment
 R="$C2/myapp-dev7"; c2_repo "$R"; c2_conf 'myapp-dev*  dev  850'; S="$C2/s-a41"
 c2_prompt "$R" m1; echo edit >> "$R/README.md"; echo 'as the **Current task:** line above says' >> "$R/state/dev.md"
 c2_stop "$R" m1 false ""
-c2_chk refuse "A41 a prose mention of the marker appended to the state file is not the line moving" has 'neither its' "$C2/out"
+c2_chk refuse "A41 a prose mention of the marker appended to the state file is not the line moving" has 'FIRST line that starts with' "$C2/out"
 git -C "$R" checkout -q -- .
 c2_prompt "$R" m2; echo edit >> "$R/README.md"; echo '**Next step:** an appended duplicate' >> "$R/state/dev.md"
 c2_stop "$R" m2 false ""
-c2_chk refuse "A41 a second **Next step:** line appended below the real one is not the line moving" has 'neither its' "$C2/out"
+c2_chk refuse "A41 a second **Next step:** line appended below the real one is not the line moving" has 'FIRST line that starts with' "$C2/out"
 git -C "$R" checkout -q -- .
 c2_prompt "$R" m3; echo edit >> "$R/README.md"; sed 's/^\*\*Next step:\*\* second$/**Next step:** reviewed/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"
 c2_stop "$R" m3 false ""
@@ -2467,7 +2467,7 @@ git -C "$R" checkout -q -- .
 sed 's/^\*\*Next step:\*\* second$/**Next step:** carried over/' "$R/state/dev.md" > "$R/state/dev.new" && mv "$R/state/dev.new" "$R/state/dev.md"
 c2_prompt "$R" m5; echo edit >> "$R/README.md"; printf '   \n' >> "$R/state/dev.md"
 c2_stop "$R" m5 false ""
-c2_chk refuse "A41 a state file already dirty at turn start: a whitespace-only append is still not a handover" has 'neither its' "$C2/out"
+c2_chk refuse "A41 a state file already dirty at turn start: a whitespace-only append is still not a handover" has 'FIRST line that starts with' "$C2/out"
 git -C "$R" checkout -q -- .
 
 echo "  A46 the state file and every git call are resolved from the git toplevel, never the raw folder"
@@ -2708,8 +2708,8 @@ c2_chk pass "A56 pair: a second fresh chat gets nothing (delivered once)" nothas
 S="$C3/s-a56b"; c3_p "$D1" a56live "$C3/tp900" "held from a live chat"; c3_p "$D1" a56other "$C3/tp100" "fresh chat"
 c2_chk pass "A56 pair: a chat that is only full, not retired, keeps its held text from a fresh chat" nothas "HELD MESSAGE" "$C3/o"
 c2_chk pass "A56 pair: ... the held file stays" test -f "$S/held/a56live"
-S="$C3/s-a56c"; c3_ret a56x; c3_p "$D1" a56x "$C3/tp100" "for folder one"; c3_p "$D2" a56y "$C3/tp100" "chat in folder two"
-c2_chk pass "A56 pair: a chat in another folder never receives it" nothas "HELD MESSAGE" "$C3/o"
+S="$C3/s-a56c"; c3_ret a56x; c3_p "$D1" a56x "$C3/tp100" "for folder one"; c3_p "$O1" a56y "$C3/tp100" "chat of another role"
+c2_chk pass "A56 pair: a chat of another ROLE never receives it (another folder of the same role does: attack fixes (3) B3)" nothas "HELD MESSAGE" "$C3/o"
 S="$C3/s-a56d"; c3_ret a56z; c3_p "$D1" a56z "$C3/tp100" "for the machine test"
 c3_p "$D1" a56m "$C3/tp100" "<task-notification>done</task-notification>"
 c2_chk pass "A56 pair: a machine prompt in a fresh chat does not take the held text" test -f "$S/held/a56z"
@@ -3377,6 +3377,157 @@ if command -v zsh >/dev/null 2>&1; then
   if [ "$m16rc" = 0 ] && [ "$(d2_count "$M16Z/.claude/settings.json" SessionStart)" -ge 1 ]; then ok; else bad "M16: zsh install.sh --yes must finish (rc=$m16rc) with the hooks registered"; fi
   refuse_n=$((refuse_n+1))
 fi
+
+echo "attack fixes (3): the opt-in multi-chat group (refresh 2026-09-30, attack-B B3 M1 M3 M4 M10 M11 M15 M6 M7)"
+F3="$T/f3"; mkdir -p "$F3"; F3HK="$F3/hk"; mkdir -p "$F3HK"
+cp "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$F3HK/"
+printf 'STATE_FILE state/{role}.md\nmyapp-dev*  dev  850\nmyapp-ops*  ops  850\n' > "$F3HK/state-check.conf"
+export -f atk_mode
+f3_chk() { local kind="$1" label="$2"; shift 2; if "$@"; then ok; else bad "$label"; fi; if [ "$kind" = refuse ]; then refuse_n=$((refuse_n+1)); else pass_n=$((pass_n+1)); fi; }
+f3_has() { grep -q -- "$1" "$2"; }
+f3_tp() {   # <file> <K>: a transcript whose newest usage line sums to K thousand tokens
+  printf '{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"go"}}\n{"type":"assistant","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":%d,"output_tokens":5}}}\n' $(( ($2 - 1) * 1000 )) > "$1"
+}
+f3_zero_line() { printf '{"type":"assistant","message":{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}\n'; }
+f3_door() {   # <cwd> <sid> <transcript> [prompt]: the doorman against $S; stdout $F3/o, stderr $F3/e, rc F3_RC
+  dj "$1" "$2" "${4:-hello}" "$3" | STATE_CHECK_STATE_DIR="$S" bash "$F3HK/doorman.sh" > "$F3/o" 2> "$F3/e"; F3_RC=$?
+}
+f3_stop() {   # <cwd> <sid> <transcript>: the Stop hook against $S; stdout $F3/so, rc F3_SRC
+  ssc_json "$1" "$2" false "$3" | STATE_CHECK_STATE_DIR="$S" bash "$F3HK/stop-state-check.sh" > "$F3/so" 2> "$F3/se"; F3_SRC=$?
+}
+f3_ret() { mkdir -p "$S/retired" "$S/retired-compacts"; echo "2026-01-01 00:00 dev 900k" > "$S/retired/$1"; echo 0 > "$S/retired-compacts/$1"; }
+f3_rc() { [ "$F3_RC" = "$1" ]; }
+D21="$F3/myapp-dev21"; D22="$F3/myapp-dev22"; D23="$F3/myapp-dev23"; O1="$F3/myapp-ops1"; mkdir -p "$D21" "$D22" "$D23" "$O1"
+f3_tp "$F3/tp100" 100; f3_tp "$F3/tp900" 900
+
+echo "  B3 a retired chat's held message reaches the next chat of the same ROLE (its own folder), once, and the inbox copy is marked delivered"
+S="$F3/s-b3a"; f3_ret b3c; f3_door "$D21" b3c "$F3/tp100" "deploy the fix to staging"
+f3_chk pass "B3 setup: the retired chat's message is held (exit 2)" f3_rc 2
+f3_chk pass "B3 pair: before any delivery the inbox copy carries no delivered mark" bash -c "! grep -q 'DELIVERED' '$S/inbox/dev.md'"
+f3_door "$D22" b3d "$F3/tp100" "hi, you are the new dev"
+f3_chk refuse "B3 a fresh chat of the same role in ANOTHER folder receives the held message" f3_has "deploy the fix to staging" "$F3/o"
+f3_chk refuse "B3 the inbox copy is marked delivered, naming the receiving session" bash -c "grep -q 'DELIVERED' '$S/inbox/dev.md' && grep 'DELIVERED' '$S/inbox/dev.md' | grep -q 'b3d'"
+f3_door "$D22" b3e "$F3/tp100" "what is next?"
+f3_chk pass "B3 pair: a second fresh chat gets nothing (delivered once)" bash -c "! grep -q 'HELD MESSAGE' '$F3/o'"
+S="$F3/s-b3b"; f3_ret b3x; f3_door "$D21" b3x "$F3/tp100" "for the dev role only"; f3_door "$O1" b3y "$F3/tp100" "a chat of another role"
+f3_chk pass "B3 pair: a chat of ANOTHER role never receives it" bash -c "! grep -q 'HELD MESSAGE' '$F3/o' && [ -f '$S/held/b3x' ]"
+S="$F3/s-b3c"; f3_ret b3s; f3_door "$D21" b3s "$F3/tp100" "same chat, next message"; f3_door "$D21" b3s "$F3/tp100" "second message"
+f3_chk refuse "B3 the held message delivered to its OWN chat is marked delivered in the inbox too" bash -c "grep -q 'DELIVERED' '$S/inbox/dev.md'"
+S="$F3/s-b3d"; f3_door "$D21" b3f "$F3/tp900" "held from a chat that is full but not retired"
+f3_chk pass "B3 setup: the full chat's message is held" f3_rc 2
+f3_door "$D22" b3g "$F3/tp100" "first message of the new chat"
+f3_chk refuse "B3 when delivery cannot happen the new chat is told at its first prompt that a held message is waiting" f3_has "is waiting" "$F3/o"
+f3_door "$D22" b3g "$F3/tp100" "second message"
+f3_chk pass "B3 pair: it is told only once" bash -c "! grep -q 'is waiting' '$F3/o'"
+f3_door "$O1" b3h "$F3/tp100" "another role's first message"
+f3_chk pass "B3 pair: a chat of another role is not told" bash -c "! grep -q 'is waiting' '$F3/o'"
+S="$F3/s-b3e"; f3_ret b3r; f3_door "$D21" b3r "$F3/tp100" "exactly once please"
+( dj "$D22" b3n1 "go" "$F3/tp100" | STATE_CHECK_STATE_DIR="$S" bash "$F3HK/doorman.sh" > "$F3/o1" 2>/dev/null ) &
+( dj "$D23" b3n2 "go" "$F3/tp100" | STATE_CHECK_STATE_DIR="$S" bash "$F3HK/doorman.sh" > "$F3/o2" 2>/dev/null ) &
+wait
+f3_chk refuse "B3 two new chats of the same role starting at once: the held message is delivered exactly once" bash -c "[ \"\$(cat '$F3/o1' '$F3/o2' | grep -c 'HELD MESSAGE')\" = 1 ] && [ \"\$(grep -c 'DELIVERED' '$S/inbox/dev.md')\" = 1 ]"
+
+echo "  M1 an all-zero usage line (an API error) is not a measurement: the end-of-turn check still retires the chat"
+S="$F3/s-m1a"; { f3_tp "$F3/tpm1" 900; f3_zero_line >> "$F3/tpm1"; }
+f3_stop "$D21" m1a "$F3/tpm1"
+f3_chk refuse "M1 a chat at 900k whose last usage line is an API-error zero line is marked retired at turn end" test -f "$S/retired/m1a"
+f3_chk refuse "M1 the turn-start size is the real 900k, never 0" bash -c "[ \"\$(head -1 '$S/turn-start/m1a')\" = 900 ]"
+S="$F3/s-m1b"; { f3_tp "$F3/tpm1b" 100; f3_zero_line >> "$F3/tpm1b"; }
+f3_stop "$D21" m1b "$F3/tpm1b"
+f3_chk pass "M1 pair: 100k then a zero line (under the floor) is not retired" bash -c "[ ! -e '$S/retired/m1b' ] && [ \"\$(head -1 '$S/turn-start/m1b')\" = 100 ]"
+S="$F3/s-m1c"; f3_ret m1c; f3_door "$D21" m1c "$F3/tpm1" "held with an error line last"
+f3_chk pass "M1 the doorman holds the same transcript (900k then a zero line)" f3_rc 2
+
+echo "  M3 the doorman needs jq: the installer registers it only when jq is there, and says so"
+F3IH="$F3/inst-nojq"; mkdir -p "$F3IH"; d2_yes "$F3IH" INSTALL_PRETEND_MISSING=jq
+f3_chk refuse "M3 with jq missing the doorman is NOT registered (under either event)" bash -c "! grep -q 'doorman.sh' '$F3IH/.claude/settings.json'"
+f3_chk pass "M3 pair: with jq missing the end-of-turn check is still registered" bash -c "grep -q 'stop-state-check.sh' '$F3IH/.claude/settings.json'"
+F3IH2="$F3/inst-jq"; mkdir -p "$F3IH2"; d2_yes "$F3IH2"
+f3_chk pass "M3 pair: with jq present the doorman is registered" bash -c "grep -q 'doorman.sh' '$F3IH2/.claude/settings.json'"
+f3_chk refuse "M3 INSTALL.md states the doorman's jq requirement" grep -q 'The doorman needs `jq`' "$HOOKS_DIR/../INSTALL.md"
+
+echo "  M4 the turn snapshot names its repo; a cd during the turn skips the check with a notice"
+f3_repo() { local d="$1"; mkdir -p "$d/state"; git -C "$d" init -q -b main; git -C "$d" config core.hooksPath /dev/null
+  printf '**Current task:** first\n**Next step:** second\n' > "$d/state/dev.md"; echo "$2" > "$d/README.md"; git -C "$d" add -A; "${ID[@]}" git -C "$d" commit -q -m "init $2"; }
+R1="$F3/myapp-dev1"; R2="$F3/myapp-dev2"; f3_repo "$R1" one; f3_repo "$R2" two
+S="$F3/s-m4a"; f3_door "$R1" m4a "$F3/tp100" "read only turn"
+f3_chk refuse "M4 the snapshot records the repo top-level folder as its fifth field" bash -c "[ \"\$(head -1 '$S/turnsnap/m4a' | cut -f5)\" = \"\$(git -C '$R1' rev-parse --show-toplevel)\" ]"
+f3_stop "$R2" m4a "$F3/tp100"
+f3_chk refuse "M4 a read-only turn that cd'd into a sibling repo is not blocked" bash -c "! grep -q '\"decision\":\"block\"' '$F3/so'"
+f3_chk refuse "M4 ... and leaves a notice that the check was skipped" bash -c "grep -qi 'skipped' '$S/notices/stop-state-check-cwd'"
+S="$F3/s-m4b"; f3_door "$R1" m4b "$F3/tp100" "read only turn"; f3_stop "$R1" m4b "$F3/tp100"
+f3_chk pass "M4 pair: the same read-only turn ending in its own repo passes with no notice" bash -c "! grep -q '\"decision\":\"block\"' '$F3/so' && [ ! -e '$S/notices/stop-state-check-cwd' ]"
+S="$F3/s-m4c"; f3_door "$R1" m4c "$F3/tp100" "edit turn"; echo more >> "$R1/README.md"; f3_stop "$R1" m4c "$F3/tp100"
+f3_chk refuse "M4 pair: an edit turn ending in its own repo, state file untouched, is still blocked" bash -c "grep -q '\"decision\":\"block\"' '$F3/so'"
+S="$F3/s-m4d"; f3_door "$R1" m4d "$F3/tp100" "edit turn"; echo more >> "$R1/README.md"; f3_stop "$R2" m4d "$F3/tp100"
+f3_chk pass "M4 an edit turn that ended in another repo is not judged on that other repo (skipped with a notice)" bash -c "! grep -q '\"decision\":\"block\"' '$F3/so' && [ -s '$S/notices/stop-state-check-cwd' ]"
+
+echo "  M15 the refusal says plainly what to change"
+S="$F3/s-m15"; f3_door "$R2" m15 "$F3/tp100" "one more open question"; echo more >> "$R2/README.md"; printf '\nOpen question: x\n' >> "$R2/state/dev.md"; f3_stop "$R2" m15 "$F3/tp100"
+f3_chk refuse "M15 the block for an unmoved marker names the FIRST Current task / Next step line to change" bash -c "grep -q 'FIRST line that starts with' '$F3/so' && ! grep -q 'unrelated edit' '$F3/so'"
+
+echo "  M6 the end-of-turn check's two stderr-only notes go through the notice folder"
+S="$F3/s-m6a"; f3_stop "$D21" m6a "$F3/tp900"
+f3_chk refuse "M6 the retirement note is left as a pending notice" bash -c "grep -q 'RETIRED' '$S/notices/stop-state-check-retired'"
+f3_chk refuse "M6 the notice file is private (600) in a private folder (700)" bash -c "[ \"\$(atk_mode '$S/notices/stop-state-check-retired')\" = 600 ] && [ \"\$(atk_mode '$S/notices')\" = 700 ]"
+S="$F3/s-m6b"; echo more >> "$R1/README.md"; f3_stop "$R1" m6b "$F3/tp100"
+f3_chk refuse "M6 the no-turn-snapshot note is left as a pending notice naming the doorman" bash -c "grep -qi 'doorman' '$S/notices/stop-state-check-nosnap'"
+git -C "$R1" checkout -q -- README.md 2>/dev/null
+
+echo "  M7 the doorman's held-prompt files are private"
+S="$F3/s-m7"; f3_door "$D21" m7a "$F3/tp900" "a private message"
+f3_chk refuse "M7 held/<session> is 600 and its folder 700" bash -c "[ \"\$(atk_mode '$S/held/m7a')\" = 600 ] && [ \"\$(atk_mode '$S/held')\" = 700 ]"
+f3_chk refuse "M7 the inbox file is 600 and its folder 700" bash -c "[ \"\$(atk_mode '$S/inbox/dev.md')\" = 600 ] && [ \"\$(atk_mode '$S/inbox')\" = 700 ]"
+f3_door "$D21" m7a "$F3/tp900" "the passing message"
+f3_chk refuse "M7 delivered/<session> is 600" bash -c "[ \"\$(atk_mode '$S/delivered/m7a')\" = 600 ]"
+
+echo "  M11 the doorman reads the transcript once with a growing tail window"
+python3 - "$F3/big" <<'PY'
+import sys
+line = b'{"type":"assistant","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":2000,"output_tokens":5},"content":"' + b"x" * 400 + b'"}}\n'
+with open(sys.argv[1], "wb") as f:
+    blk = line * 2000
+    for _ in range(100): f.write(blk)
+    f.write(b'{"type":"assistant","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":899000,"output_tokens":5}}}\n')
+PY
+S="$F3/s-m11a"; m11s=$(date +%s); f3_door "$D21" m11a "$F3/big" "typed words"; m11e=$(date +%s)
+f3_chk refuse "M11 a 110 MB transcript at 900k is held (exit 2) in under 3 s (took $((m11e - m11s)) s)" bash -c "[ '$F3_RC' = 2 ] && [ $((m11e - m11s)) -lt 3 ]"
+rm -f "$F3/big"
+python3 - "$F3/wide" <<'PY'
+import sys
+usage = b'{"type":"assistant","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":899000,"output_tokens":5}}}\n'
+tool = b'{"type":"user","message":{"content":"' + b"y" * 1000 + b'"}}\n'
+with open(sys.argv[1], "wb") as f:
+    f.write(usage); f.write(tool * 12000)      # ~12 MB of tool results after the newest usage line
+PY
+S="$F3/s-m11b"; f3_door "$D21" m11b "$F3/wide" "typed words"
+f3_chk pass "M11 pair: a newest usage line 12 MB from the end (past both windows) is still found and holds" f3_rc 2
+rm -f "$F3/wide"
+S="$F3/s-m11c"; f3_door "$D21" m11c "$F3/tp100" "typed words"
+f3_chk pass "M11 pair: a small chat under the floor passes" f3_rc 0
+
+echo "  M10 provenance: a change that lands between the pre and post hooks is not credited to this session"
+M10C="$F3/prov"; mkdir -p "$M10C" "$F3/prov-state"; cp "$HOOKS_DIR/provenance.py" "$M10C/"; printf 'NOTES.md\n' > "$M10C/channel-ceiling.conf"
+m10j() { python3 -c 'import json,sys;d=json.loads(sys.argv[5]);print(json.dumps({"tool_name":sys.argv[1],"tool_input":dict(d,file_path=sys.argv[2]),"cwd":sys.argv[3],"session_id":sys.argv[4]}))' "$@"; }
+m10p() { printf '%s' "$2" | env PROVENANCE_STATE_DIR="$F3/prov-state" python3 "$M10C/provenance.py" "$1" >/dev/null; }
+m10chk() { env PROVENANCE_STATE_DIR="$F3/prov-state" python3 "$M10C/provenance.py" check "$1" "$2" NOTES.md | head -1; }
+m10_new() { local d="$F3/$1"; mkdir -p "$d"; git -C "$d" init -q -b main; git -C "$d" config core.hooksPath /dev/null; printf 'alpha\nbeta\n' > "$d/NOTES.md"; git -C "$d" add -A; "${ID[@]}" git -C "$d" commit -q -m init; printf '%s' "$d"; }
+M10A="$(m10_new m10a)"; E1='{"old_string":"beta","new_string":"beta edited"}'
+m10p pre "$(m10j Edit "$M10A/NOTES.md" "$M10A" m10sa "$E1")"
+echo "a foreign append while the permission prompt waits" >> "$M10A/NOTES.md"
+python3 -c 'import sys;p=sys.argv[1];s=open(p).read().replace("beta","beta edited",1);open(p,"w").write(s)' "$M10A/NOTES.md"
+m10p post "$(m10j Edit "$M10A/NOTES.md" "$M10A" m10sa "$E1")"
+f3_chk refuse "M10 an Edit whose result carries another session's append is not credited to this session" bash -c "[ \"$(m10chk "$M10A" m10sa)\" = REFUSE ]"
+M10B="$(m10_new m10b)"
+m10p pre "$(m10j Edit "$M10B/NOTES.md" "$M10B" m10sb "$E1")"
+python3 -c 'import sys;p=sys.argv[1];s=open(p).read().replace("beta","beta edited",1);open(p,"w").write(s)' "$M10B/NOTES.md"
+m10p post "$(m10j Edit "$M10B/NOTES.md" "$M10B" m10sb "$E1")"
+f3_chk pass "M10 pair: the same Edit with nothing landing in between is credited (commit allowed)" bash -c "[ \"$(m10chk "$M10B" m10sb)\" = OK ]"
+M10C2="$(m10_new m10c)"; E2='{"edits":[{"old_string":"alpha","new_string":"alpha 2"},{"old_string":"beta","new_string":"beta 2"}]}'
+m10p pre "$(m10j MultiEdit "$M10C2/NOTES.md" "$M10C2" m10sc "$E2")"
+printf 'alpha 2\nbeta 2\n' > "$M10C2/NOTES.md"
+m10p post "$(m10j MultiEdit "$M10C2/NOTES.md" "$M10C2" m10sc "$E2")"
+f3_chk pass "M10 pair: a clean MultiEdit is credited" bash -c "[ \"$(m10chk "$M10C2" m10sc)\" = OK ]"
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

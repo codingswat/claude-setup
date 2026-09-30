@@ -25,7 +25,9 @@
 #     against the TURN SNAPSHOT hooks/doorman.sh writes when the prompt arrives — four
 #     tab-separated fields: HEAD, the state file's hash, a hash of `git diff HEAD` (the
 #     CONTENT of every tracked change, so a second edit to an already-dirty file is seen),
-#     and a hash of the state file's two marker lines. A turn that only COMMITTED moves HEAD
+#     a hash of the state file's two marker lines, and the repo's top-level folder. When the
+#     Stop is in a DIFFERENT repo than the snapshot's (a `cd` during the turn) the check is
+#     skipped with a notice, never judged on the wrong repo. A turn that only COMMITTED moves HEAD
 #     and is caught; a turn that changed nothing passes even in a tree left dirty an hour
 #     ago. With no snapshot (doorman.sh not registered, or a turn that began before it was)
 #     this job WARNS instead of blocking — refusing to end a turn on a guess is worse than
@@ -49,6 +51,8 @@
 #     skipped silently) so a later prompt hook can tell a fired schedule from a typed message.
 #     Rewritten at every Stop; an empty list removes the file.
 # Every state file this hook writes is skipped when its path (or its folder) is a symlink.
+# Notes that would only reach a stderr nobody reads (the retirement, "no turn snapshot", a skipped check)
+# are also left as a pending notice in $STATE/notices/<source>, shown at the next typed prompt.
 #
 # No hooks/state-check.conf at all, or the folder matches no line in it: EVERY job is off for this
 # session — the safe default for a single-session project with nothing to track. Fails OPEN
@@ -58,7 +62,7 @@
 # Config: hooks/state-check.conf (see hooks/state-check.conf.example; shared with
 # doorman.sh). Test seam: STATE_CHECK_STATE_DIR (where the marker folders are written).
 # Portable: no `shasum`, `stat -f` or `tail -r`; every hash comes from git itself.
-# Tests: hooks/test-hooks.sh (sections 25, 29 and "refresh 2026-09-29 (c2a)").
+# Tests: hooks/test-hooks.sh (sections 25, 29, "refresh 2026-09-29 (c2a)" and "attack fixes (3)").
 input=$(cat 2>/dev/null); [ -z "$input" ] && exit 0
 field() { printf '%s' "$input" | /usr/bin/sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1; }
 json_esc() {
@@ -90,6 +94,14 @@ STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
 
 # safe_state_file <dir> <name> — true only when neither the folder nor the file is a symlink.
 safe_state_file() { [ ! -L "$STATE/$1" ] && [ ! -L "$STATE/$1/$2" ]; }
+# ssc_notice <source> <text> — a stderr line at exit 0 reaches nobody, so the note also goes into the kit's notice
+# folder ($STATE/notices/<source>, private): clock-in-context.sh shows it at the next typed prompt, then deletes
+# it. One file per source; a later note of the same source replaces the earlier one.
+ssc_notice() {
+  [ ! -L "$STATE/notices" ] && [ ! -L "$STATE/notices/$1" ] || return 0
+  ( umask 077; mkdir -p "$STATE/notices" && printf '%s\n' "$2" > "$STATE/notices/$1" ) 2>/dev/null
+  return 0
+}
 
 # ---- (5) register the session's scheduled prompts (needs jq; silently skipped without it) ----
 if [ -n "$sid" ] && command -v jq >/dev/null 2>&1 && safe_state_file crons "$sid"; then
@@ -104,13 +116,11 @@ fi
 # ---- (1) retire past the floor, and (4) the helper tell ----
 ctx_k=""
 if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
-  # The whole transcript is scanned (not just a tail) so one long tool result earlier in
-  # the file can never push the real, most-recent usage line out of a byte-limited window.
-  ctx_line=$(/usr/bin/grep -E '"type"[[:space:]]*:[[:space:]]*"assistant"' "$tp" 2>/dev/null | /usr/bin/grep 'cache_read_input_tokens' 2>/dev/null | /usr/bin/tail -1)
-  if [ -n "$ctx_line" ]; then
-    cf() { printf '%s' "$ctx_line" | /usr/bin/grep -oE "\"$1\"[[:space:]]*:[[:space:]]*[0-9]+" | /usr/bin/tail -1 | /usr/bin/sed -E 's/.*:[[:space:]]*([0-9]+)/\1/'; }
-    ci=$(cf input_tokens); cc=$(cf cache_creation_input_tokens); cr=$(cf cache_read_input_tokens)
-    ctx_k=$(( (${ci:-0} + ${cc:-0} + ${cr:-0} + 500) / 1000 ))
+  # ONE windowed read (guard-lib.sh's stc_ctx_read): the newest usage line whose counters are not all zero
+  # (an API-error answer is not a measurement), found from the end of the file, widened only as far as needed.
+  stc_ctx_read "$tp"
+  if [ "$STC_CTX_TOT" -gt 0 ]; then
+    ctx_k=$(( (STC_CTX_TOT + 500) / 1000 ))
 
     # (4) the helper tell. Growth = ctx_k now minus the size doorman.sh wrote at the prompt.
     # "A helper launched this turn" = an Agent or Workflow tool_use after the last top-level
@@ -157,8 +167,9 @@ if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
         if [ ! -L "$STATE/retired-compacts" ]; then
           mkdir -p "$STATE/retired-compacts" 2>/dev/null
           [ -L "$STATE/retired-compacts/$sid" ] && rm -f "$STATE/retired-compacts/$sid" 2>/dev/null
-          { /usr/bin/grep -cE '"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' "$tp" 2>/dev/null || true; } | head -1 > "$STATE/retired-compacts/$sid" 2>/dev/null
+          { /usr/bin/grep -F compact_boundary "$tp" 2>/dev/null | /usr/bin/grep -cE '"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' 2>/dev/null || true; } | head -1 > "$STATE/retired-compacts/$sid" 2>/dev/null
         fi
+        _retired_now=1
         dirty_files=""; gitrc=1
         if command -v git >/dev/null 2>&1; then
           _dirtyraw="$STATE/.dirty-tmp.$$"
@@ -214,6 +225,7 @@ if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
       # STDERR, not stdout (see the header): stdout is reserved for a decision JSON. On exit 0 this
       # only reaches the debug log; the doorman's refusal at the next message is what the seat sees.
       echo "stop-state-check: this $role is RETIRED at ${ctx_k}k (floor ${floor_k}k) — a fresh $role should start from $sf and the inbox." >&2
+      [ "${_retired_now:-0}" = 1 ] && ssc_notice stop-state-check-retired "stop-state-check hook: this $role chat is RETIRED at ${ctx_k}k (its floor is ${floor_k}k) — its next message is held and passed on to a fresh $role chat, which should start from $sf and the inbox."
     fi
   fi
 fi
@@ -254,7 +266,15 @@ if [ -L "$SNAP" ] || [ -L "$STATE/turnsnap" ]; then
 elif [ -f "$SNAP" ]; then
   snap_line=$(head -1 "$SNAP" 2>/dev/null)
   case "$snap_line" in *$'\t'*$'\t'*$'\t'*) snap_ok=1 ;; esac   # anything not four fields is an old-format file: no snapshot
-  IFS=$'\t' read -r snap_head snap_sf snap_tree snap_mk <<<"$snap_line"
+  IFS=$'\t' read -r snap_head snap_sf snap_tree snap_mk snap_top <<<"$snap_line"
+fi
+# A cd during the turn: the snapshot was taken in ANOTHER repo than the one this Stop is in (a snapshot without
+# the repo field, from an older doorman, is judged as before). Judging the wrong repo would block a read-only
+# turn or pass a real change, so the check is skipped, with a notice.
+if [ "$snap_ok" = 1 ] && [ -n "$snap_top" ] && [ "$snap_top" != "$top" ]; then
+  echo "stop-state-check: this turn started in $snap_top but ended in $top — the state-file check is skipped." >&2
+  ssc_notice stop-state-check-cwd "stop-state-check hook: the state-file check was skipped for the last turn — it started in $(basename "$snap_top") but ended in $base (a cd), so no repo was judged. If the turn changed files in $(basename "$snap_top"), update its state file by hand."
+  pass_exit
 fi
 changed=$(git -C "$top" status --porcelain --untracked-files=no 2>/dev/null | /usr/bin/grep -c .)
 
@@ -284,7 +304,7 @@ if [ "$snap_ok" = 1 ]; then
     # leave the first lines alone, do not count.
     if [ "$cur_mk" != "$snap_mk" ]; then pass_exit; fi
     [ "$active" = "true" ] && { maybe_stop_wrapup; echo "stop-state-check: the state file changed but neither required line moved; not blocking twice."; exit 0; }
-    reason3="stop-state-check: $sf changed but neither its **Current task:** nor its **Next step:** line moved since the turn started — a whitespace or unrelated edit is not a handover. Rewrite both to say where this turn actually got to, then stop."
+    reason3="stop-state-check: $sf changed, but its two marker lines did not. Change the wording of the FIRST line that starts with **Current task:** or of the FIRST line that starts with **Next step:** so it says where this turn got to (notes added elsewhere in the file, or a whitespace edit, do not count), then stop."
     printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "$reason3")"
     exit 0
   fi
@@ -296,5 +316,6 @@ fi
 
 # --- no usable turn snapshot: warn, never block on a guess ---
 [ "$changed" -gt 0 ] || pass_exit
-maybe_stop_wrapup || echo "stop-state-check: NOTE — the tree holds $changed changed tracked file(s), but there is no turn snapshot for this session, so this turn may only have READ them. hooks/doorman.sh writes that snapshot on UserPromptSubmit; register it (install.sh's multi-chat group) to turn this note back into a real check."
+_nosnap="stop-state-check: NOTE — the tree holds $changed changed tracked file(s), but there is no turn snapshot for this session, so this turn may only have READ them. hooks/doorman.sh writes that snapshot on UserPromptSubmit; register it (install.sh's multi-chat group) to turn this note back into a real check."
+maybe_stop_wrapup || { echo "$_nosnap"; ssc_notice stop-state-check-nosnap "$_nosnap"; }
 exit 0

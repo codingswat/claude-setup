@@ -360,3 +360,44 @@ state_conf_read() {
   done < "$conf"
   [ -n "$STC_ROLE" ]
 }
+
+# ---- the context reader shared by doorman.sh and stop-state-check.sh -------------------------
+# stc_ctx_read TRANSCRIPT — the chat's context size, read ONCE with a growing tail window (the last
+# 256 KB, then 8 MB, then the whole file; it stops at the first window that holds the newest usage
+# line or a compact boundary), so a long chat costs milliseconds, not seconds, per prompt. Sets
+#   STC_CTX_TOT  input + cache-creation + cache-read tokens of the newest usage line (0 = none found)
+#   STC_CTX_ULN  that line's number, and STC_CTX_CLN the newest compact boundary's (window-relative,
+#                comparable with each other; 0 = none)
+# A usage line whose counters are ALL zero (what an API error such as "overloaded" writes) is not a
+# measurement and is skipped, so an error answer at the end of a turn never reads as "0 tokens". Only the
+# newest 64 usage lines are examined. The same rule and windows as clock-in-context.sh, which keeps its
+# own copy. Tests: hooks/test-hooks.sh "attack fixes (3)" (M1, M11).
+_stc_ctx_window() {   # $1 = transcript, $2 = bytes of the file's end to read (0 = the whole file)
+  { if [ "$2" -gt 0 ]; then /usr/bin/tail -c "$2" "$1" 2>/dev/null | /usr/bin/sed 1d; else /bin/cat "$1" 2>/dev/null; fi; } \
+    | /usr/bin/grep -E 'cache_read_input_tokens|"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' 2>/dev/null | /usr/bin/awk '
+    function lastnum(s, key,   re, r, v) { re="\"" key "\"[ \t]*:[ \t]*[0-9]+"; v=0
+      while (match(s, re)) { r=substr(s,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",r); v=r+0; s=substr(s,RSTART+RLENGTH) }
+      return v }
+    { l=$0; ln=NR
+      if (index(l,"compact_boundary") && l ~ /"type"[ \t]*:[ \t]*"system"/ && l ~ /"subtype"[ \t]*:[ \t]*"compact_boundary"/) cln=ln
+      if (index(l,"cache_read_input_tokens") && l ~ /"type"[ \t]*:[ \t]*"assistant"/) { n++; ring[n%64]=l; rln[n%64]=ln } }
+    END { for (k=n; k>0 && k>n-64; k--) { l=ring[k%64]
+            t=lastnum(l,"input_tokens")+lastnum(l,"cache_creation_input_tokens")+lastnum(l,"cache_read_input_tokens")
+            if (t>0) { tot=t; uln=rln[k%64]; break } }
+          printf "%d %d %d\n", tot+0, uln+0, cln+0 }' 2>/dev/null
+}
+stc_ctx_read() {
+  local _tp="$1" _size _w _t _u _c
+  STC_CTX_TOT=0; STC_CTX_ULN=0; STC_CTX_CLN=0
+  [ -n "$_tp" ] && [ -r "$_tp" ] || return 1
+  _size=$(/usr/bin/wc -c < "$_tp" 2>/dev/null | tr -d ' ')
+  for _w in 262144 8388608 0; do
+    if [ "$_w" -gt 0 ] && [ "${_size:-0}" -le "$_w" ]; then _w=0; fi
+    read -r _t _u _c <<<"$(_stc_ctx_window "$_tp" "$_w")"
+    case "$_t$_u$_c" in ''|*[!0-9]*) _t=0; _u=0; _c=0 ;; esac
+    STC_CTX_TOT=$_t; STC_CTX_ULN=$_u; STC_CTX_CLN=$_c
+    [ "$_w" = 0 ] && break
+    { [ "$_t" -gt 0 ] || [ "$_c" -gt 0 ]; } && break
+  done
+  return 0
+}

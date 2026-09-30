@@ -295,7 +295,9 @@ handover; the state file is the note on the desk.
 
 **The doorman** (shipped here as part of the opt-in multi-chat group; see INSTALL.md). The floor can be enforced rather than hoped for: a hook that runs when a
 turn ends reads the chat's context use and, at or over the role's floor, writes a "retired"
-marker that makes every later message to that chat bounce to the next holder's inbox. The
+marker that makes that chat's next message be held (saved, and refused once) and passed on to
+the next chat of the same role, which receives it at its first message; only that first message is
+held, the one after it goes through. The
 same hook refuses to let a turn end unless the state file was updated during that turn — it
 compares against a snapshot taken when the turn started — so the state file is always current
 when the doorman closes the door. The doorman itself holds a typed message only at the

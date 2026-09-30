@@ -68,8 +68,8 @@ hook and is registered nowhere, but a guard that cannot find it REFUSES, so it m
 with them.
 
 The opt-in multi-chat coordination group (below) needs `python3` for its provenance pair
-only; `doorman.sh` and `stop-state-check.sh` in that same group don't, and stay registered
-even without it.
+and `jq` for `doorman.sh`; `stop-state-check.sh` needs neither, and stays registered
+even without them.
 
 ---
 
@@ -416,13 +416,18 @@ need `python3` — inert without it:
 ```
 
 `doorman.sh` goes under `UserPromptSubmit` and, a second time, under `SessionStart`;
-`stop-state-check.sh` goes under `"Stop"`. Neither needs `python3` or `jq`. Both carry
+`stop-state-check.sh` goes under `"Stop"`. Neither needs `python3`. The doorman needs `jq`
+(it reads the typed prompt with it), so the installer registers it only when `jq` is present
+and says so when it skips it; `stop-state-check.sh` does not need `jq`. Both carry
 `"timeout": 10`.
 
 - The doorman holds a message only when the chat's context is at or over the role's cut-off
   in `state-check.conf` (the number in thousands of tokens; it is the same number that
   marks a chat as retired). It saves the message and refuses it once, telling you not to
-  retype it: the next message you type goes through and carries the held one. There is
+  retype it: the next message you type goes through and carries the held one. If you open a
+  fresh chat of the same role instead (in its own worktree folder is fine), that chat receives
+  the held message once the old one is retired, and the copy in the inbox is marked
+  delivered; while the old chat is only full, the new one is told a message is waiting. There is
   no "idle" trigger and no "wake anyway" word any more, and a message whose context
   size is unknown (after a compaction, or a transcript it cannot read) is never held. On
   `SessionStart` it prints a one-line notice after a compaction. A compaction is when Claude
@@ -436,7 +441,13 @@ need `python3` — inert without it:
   The threshold and the list of roles are lines in `state-check.conf` (`WRAPUP_K`,
   `WRAPUP_ROLES`); the defaults are labelled as examples there. It also leaves a one-line
   nudge for the next message when a turn grew the context a lot without any helper agent
-  being launched (`TELL_GROWTH_K`).
+  being launched (`TELL_GROWTH_K`). The rule that trips most often: a turn that changed a
+  tracked file must change the wording of the state file's FIRST `**Current task:**` or
+  `**Next step:**` line (notes added elsewhere in the file do not count). The check judges the
+  repo the turn started in; if the turn ended in a different one (a `cd`) it skips and leaves
+  a notice. The provenance pair credits an `Edit` or `MultiEdit` to a session only when the
+  file holds exactly what that edit would produce; a `Write` or a `Bash` edit is credited
+  whole, so another session's change landing during one of those is not caught.
 - **An unattended run** (an overnight run nobody is watching) skips the wrap-up while a file
   holds an end time in the future. Nothing here writes that file; you set it by hand, for
   example for eight hours:

@@ -25,6 +25,12 @@ Modes (hook JSON on stdin for pre/post):
           command text. A changed file the tool could not have written is a FOREIGN
           change: any chain this session holds on it is marked dirty. A file absent before
           and present after is a creation, credited by the same rule.
+          For Edit/MultiEdit the pre hook also works out what the file would hold after THIS call's own
+          old->new substitution; if the real content differs (another session's change landed between
+          pre and post, for instance while a permission prompt waited) the edit is NOT credited and the
+          chain is marked dirty, so a commit of it is refused as dirty-at-start. LIMIT: a Write, or a
+          Bash command that edits a channel file, has no such expected content and is still credited
+          whole; another session's change landing inside THAT window is not caught.
   check <repo> <session_id> <path>...  — for each channel path: OK, or REFUSE with a
           reason: no-record (this session never wrote it, or wrote it before a commit),
           dirty-at-start (the file already held uncommitted changes before this session's
@@ -196,7 +202,33 @@ def read_hook_input():
         "tool": d.get("tool_name") or "",
         "file_path": ti.get("file_path") or "",
         "command": ti.get("command") or "",
+        "input": ti if isinstance(ti, dict) else {},
     }
+
+
+def expected_after_edit(tool, ti, path):
+    """The blob id the file would have if THIS tool call's own edit were applied to the content it holds
+    now (Edit: old_string -> new_string, once or everywhere; MultiEdit: its edits in order); None when
+    that cannot be worked out (not an Edit/MultiEdit, unreadable file, an old_string that is absent —
+    the tool then fails and nothing changes). mode_post compares the real result with it."""
+    if tool == "Edit":
+        edits = [ti]
+    elif tool == "MultiEdit":
+        edits = ti.get("edits") or []
+    else:
+        return None
+    try:
+        with open(path, "rb") as f:
+            text = f.read().decode("utf-8")
+        for e in edits:
+            old, new = e.get("old_string"), e.get("new_string")
+            if not isinstance(old, str) or not isinstance(new, str) or old not in text:
+                return None
+            text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+    except Exception:
+        return None
+    data = text.encode("utf-8")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def mode_pre():
@@ -218,6 +250,10 @@ def mode_pre():
         snap[p] = {"wt": blob_hash(p), "head": heads.get(p)}
     st["snap"] = snap
     st["snap_meta"] = {"tool": hi["tool"], "file_path": hi["file_path"], "command": hi["command"], "root": root}
+    if hi["tool"] in ("Edit", "MultiEdit") and hi["file_path"]:
+        fp = canon(hi["file_path"] if os.path.isabs(hi["file_path"]) else os.path.join(root, hi["file_path"]))
+        if is_channel(root, fp, patterns):
+            st["snap_meta"]["expected"] = {"path": fp, "wt": expected_after_edit(hi["tool"], hi["input"], fp)}
     save(hi["sid"], st)
 
 
@@ -276,7 +312,17 @@ def mode_post():
         if not changed:
             continue
         mine = could_have_written(meta, root, p)
-        if mine:
+        exp = meta.get("expected") or {}
+        if mine and exp.get("wt") and exp.get("path") == p and exp["wt"] != now:
+            # This call's own edit does not explain the content: another session's change landed between
+            # the pre and post snapshots (a permission prompt is enough time). Never credit it to this
+            # session; the chain is marked dirty ("uncertain") and a later commit of it is refused.
+            if chain is None:
+                chains[p] = {"head": headnow, "dirty_at_start": True, "first_before": pre_wt, "last_after": now}
+            else:
+                chain["dirty_at_start"] = True
+                chain["last_after"] = now
+        elif mine:
             if chain is None:
                 chains[p] = {"head": headnow,
                              "dirty_at_start": bool(pre) and (pre.get("wt") != pre.get("head")),

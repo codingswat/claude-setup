@@ -571,7 +571,7 @@ say "    - channel-provenance-pre.sh / -post.sh: record, per session, which line
 say "      shared file (NOTES, a plan, a changelog) THIS session wrote, so a later commit"
 say "      can't accidentally sweep in another session's uncommitted change. Needs python3"
 say "      — inert without it."
-say "    - doorman.sh: bounces a new prompt to a session already marked retired, or past"
+say "    - doorman.sh (needs jq): bounces a new prompt to a session already marked retired, or past"
 say "      the context cut-off, saving the message for the next session instead of losing"
 say "      it. Also runs at session start, to note a compaction."
 say "    - stop-state-check.sh: marks a session retired past a configured context floor,"
@@ -582,11 +582,17 @@ say "  hooks/state-check.conf.example) — none of it exists yet, so all four st
 say "  until you write it by hand. Nothing here talks to the network."
 if ask "Register the multi-chat coordination hooks?" "n"; then
   DOORMAN_CMD='/bin/bash "$HOME/.claude/hooks/doorman.sh"'
-  res=$(register_hook "UserPromptSubmit" "$DOORMAN_CMD" "10" "" )
-  report_hook_result "$res" "the UserPromptSubmit hook (doorman.sh)"
-  # Also on SessionStart: after a compaction it prints the "context unknown" notice there.
-  res=$(register_hook "SessionStart" "$DOORMAN_CMD" "10" "" )
-  report_hook_result "$res" "the SessionStart hook (doorman.sh)"
+  # The doorman reads the typed prompt with jq; without it the hook would do nothing at all, silently.
+  if have jq; then
+    res=$(register_hook "UserPromptSubmit" "$DOORMAN_CMD" "10" "" )
+    report_hook_result "$res" "the UserPromptSubmit hook (doorman.sh)"
+    # Also on SessionStart: after a compaction it prints the "context unknown" notice there.
+    res=$(register_hook "SessionStart" "$DOORMAN_CMD" "10" "" )
+    report_hook_result "$res" "the SessionStart hook (doorman.sh)"
+  else
+    warn "jq not found — skipping doorman.sh (it reads the typed prompt with jq and is inert"
+    say  "     without it). Install jq, then run this again. stop-state-check.sh is still on."
+  fi
 
   STATECHK_CMD='/bin/bash "$HOME/.claude/hooks/stop-state-check.sh"'
   res=$(register_hook "Stop" "$STATECHK_CMD" "10" "")

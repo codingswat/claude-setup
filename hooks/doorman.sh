@@ -19,9 +19,16 @@
 # the text is printed. From then on every typed prompt of that session passes (the
 # open marker is read first, so a RETIRED chat is never locked out) and is told to wrap up. A body
 # of 12 characters or fewer (a one-letter pick) is delivered with a line telling the chat to
-# confirm it before acting. A fresh chat in the SAME folder receives another chat's held text only
-# once that other chat is retired (live marker), once (the same rename). The compaction rule and the
-# marker file names are the shared contract with clock-in-context.sh, which reads open/<session>.
+# confirm it before acting. A fresh chat of the same ROLE (its folder name and the conf's aliases, not
+# necessarily the same folder: each seat has its own worktree) receives another chat's held text only
+# once that other chat is retired (live marker), once (the same rename), and the inbox copy is then
+# marked DELIVERED (session and time) so a later holder does not act on it twice. While the held chat is
+# only full (not yet retired) a fresh chat of that role is told once, at its first typed prompt, that a
+# held message is waiting. The compaction rule and the marker file names are the shared contract with
+# clock-in-context.sh, which reads open/<session>.
+# NEEDS jq to read the typed prompt (the installer registers this hook only when jq is present); without
+# it the hook still writes the turn snapshot, then does nothing and says so on stderr.
+# PRIVACY: every file written here is created private (umask 077: files 600, folders 700).
 # COMPACTION. A compact boundary in the transcript AFTER its newest usage line means the context
 # size is unknown: nothing is held that turn, and the chat is told it was compacted (with the
 # wrap-up words when its role is in WRAPUP_ROLES). A later compaction than the count recorded in
@@ -36,15 +43,17 @@
 # $STATE/crons/<session> that stop-state-check.sh writes (an exact-match lookup, needs jq).
 #
 # It also writes, at every prompt, what hooks/stop-state-check.sh reads at the end of the turn:
-#   - the TURN SNAPSHOT $STATE/turnsnap/<key>, one line of four tab-separated fields — HEAD,
+#   - the TURN SNAPSHOT $STATE/turnsnap/<key>, one line of five tab-separated fields — HEAD,
 #     the state file's hash, a hash of `git diff HEAD` (the content of every tracked change),
-#     and a hash of the state file's two first marker lines ("none" for what is absent) — so
+#     a hash of the state file's two first marker lines ("none" for what is absent), and the repo's
+#     top-level folder (so the end-of-turn check judges THAT repo, never one the turn cd'd into) — so
 #     that hook can tell a turn that CHANGED something (a commit-only turn, a second edit of an
 #     already-dirty file) from a read-only turn in a tree that was already dirty. Hashes come
 #     from git itself (portable: no shasum). Untracked files never enter it. The format is
 #     pinned by the round-trip case in hooks/test-hooks.sh (c2a): stop-state-check.sh compares
 #     against these very fields.
-#   - the context size $STATE/turn-start/<sid> (thousands of tokens, from the newest usage line),
+#   - the context size $STATE/turn-start/<sid> (thousands of tokens, from the newest usage line; read once
+#     with a growing tail window by guard-lib.sh's stc_ctx_read, an all-zero API-error line skipped),
 #     the base the helper tell measures growth from.
 # It also SHOWS the helper tell $STATE/tell/<sid> that stop-state-check.sh left (one line on
 # stdout, which reaches the model), and deletes it — but only on a prompt that PASSES: a held
@@ -81,6 +90,7 @@ role="$STC_ROLE"; top="$STC_TOP"; base="$STC_BASE"
 sf="${STC_STATE_FILE//'{role}'/$role}"
 
 STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
+umask 077   # every file this hook writes holds the person's own words (held text, inbox): private (600, folders 700)
 
 # ---- the shared words, and the SessionStart half of the compaction rule ----
 WRAPUP_WORDS='wrapping up — open a fresh chat for new work.'
@@ -113,7 +123,7 @@ snapkey() {
 }
 if command -v git >/dev/null 2>&1 && git -C "$top" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
    && [ ! -L "$STATE/turnsnap" ] && [ ! -L "$STATE/turnsnap/$(snapkey)" ]; then
-  # Four fields, the format stop-state-check.sh reads (see the header). The same commands run there.
+  # Five fields, the format stop-state-check.sh reads (see the header): the fifth names the repo. The same commands run there.
   _s_head=$(git -C "$top" rev-parse HEAD 2>/dev/null); _s_head="${_s_head:-none}"
   _s_tree=$(git -C "$top" diff --no-ext-diff --no-textconv HEAD 2>/dev/null | git -C "$top" hash-object --stdin 2>/dev/null); _s_tree="${_s_tree:-none}"
   _s_sf=none; _s_mk=none
@@ -122,10 +132,10 @@ if command -v git >/dev/null 2>&1 && git -C "$top" rev-parse --is-inside-work-tr
     _s_mk=$({ /usr/bin/grep -m1 -E '^\*\*Current task:\*\*' "$top/$sf" 2>/dev/null; /usr/bin/grep -m1 -E '^\*\*Next step:\*\*' "$top/$sf" 2>/dev/null; } | git -C "$top" hash-object --stdin 2>/dev/null); _s_mk="${_s_mk:-none}"
   fi
   mkdir -p "$STATE/turnsnap" 2>/dev/null \
-    && printf '%s\t%s\t%s\t%s\n' "$_s_head" "$_s_sf" "$_s_tree" "$_s_mk" > "$STATE/turnsnap/$(snapkey)" 2>/dev/null
+    && printf '%s\t%s\t%s\t%s\t%s\n' "$_s_head" "$_s_sf" "$_s_tree" "$_s_mk" "$top" > "$STATE/turnsnap/$(snapkey)" 2>/dev/null
 fi
 # The helper tell (see the header): read now, shown and deleted only when this prompt PASSES.
-tell_k=""; tell_path=""
+tell_k=""; tell_path=""; waiting_note=""
 case "$sid" in
   ''|*/*|..*) : ;;
   *) tell_path="$STATE/tell/$sid"
@@ -141,6 +151,10 @@ doorman_finish() {
     printf 'helper tell: your last turn grew the context by %sk tokens with no helper launched — long reads, test runs and searches belong to a subagent (a short-lived helper chat that reports back).\n' "$tell_k"
     rm -f "$tell_path" 2>/dev/null
   fi
+  if [ "$rc" = 0 ] && [ -n "$waiting_note" ]; then
+    printf '%s\n' "$waiting_note"
+    [ ! -L "$STATE/told" ] && mkdir -p "$STATE/told" 2>/dev/null && [ ! -L "$STATE/told/$safe_sid" ] && : > "$STATE/told/$safe_sid" 2>/dev/null
+  fi
   exit "$rc"
 }
 trap doorman_finish EXIT
@@ -155,6 +169,9 @@ marker_live() {
 }
 # ---- the machine-prompt test ----
 # The one classifier (clock-in-context.sh --classify-prompt), then the cron registry.
+if [ -z "$prompt" ] && ! command -v jq >/dev/null 2>&1; then
+  echo "doorman: jq is not installed — this hook cannot read the typed prompt and does nothing (install jq)." >&2
+fi
 [ -n "$prompt" ] || exit 0                       # nothing typed (or no jq to read it): nothing to hold or carry
 machine=0
 _cls="$(dirname "$0")/clock-in-context.sh"
@@ -176,23 +193,18 @@ if [ "$machine" = 0 ] && [ -n "$safe_sid" ] && [ -f "$STATE/crons/$safe_sid" ] &
   if [ -n "$_json" ] && grep -qxF -- "$_json" "$STATE/crons/$safe_sid" 2>/dev/null; then machine=1; fi
 fi
 
-# ---- the context: the WHOLE transcript, newest usage line first, all-zero lines skipped ----
-# One awk pass keeps the last line whose input + cache-creation + cache-read tokens add up to more
-# than zero (an API-error line with every counter 0 is not a measurement). No `tail -r`, no size window.
+# ---- the context: one windowed read (guard-lib.sh's stc_ctx_read), all-zero usage lines skipped ----
+# The newest non-zero usage line and the newest compact boundary come from ONE read of the transcript's
+# end (256 KB, widened to 8 MB, then the whole file, only until they are found): a long chat costs
+# milliseconds per prompt, not seconds. An API-error line with every counter 0 is not a measurement.
 ctx_k=""; compact_after=0
 if [ -n "$tp" ] && [ -r "$tp" ]; then
-  _tot=$(/usr/bin/grep -E '"type"[[:space:]]*:[[:space:]]*"assistant"' "$tp" 2>/dev/null | /usr/bin/grep 'cache_read_input_tokens' | awk '
-    function lastnum(s, f,   re, v, r) { re = "\"" f "\"[ \t]*:[ \t]*[0-9]+"; v = 0
-      while (match(s, re)) { r = substr(s, RSTART, RLENGTH); sub(/.*:[ \t]*/, "", r); v = r + 0; s = substr(s, RSTART + RLENGTH) }
-      return v }
-    { t = lastnum($0, "input_tokens") + lastnum($0, "cache_creation_input_tokens") + lastnum($0, "cache_read_input_tokens"); if (t > 0) sum = t }
-    END { if (sum > 0) printf "%d", sum }')
-  case "$_tot" in ''|*[!0-9]*) : ;; *) ctx_k=$(( (_tot + 500) / 1000 )) ;; esac
-  # A compact boundary after the newest usage line = the size above is stale: unknown.
-  _last_usage_ln=$(/usr/bin/grep -nE '"type"[[:space:]]*:[[:space:]]*"assistant"' "$tp" 2>/dev/null | /usr/bin/grep 'cache_read_input_tokens' | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
-  _last_compact_ln=$(/usr/bin/grep -nE '"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' "$tp" 2>/dev/null | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
-  if [ -n "$_last_compact_ln" ] && { [ -z "$_last_usage_ln" ] || [ "$_last_compact_ln" -gt "$_last_usage_ln" ]; }; then
-    compact_after=1; ctx_k=""
+  stc_ctx_read "$tp"
+  # A compact boundary after the newest usage line = the size is stale: unknown.
+  if [ "$STC_CTX_CLN" -gt "$STC_CTX_ULN" ]; then
+    compact_after=1
+  elif [ "$STC_CTX_TOT" -gt 0 ]; then
+    ctx_k=$(( (STC_CTX_TOT + 500) / 1000 ))
   fi
   # The size this turn starts from, for the helper tell (never through a symlink).
   if [ -n "$ctx_k" ] && [ -n "$safe_sid" ] && [ ! -L "$STATE/turn-start" ] && [ ! -L "$STATE/turn-start/$safe_sid" ]; then
@@ -224,6 +236,13 @@ show_held() {  # $1 = label ("" or "held for the previous chat")
     printf 'This is a short pick ("%s") — confirm this answer with the owner before acting on it.\n' "$_t"
   fi
 }
+# mark_delivered ROLE HELD-SESSION — say under the inbox copy that its text was delivered (to this session,
+# now), so a later holder who reads the inbox does not act on it a second time. Never through a symlink.
+mark_delivered() {
+  [ -f "$STATE/inbox/$1.md" ] && [ ! -L "$STATE/inbox" ] && [ ! -L "$STATE/inbox/$1.md" ] || return 0
+  printf '\n## %s — DELIVERED: the message held for session %s was delivered to session %s (folder %s) — do not act on it again\n' \
+    "$(date '+%Y-%m-%d %H:%M')" "$2" "${sid:-?}" "$top" >> "$STATE/inbox/$1.md" 2>/dev/null
+}
 WRAP_NOTE='This chat is past its context cut-off — wrap up the task in hand and hand over to a fresh chat.'
 
 # ---- 1. THE PASS: this session has text held for it ----
@@ -233,6 +252,7 @@ if [ -n "$safe_sid" ] && [ -f "$STATE/held/$safe_sid" ] && [ ! -L "$STATE/held/$
   # leaves the marker, so the chat is never held twice and the text sits in delivered/.
   [ ! -L "$STATE/open" ] && mkdir -p "$STATE/open" 2>/dev/null && [ ! -L "$STATE/open/$safe_sid" ] && : > "$STATE/open/$safe_sid" 2>/dev/null
   if claim_held "$STATE/held/$safe_sid" "$safe_sid"; then
+    mark_delivered "$role" "$safe_sid"
     show_held ""
     printf '%s\n' "$WRAP_NOTE"
   fi
@@ -243,21 +263,31 @@ if [ -n "$safe_sid" ] && [ -f "$STATE/open/$safe_sid" ] && [ ! -L "$STATE/open/$
   printf '%s\n' "$WRAP_NOTE"
   exit 0
 fi
-# ---- 3. a fresh chat in the same folder receives a RETIRED chat's held text, once ----
+# ---- 3. a fresh chat of the same ROLE receives a RETIRED chat's held text, once ----
+# Same role, not same folder: each seat works in its own worktree, so the next holder is in another folder.
+# The held chat's role is read from its folder by the conf (state_conf_read, in a subshell so this chat's own
+# settings are untouched; works after the folder is gone). A chat that is only FULL (not retired yet) keeps its
+# text: the fresh chat of that role is told once, at its first typed prompt, that a held message is waiting.
 if [ -n "$safe_sid" ] && [ -d "$STATE/held" ] && [ ! -L "$STATE/held" ]; then
   for _hf in "$STATE/held"/*; do
     [ -f "$_hf" ] && [ ! -L "$_hf" ] || continue
     _osid="${_hf##*/}"
     [ "$_osid" = "$safe_sid" ] && continue
-    marker_live "$_osid" || continue
-    [ "$(sed -n '2p' "$_hf" 2>/dev/null)" = "$top" ] || continue
-    if claim_held "$_hf" "$_osid"; then show_held "held for the previous chat"; exit 0; fi
+    _htop=$(sed -n '2p' "$_hf" 2>/dev/null); _hrole=""
+    if [ "$_htop" = "$top" ]; then _hrole="$role"
+    elif [ -n "$_htop" ]; then _hrole=$( ( state_conf_read "$_htop" "$CONF" && printf '%s' "$STC_ROLE" ) 2>/dev/null ); fi
+    [ -n "$_hrole" ] && [ "$_hrole" = "$role" ] || continue
+    if marker_live "$_osid"; then
+      if claim_held "$_hf" "$_osid"; then mark_delivered "$_hrole" "$_osid"; show_held "held for the previous chat"; exit 0; fi
+    elif [ ! -e "$STATE/told/$safe_sid" ] && [ ! -L "$STATE/told/$safe_sid" ]; then
+      waiting_note="A message held for another $role chat (session $_osid, held at $(sed -n '1p' "$_hf" 2>/dev/null)) is waiting: it is saved in $STATE/inbox/$_hrole.md and will be delivered when that chat is retired. Tell the owner."
+    fi
   done
 fi
 
 # ---- 4. compaction: a later compaction than the retirement's clears the marker; unknown context never holds ----
 if [ -n "$safe_sid" ] && marker_live "$safe_sid" && [ -n "$tp" ] && [ -r "$tp" ]; then
-  _now=$(/usr/bin/grep -cE '"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' "$tp" 2>/dev/null); _now="${_now:-0}"
+  _now=$(/usr/bin/grep -F compact_boundary "$tp" 2>/dev/null | /usr/bin/grep -cE '"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' 2>/dev/null); _now="${_now:-0}"
   _then=$(head -1 "$STATE/retired-compacts/$safe_sid" 2>/dev/null); case "$_then" in ''|*[!0-9]*) _then=0 ;; esac
   if [ "$_now" -gt "$_then" ] 2>/dev/null; then rm -f "$STATE/retired/$safe_sid" "$STATE/retired-compacts/$safe_sid" 2>/dev/null; fi
 fi
