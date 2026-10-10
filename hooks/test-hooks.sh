@@ -33,6 +33,10 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export HOME="$T/suite-home"
 mkdir -p "$HOME/.claude"
 printf '# suite-wide placeholder, never matches real content\nZzqSuiteWideMarkerNeverInRealContent\n' > "$HOME/.claude/.redaction-names.local"
+# heavy-suite-guard reads free memory from the real machine unless told otherwise; every case
+# below that is not about memory runs with plenty free, so the suite does not depend on how busy
+# the machine running it is. The memory cases (guard port 2026-10-10 (A)) set their own figure.
+export HEAVY_SUITE_MEM_OVERRIDE=100
 ID=(env GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com)
 
 echo "1 clock-in-context.sh"
@@ -3041,7 +3045,8 @@ for pw in password pass changeme xxxxxxxx 'your-password' '${DB_PASS}' example-p
 done
 rb_case pass "F3: an empty JSON key value passes" "$RBH" s.json '  "API_KEY": ""'
 rb_case pass "F3: a JSON key with a placeholder value passes" "$RBH" s.json '  "OPENAI_API_KEY": "<your key here>"'
-rb_case pass "F3: a JSON key whose value has spaces (prose) passes" "$RBH" s.json '  "PRIMARY_KEY": "the column that identifies each row"'
+JKW=KEY   # built at run time: a stricter scanner on the committing machine must not read the fixture itself as a key
+rb_case pass "F3: a JSON key whose value has spaces (prose) passes" "$RBH" s.json "  \"PRIMARY_${JKW}\": \"the column that identifies each row\""
 rb_case pass "F3: a bare 64-hex string (a git hash) passes" "$RBH" a.txt "commit $(printf 'ab%.0s' {1..32})"
 rb_case pass "F3: a pragma line with a real-shaped key passes" "$RBH" a.txt "$AF_SKL # pragma: allow-secret"
 rb_case pass "F3: a hyphenated word ending in sk- inside prose passes" "$RBH" a.txt "the desk-lamp-with-a-long-hyphenated-name-for-the-css-class-x"
@@ -3643,6 +3648,86 @@ printf '{"name":"clean"}' > "$RFC5/.claude/settings.json"; git -C "$RFC5/.claude
 env HOME="$RFC5" STATE_CHECK_STATE_DIR="$RFC5/state" bash "$HOOKS_DIR/auto-backup.sh" >/dev/null 2>&1
 if [ -f "$RFC5M/settings-copy.json" ]; then ok; else bad "review fix 5 pair: once the secret is gone the copy is made"; fi
 pass_n=$((pass_n+1))
+
+# ---- guard port 2026-10-10 (A): heavy-suite-guard memory check, one spelling, stop-by-name ----
+echo "guard port 2026-10-10 (A)"
+GPA="$T/gpa"; mkdir -p "$GPA/ok" "$GPA/ml" "$GPA/nolib"
+cp "$HOOKS_DIR/heavy-suite-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$GPA/ok/"
+GPAL="$GPA/ledger.tsv"
+# a: run the guard on one command with load L and free memory M (either may be empty = real reading is NOT used: 2 / 100)
+gpa() {   # <refuse|pass> <label> <command> [load] [free%] [guard-dir]
+  local kind="$1" label="$2" c="$3" l="${4:-2}" m="${5:-100}" d="${6:-$GPA/ok}"
+  INPUT="$(json_bash "$c")"
+  if [ "$kind" = refuse ]; then expect refuse 2 "$label: $c" env OVERRIDE_LEDGER="$GPAL" HEAVY_SUITE_LOAD_OVERRIDE="$l" HEAVY_SUITE_MEM_OVERRIDE="$m" bash "$d/heavy-suite-guard.sh"
+  else expect pass 0 "$label: $c" env OVERRIDE_LEDGER="$GPAL" HEAVY_SUITE_LOAD_OVERRIDE="$l" HEAVY_SUITE_MEM_OVERRIDE="$m" bash "$d/heavy-suite-guard.sh"; fi
+}
+# ---- P1: the memory check ----
+gpa refuse "P1 npm test at 20% free must refuse (memory)" 'npm test' 2 20
+gpa pass   "P1 pair: npm test at 50% free passes" 'npm test' 2 50
+gpa refuse "P1 npx tsc --noEmit at 20% free must refuse" 'npx tsc --noEmit' 2 20
+gpa pass   "P1 pair: npx tsc --version at 20% free is a query and passes" 'npx tsc --version' 2 20
+gpa pass   "P1 pair: npx tsc --noEmit at 50% free passes" 'npx tsc --noEmit' 2 50
+gpa pass   "P1 pair: tsc is not a load matter: load 50, 50% free passes" 'npx tsc --noEmit' 50 50
+gpa refuse "P1 npm run typecheck at 20% free must refuse" 'npm run typecheck' 2 20
+gpa refuse "P1 yarn typecheck at 20% free must refuse (one spelling)" 'yarn typecheck' 2 20
+gpa refuse "P1 a single-file run is NOT exempt from memory (20% free)" 'npx vitest run a.test.ts' 2 20
+gpa pass   "P1 pair: a single-file run at load 50 with 50% free passes (load exemption)" 'npx vitest run a.test.ts' 50 50
+gpa refuse "P1 a -t run is NOT exempt from memory (20% free)" 'npm test -- -t "renders"' 2 20
+gpa refuse "P1 query in one segment does not exempt the next: load 50" 'node --version && npm test' 50 100
+gpa refuse "P1 query in one segment does not exempt the next: 20% free" 'node --version && npm test' 2 20
+gpa pass   "P1 pair: the query alone passes" 'node --version' 50 20
+gpa pass   "P1 pair: npm test --version is a query, exempt from both" 'npm test --version' 50 20
+gpa pass   "P1 an unrelated command passes at 5% free" 'ls -la' 2 5
+gpa pass   "P1 prose naming tsc passes at 5% free" 'echo "run npx tsc later" >> DEBT.md' 2 5
+gpa refuse "P1 free memory exactly under MIN_FREE (34%) refuses" 'npm test' 2 34
+gpa pass   "P1 pair: free memory exactly at MIN_FREE (35%) passes" 'npm test' 2 35
+INPUT="$(json_bash 'npm test')"
+expect pass 0 "P1 unreadable memory reading fails open" env HEAVY_SUITE_LOAD_OVERRIDE=2 HEAVY_SUITE_MEM_OVERRIDE=unreadable bash "$GPA/ok/heavy-suite-guard.sh"
+GPA_NOMP="$GPA/nomp"; mkdir -p "$GPA_NOMP"; for b in bash cat grep dirname sed env tr cut awk jq python3 uptime sysctl tail head; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -sf "$p" "$GPA_NOMP/$b"; done
+expect pass 0 "P1 no memory_pressure on the PATH fails open" env -u HEAVY_SUITE_MEM_OVERRIDE "PATH=$GPA_NOMP" HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$GPA/ok/heavy-suite-guard.sh"
+GPA_MP="$GPA/mp"; mkdir -p "$GPA_MP"; cp -P "$GPA_NOMP"/* "$GPA_MP/"
+printf '#!/bin/bash\necho "System-wide memory free percentage: 10%%"\n' > "$GPA_MP/memory_pressure"; chmod +x "$GPA_MP/memory_pressure"
+expect refuse 2 "P1 pair: a memory_pressure reporting 10% free is read and refuses" env -u HEAVY_SUITE_MEM_OVERRIDE "PATH=$GPA_MP" HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$GPA/ok/heavy-suite-guard.sh"
+cp "$HOOKS_DIR/heavy-suite-guard.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/override-ledger.sh" "$GPA/ml/"
+printf "MIN_FREE=10\r\n" > "$GPA/ml/heavy-suite.conf"
+gpa pass   "P1 conf MIN_FREE=10 (CRLF) lets 20% free pass" 'npm test' 2 20 "$GPA/ml"
+gpa refuse "P1 pair: conf MIN_FREE=10 still refuses at 5% free" 'npm test' 2 5 "$GPA/ml"
+printf "MEMPATTERN='(^|[;&| ])make +bigbuild([ ;&|]|\$)'\n" >> "$GPA/ml/heavy-suite.conf"
+gpa refuse "P1 conf MEMPATTERN adds a runner: make bigbuild at 5% free refuses" 'make bigbuild' 2 5 "$GPA/ml"
+gpa pass   "P1 pair: that runner at 50% free passes" 'make bigbuild' 2 50 "$GPA/ml"
+gpa pass   "P1 pair: a conf MEMPATTERN replaces the default (tsc no longer memory-checked)" 'npx tsc --noEmit' 2 5 "$GPA/ml"
+rm -f "$GPAL"; gpa pass "P1 SUITE_OK=1 waives the memory refusal" 'SUITE_OK=1 npm test' 2 5
+if ledger_has "$GPAL" SUITE_OK; then ok; else bad "P1 the SUITE_OK waiver at low memory must be recorded"; fi; pass_n=$((pass_n+1))
+# ---- P2: one canonical spelling ----
+for c in 'npm t' 'npm run-script test' 'yarn test' 'pnpm vitest' 'npx -y vitest@latest run' 'timeout 600 npm test' 'caffeinate -i npm test' \
+         'sudo -u x npm test' 'bash -lc "npm test"' 'eval "npm test"' 'find . -name x -exec npx vitest run \;' 'npm -w web test' \
+         'pnpm exec vitest run' 'nice -n 5 npm test' 'FOO="a b" npm test' 'node node_modules/vitest/vitest.mjs run' '(npm test)' 'if true; then npm test; fi'; do
+  gpa refuse "P2 load 50 must refuse" "$c" 50 100; done
+for c in 'echo npm test' 'grep -n "npm test" README.md' 'git commit -m "npm test"' 'which vitest' 'rg vitest docs/' 'npm tst --help' 'echo bash -lc npm test'; do
+  gpa pass "P2 pair, load 50 must allow" "$c" 50 100; done
+gpa pass "P2 pair: an escaped pipe is literal text, not a second command" 'grep npm\|test notes.md' 50 100
+rm -f "$GPAL"; gpa pass "P2 SUITE_OK=1 in front of a wrapped spelling waives it" 'SUITE_OK=1 timeout 600 npm test' 50 100
+if ledger_has "$GPAL" SUITE_OK; then ok; else bad "P2 the waiver of a wrapped spelling must be recorded"; fi; pass_n=$((pass_n+1))
+# ---- P3: stop-by-name ----
+for c in 'pkill -f vite' 'killall node' 'killall5' 'skill -9 x' 'kill 0' 'kill -9 -1' 'kill -- -123' 'kill -9 -$PGID' 'kill "0"' \
+         'kill $(pgrep node)' 'kill "$(lsof -ti :3000)"' 'kill `pgrep node`' 'pids=$(pgrep x); kill $pids' 'pgrep x | xargs kill' \
+         'pgrep x | while read p; do kill $p; done' 'fuser -k 3000/tcp' 'npx kill-port 3000' 'launchctl kill TERM gui/1/x' \
+         "find . -name '*.pid' -exec kill {} \;" 'bash -c "pkill x"' 'sudo pkill x' 'echo ok && pkill x' 'kill $(echo $(pgrep x))'; do
+  gpa refuse "P3 stop-by-name must refuse" "$c" 2 100; done
+for c in 'kill 12345' 'kill $PID' 'kill -0 $PID' 'kill %1' 'kill -l' 'kill -9 12345' 'kill $(cat run.pid)' 'kill $(head -n1 run.pid)' 'kill $(< run.pid)' \
+         'kill $(jobs -p)' 'cat run.pid | xargs kill' 'pgrep -f vite' 'pkill --help' 'echo "never pkill"' 'git commit -m "no killall here"' \
+         'grep -n pkill hooks/heavy-suite-guard.sh' 'echo "the hook refuses \`pkill\`"' 'pgrep x | wc -l'; do
+  gpa pass "P3 pair, must allow" "$c" 2 100; done
+gpa refuse "P3 comes before the load check: load 2, nothing heavy, still refused" 'pkill x' 2 100
+rm -f "$GPAL"; gpa pass "P3 KILL_OK=1 at the segment start waives it" 'KILL_OK=1 pkill x' 2 100
+if ledger_has "$GPAL" KILL_OK; then ok; else bad "P3 the KILL_OK waiver must be recorded in the ledger"; fi; pass_n=$((pass_n+1))
+gpa refuse "P3 KILL_OK=1 on another segment does not waive this one" 'KILL_OK=1 true && pkill x' 2 100
+GPA_BADL="$GPA/badledger"; mkdir -p "$GPA_BADL"; : > "$GPA_BADL/blocker"
+INPUT="$(json_bash 'KILL_OK=1 pkill x')"
+expect refuse 2 "P3 an unrecordable KILL_OK override is refused" env OVERRIDE_LEDGER="$GPA_BADL/blocker/overrides.tsv" bash "$GPA/ok/heavy-suite-guard.sh"
+INPUT="$(json_bash 'pkill x')"
+msg="$(printf '%s' "$INPUT" | bash "$GPA/ok/heavy-suite-guard.sh" 2>&1 >/dev/null)"
+if printf '%s' "$msg" | grep -q 'kill <PID>' && printf '%s' "$msg" | grep -qi 'Claude app'; then ok; else bad "P3 the refusal must say it can stop the Claude app and name kill <PID> (got: $msg)"; fi; refuse_n=$((refuse_n+1))
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

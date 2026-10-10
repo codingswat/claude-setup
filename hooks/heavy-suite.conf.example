@@ -16,3 +16,19 @@
 # the runner reached by path (node_modules/.bin/vitest run) and `npm --prefix <dir> test`.
 PATTERN='(^|[;&| ])(npm|yarn|pnpm) +(test|run +(test(:[A-Za-z0-9_.:-]+)?|e2e))([ ;&|]|$)|(^|[;&| ])(npx +)?(vitest +run|playwright +test)([ ;&|]|$)'
 MAX_LOAD=10
+#
+# MIN_FREE is the least FREE MEMORY, in percent, a test-like command may start at (read from macOS
+# `memory_pressure`; where that command is missing or unreadable the check passes). The guard
+# refuses below it, and says wait. The default is 35. A single-file or -t run is exempt from the
+# load check but NOT from this one; only --version/--list/--help is exempt from both.
+MIN_FREE=35
+# MEMPATTERN is the same kind of regex as PATTERN (matched against the canonical text at the
+# command position), for commands that eat memory but are not "a test suite": they are covered by
+# the memory check only, never by the load check. The default below is the type-check pair; to
+# cover a project runner of your own, add an alternative, e.g. one that matches `make bigbuild`:
+#   MEMPATTERN='(^|[;&| ])(npm|yarn|pnpm) +run +typecheck([ ;&|]|$)|(^|[;&| ])(npx +)?tsc([ ;&|]|$)|(^|[;&| ])make +bigbuild([ ;&|]|$)'
+MEMPATTERN='(^|[;&| ])(npm|yarn|pnpm) +run +typecheck([ ;&|]|$)|(^|[;&| ])(npx +)?tsc([ ;&|]|$)'
+# Not a setting, but worth knowing: the guard also refuses to stop processes by name (pkill,
+# killall, kill 0 / kill -1, kill $(pgrep x), xargs kill, fuser -k, ...) because that can stop the
+# Claude app itself. `kill <PID>` of a process you started is fine. KILL_OK=1 at the start of a
+# command segment overrides it and is recorded in the override ledger.
