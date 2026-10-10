@@ -55,6 +55,7 @@ a starting set rather than a complete one.
 - **npm / pip** — app stores for code packages (JavaScript / Python).
 - **OCR** — software that reads text out of a picture or scan; the only way to get words or numbers out of a page that is just an image, like a photographed receipt.
 - **Package** — ready-made code by other developers that my project pulls in instead of writing from scratch.
+- **Pick page** — a small web page a chat makes when you must choose: each option shown with a button under it; you press one there instead of typing a letter back in chat.
 - **Plugin (Claude Code)** — a bundle of skills and settings you install into Claude Code once and it works in every project; can auto-update itself.
 - **PostgreSQL / SQLite** — database brands; SQLite for small personal tools, PostgreSQL for real users.
 - **PWA** — a website installed to the phone's home screen so it behaves like an app (icon, offline, more storage protection); no app store needed.
@@ -65,6 +66,7 @@ a starting set rather than a complete one.
 - **Server** — a computer somewhere else that's always on, running backends.
 - **Session (Claude Code)** — one conversation, anchored to the folder path where it was started; its working directory, saved history and memory are keyed to that exact path. Moving the folder never harms the repo, but it strands any open session — pause or close sessions before moving folders (global rule 17).
 - **Skill (Claude Code)** — a saved instruction sheet Claude follows for a specific kind of task (like "how to debug" or "how to plan a feature"); triggered by name (/something) or automatically.
+- **Skill part** — a project's own addition to a global skill, kept at `.claude/skill-parts/<skill>.md` in that project; the skill reads it when it runs, and the part wins where it is more specific.
 - **Spec** — a written description of exactly what a feature should do, agreed before any code is written; the contract the code is checked against.
 - **SQL** — the language for asking databases questions ("get all orders over $50"); not a brand.
 - **Subagent** — a helper AI that a Claude chat hires for one task; it works in its own separate memory and reports back, keeping the main chat's memory free for judgement.

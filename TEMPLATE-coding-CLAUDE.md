@@ -13,8 +13,9 @@ skill for that step, which loads only when the step starts. This file holds only
 
 **What it needs:** the three skills it leans on most ship in this repo (`coding-method`,
 `testing-method`, `going-live`). Three steps name skills this repo does not ship (`grilling`,
-`research`, `retro`); [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md) says where each comes
-from. Without one, the chat does that step by hand, as the table describes it.
+`research`, `retro`), and `coding-method` names a few more; [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md)
+says where each comes from. Without one, the chat does that step by hand, as described. The
+map's step numbers are its own; `coding-method`'s sections (§) are numbered separately.
 
 Delete these instructions as you adopt it.
 
@@ -45,8 +46,8 @@ none after it; a one-line fix goes through every step, quickly.
 | 9 | Look back | a phase or a big build has landed | `retro` (what slowed the work or let a mistake through) | findings in chat; rule changes proposed, never made |
 
 Off the path: a problem put off is a parked issue, an idea an idea issue, each with what wakes
-it; a chat ending mid-task hands off (`handing-off-live-work`); after landing, the chat cleans
-up.
+it (on a public repo, a security problem never goes in a public issue); a chat ending mid-task
+hands off (`handing-off-live-work`); after landing, the chat cleans up.
 
 The chat copies these steps into its own to-do list, and a skipped step stays there, marked
 with its reason.

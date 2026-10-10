@@ -192,11 +192,12 @@ from an idea to landed code; Claude Code loads a `CLAUDE.md` from every folder a
 session starts in, so one copy in the projects folder binds every project inside it:
 
 ```bash
-cp -n TEMPLATE-coding-CLAUDE.md "$HOME/projects/CLAUDE.md"
+cp -n TEMPLATE-coding-CLAUDE.md ~/projects/CLAUDE.md   # your folder from step 3
 ```
 
-Then delete its instructions block. `-n` refuses to replace a file that is already there; if
-you have one, paste the map into it instead.
+Use the folder you named in step 3; `~/projects` is only the example. Then delete the
+template's instructions block. `-n` refuses to replace a file that is already there; if you
+have one, paste the map into it instead.
 
 ### 4. Register the SessionStart hook
 
@@ -555,6 +556,30 @@ git config --global --unset core.hooksPath
 ```
 
 ---
+
+## Upgrading from an earlier copy
+
+The installer never replaces a skill folder you already have, so running it again after a
+`git pull` adds the new skills but leaves your older copies of the rest in place. The 10
+October 2026 update changed eleven skills and retired two (`handover`, `ponytail`). To take
+the changed ones, run this from the cloned folder; each old copy moves to a dated backup
+folder first, so nothing is lost:
+
+```bash
+b=~/.claude/.setup-backup-skills-$(date +%Y%m%d-%H%M%S); mkdir -p "$b"
+for s in briefing-subagents summarize shared-tree-commit handing-off-live-work \
+         testing-web-ui-two-sided context-floors rally overnight walkthrough \
+         writing-ui-copy domain-modeling; do
+  if [ -d ~/.claude/skills/$s ]; then mv ~/.claude/skills/$s "$b/"; fi
+  cp -R skills/$s ~/.claude/skills/
+done
+```
+
+Leave out of the list any skill you have edited yourself, and compare it with the new one by
+hand. Stopped halfway, run it again: it finishes the job, and your originals are all in the
+backup folders it made (`~/.claude/.setup-backup-skills-*`). The two retired skills are not removed for you; if you no longer want
+them, move them to the same backup folder (`mv ~/.claude/skills/handover
+~/.claude/skills/ponytail "$b/"`).
 
 ## Checking it worked
 

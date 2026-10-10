@@ -63,5 +63,8 @@ examples of the shape:>
 - `DECISIONS.md` — the decision log. Check it before proposing changes; settled decisions
   are not re-argued without saying so explicitly
 - `CONTEXT.md` — the domain glossary: what this project's words actually mean
+- `.claude/skill-parts/<skill>.md` — this project's additions to a global skill (for example
+  its own test commands for `testing-method`); the skill reads it when it runs, and it wins
+  where it is more specific
 - <Anything gitignored that matters — real customer data, private examples, credentials —
   and the hard rule that it must never be committed.>
