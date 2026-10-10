@@ -32,6 +32,15 @@
 # cut at the first digit, trailing hyphen dropped ("myapp-planner-3" -> "myapp-planner") — and any
 # ROLE_ALIAS line below renames it. Example row:   myapp-*  auto  800
 #
+# SHARED-FOLDER CHATS. Several chats that work in ONE folder cannot be told apart by the folder name. A repo can
+# opt in without any line here: commit `.claude/state-roles.tsv` at its top, one line per role, a pattern, a TAB,
+# then a state file path from the repo top (lines starting with # and blank lines are skipped), for example:
+#   reviewer<TAB>notes/reviewer.md
+# A chat whose title (or, without a title, first message) contains the pattern (any case) is that role. The file
+# applies only when no row above matched the folder AND the multi-chat hooks are registered; such a chat gets the
+# end-of-turn state-file check only (no retirement, wrap-up, hold or helper tell). A path that is absolute or holds
+# ".." is ignored.
+#
 # More optional key lines (each one line, anywhere in the file; all defaults below are
 # illustrative — pick numbers for your own model and habits):
 #   ROLE_ALIAS <folder-role> <role>   read the folder-derived role "<folder-role>" as "<role>"

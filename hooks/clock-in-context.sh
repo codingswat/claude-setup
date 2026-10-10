@@ -146,7 +146,7 @@ cic_ctx_window() {  # $1 = bytes of the file's end to read; 0 = the whole file
             if (t>0) { tot=t; uln=rln[k%64]; break } }
           printf "%d %d %d\n", tot+0, uln+0, cln+0 }' 2>/dev/null
 }
-ctx_k=""; compact_after=0
+ctx_k=""; ctx_tok=""; compact_after=0
 if [ -n "$tp" ] && [ -r "$tp" ]; then
   _size=$(/usr/bin/wc -c < "$tp" 2>/dev/null | tr -d ' ')
   for _w in 262144 8388608 0; do
@@ -159,7 +159,8 @@ if [ -n "$tp" ] && [ -r "$tp" ]; then
   if [ "$_ctx_cln" -gt "$_ctx_uln" ]; then
     compact_after=1
   elif [ "$_ctx_tot" -gt 0 ]; then
-    ctx_k=$(( (_ctx_tot + 500) / 1000 ))
+    ctx_k=$(( (_ctx_tot + 500) / 1000 ))   # the figure shown; the thresholds below compare ctx_tok, the exact tokens
+    ctx_tok=$_ctx_tot
     printf 'Context used: %sk tokens (rough, last step)\n' "$ctx_k"
   fi
 fi
@@ -289,7 +290,7 @@ cic_pending_notices() {
 # minutes: a chat that was working while you were silent has a warm cache.
 CONTEXT_NOTE_K="${CONTEXT_NOTE_K:-400}"; case "$CONTEXT_NOTE_K" in ''|*[!0-9]*) CONTEXT_NOTE_K=400 ;; esac
 CONTEXT_STALE_MIN="${CONTEXT_STALE_MIN:-60}"; case "$CONTEXT_STALE_MIN" in ''|*[!0-9]*) CONTEXT_STALE_MIN=60 ;; esac
-if [ "$typed_prompt" = 1 ] && [ "$helper" = 0 ] && [ -n "$ctx_k" ] && [ "$ctx_k" -ge "$((10#$CONTEXT_NOTE_K))" ]; then
+if [ "$typed_prompt" = 1 ] && [ "$helper" = 0 ] && [ -n "$ctx_tok" ] && [ "$ctx_tok" -ge "$((10#$CONTEXT_NOTE_K * 1000))" ]; then
   note="This chat has used about ${ctx_k}k tokens of context — open your reply with one line on how full this chat is."
   # The wrap-up words replace it once the Stop hook's marker says the wrap-up point was reached (read-only).
   _wu=0
@@ -297,7 +298,7 @@ if [ "$typed_prompt" = 1 ] && [ "$helper" = 0 ] && [ -n "$ctx_k" ] && [ "$ctx_k"
     _STC="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
     if [ -f "$_STC/wrapup-fired/$sid" ] && [ ! -L "$_STC/wrapup-fired/$sid" ] && [ ! -L "$_STC/wrapup-fired" ] && [ ! -e "$_STC/open/$sid" ]; then
       _wuk=$(head -1 "$_STC/wrapup-fired/$sid" 2>/dev/null)
-      case "$_wuk" in ''|*[!0-9]*) ;; *) [ "$ctx_k" -ge "$((10#$_wuk))" ] && _wu=1 ;; esac
+      case "$_wuk" in ''|*[!0-9]*) ;; *) [ "$ctx_tok" -ge "$((10#$_wuk * 1000))" ] && _wu=1 ;; esac
     fi ;;
   esac
   if [ "$_wu" = 1 ]; then

@@ -361,6 +361,50 @@ state_conf_read() {
   [ -n "$STC_ROLE" ]
 }
 
+# hook_state_role CWD TRANSCRIPT [PROMPT] — the role lookup for a project whose chats SHARE one folder,
+# where the folder name cannot name the role. A repo opts in by COMMITTING `.claude/state-roles.tsv` at its
+# git top: one line per role, `<pattern><TAB><state file path from the top>` ('#' lines and blank lines
+# skipped). No state-check.conf line is needed; callers run this only when state_conf_read found no row for
+# the folder. The chat's identity is the session's title (the last {"type":"custom-title"} line of the
+# transcript), else the text of its first user message (system-reminder blocks stripped, first 300
+# characters), else the optional PROMPT (the prompt hook's text: a chat's very first prompt, before the
+# transcript holds anything). The first pattern found in the identity (case-insensitive, literal substring)
+# wins. Prints "<pattern><TAB><state file>" and returns 0; returns 1, printing nothing, for no git repo, no
+# mapping file, no identity, no match, no jq, or a path that is absolute or holds "..". Needs jq.
+# Tests: hooks/test-hooks.sh, "guard port 2026-10-10 (C1)".
+hook_state_role() {
+  local cwd="$1" tp="$2" prompt="$3" top map pat path ident lid lpat
+  command -v jq >/dev/null 2>&1 || return 1
+  [ -n "$cwd" ] && { { [ -n "$tp" ] && [ -r "$tp" ]; } || [ -n "$prompt" ]; } || return 1
+  top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] || return 1
+  map="$top/.claude/state-roles.tsv"
+  [ -f "$map" ] && [ -r "$map" ] || return 1
+  ident=""
+  [ -n "$tp" ] && [ -r "$tp" ] && ident="$(/usr/bin/grep -a '"type"[[:space:]]*:[[:space:]]*"custom-title"' "$tp" 2>/dev/null | /usr/bin/tail -1 | jq -r '.customTitle // empty' 2>/dev/null)"
+  if [ -z "$ident" ] && [ -n "$tp" ] && [ -r "$tp" ]; then
+    ident="$(/usr/bin/grep -a -m 40 '"type"[[:space:]]*:[[:space:]]*"user"' "$tp" 2>/dev/null | jq -R -r '
+      fromjson? | select(.isSidechain != true and (.message.role // "") == "user")
+      | .message.content
+      | (if type == "string" then . elif type == "array" then (map(select(.type == "text") | .text) | join(" ")) else "" end)
+      | gsub("<system-reminder>.*?</system-reminder>"; ""; "s") | gsub("^\\s+|\\s+$"; "") | select(length > 0)
+      | .[0:300] | gsub("\\s+"; " ")' 2>/dev/null | head -1)"
+  fi
+  if [ -z "$ident" ] && [ -n "$prompt" ]; then
+    ident="$(printf '%s' "$prompt" | jq -Rrs 'gsub("<system-reminder>.*?</system-reminder>"; ""; "s") | gsub("^\\s+|\\s+$"; "") | .[0:300] | gsub("\\s+"; " ")' 2>/dev/null)"
+  fi
+  [ -n "$ident" ] || return 1
+  lid="$(printf '%s' "$ident" | tr 'A-Z' 'a-z')"
+  while IFS=$'\t' read -r pat path || [ -n "$pat" ]; do
+    path="${path%$'\r'}"
+    case "$pat" in ''|'#'*) continue ;; esac
+    case "$path" in ''|/*|*..*) continue ;; esac
+    lpat="$(printf '%s' "$pat" | tr 'A-Z' 'a-z')"
+    case "$lid" in *"$lpat"*) printf '%s\t%s' "$pat" "$path"; return 0 ;; esac
+  done < "$map"
+  return 1
+}
+
 # ---- the context reader shared by doorman.sh and stop-state-check.sh -------------------------
 # stc_ctx_read TRANSCRIPT — the chat's context size, read ONCE with a growing tail window (the last
 # 256 KB, then 8 MB, then the whole file; it stops at the first window that holds the newest usage

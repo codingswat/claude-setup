@@ -66,6 +66,10 @@
 # before the marker); between the rename and the print = the text sits in delivered/, the chat is
 # not held again, and it is never shown twice; after the print = complete.
 #
+# SHARED-FOLDER CHATS: a folder the conf does not name but whose repo commits `.claude/state-roles.tsv` (see
+# state-check.conf.example) is snapshotted too (tracked diff only) and nothing else: never held, told or delivered to.
+# A MACHINE prompt rewrites the snapshot only when the session has none yet or its snapshot names another repo
+# (the session moved); a typed prompt always rewrites. The cut-off compares the exact token count with floor*1000.
 # Config: hooks/state-check.conf (see hooks/state-check.conf.example; shared with
 # stop-state-check.sh). Test seam: STATE_CHECK_STATE_DIR (where the marker folders live).
 # Tests: hooks/test-hooks.sh.
@@ -85,9 +89,19 @@ if ! command -v state_conf_read >/dev/null 2>&1; then
   exit 0
 fi
 CONF="$(dirname "$0")/state-check.conf"
-state_conf_read "$cwd" "$CONF" || exit 0   # no config, or this folder matches nothing in it: inert
-role="$STC_ROLE"; top="$STC_TOP"; base="$STC_BASE"
-sf="${STC_STATE_FILE//'{role}'/$role}"
+# A folder the conf does not name may still belong to a repo that opted in with a committed
+# .claude/state-roles.tsv (guard-lib.sh's hook_state_role: chats sharing ONE folder, the role read from the
+# session's title or first message). mapped_sf is set only then; such a chat gets the turn snapshot and nothing
+# else (no hold, no tell, no delivery).
+mapped_sf=""
+if state_conf_read "$cwd" "$CONF"; then
+  role="$STC_ROLE"; sf="${STC_STATE_FILE//'{role}'/$role}"
+elif [ -n "$sid" ] && command -v hook_state_role >/dev/null 2>&1 && _m=$(hook_state_role "$cwd" "$tp" "$prompt" 2>/dev/null); then
+  role="${_m%%$'\t'*}"; mapped_sf="${_m#*$'\t'}"; sf="$mapped_sf"
+else
+  exit 0   # no config, or this folder matches nothing in it and no repo mapping: inert
+fi
+top="$STC_TOP"; base="$STC_BASE"
 
 STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
 umask 077   # every file this hook writes holds the person's own words (held text, inbox): private (600, folders 700)
@@ -121,19 +135,38 @@ snapkey() {
     *)          printf '%s' "$sid" ;;
   esac
 }
-if command -v git >/dev/null 2>&1 && git -C "$top" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-   && [ ! -L "$STATE/turnsnap" ] && [ ! -L "$STATE/turnsnap/$(snapkey)" ]; then
+# write_turn_snapshot — the five fields, written whole. Called once the prompt is classified (below).
+write_turn_snapshot() {
+  command -v git >/dev/null 2>&1 && git -C "$top" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    && [ ! -L "$STATE/turnsnap" ] && [ ! -L "$STATE/turnsnap/$(snapkey)" ] || return 0
   # Five fields, the format stop-state-check.sh reads (see the header): the fifth names the repo. The same commands run there.
+  local _s_head _s_tree _s_sf=none _s_mk=none
   _s_head=$(git -C "$top" rev-parse HEAD 2>/dev/null); _s_head="${_s_head:-none}"
   _s_tree=$(git -C "$top" diff --no-ext-diff --no-textconv HEAD 2>/dev/null | git -C "$top" hash-object --stdin 2>/dev/null); _s_tree="${_s_tree:-none}"
-  _s_sf=none; _s_mk=none
   if [ -f "$top/$sf" ]; then
     _s_sf=$(git -C "$top" hash-object -- "$top/$sf" 2>/dev/null); _s_sf="${_s_sf:-none}"
     _s_mk=$({ /usr/bin/grep -m1 -E '^\*\*Current task:\*\*' "$top/$sf" 2>/dev/null; /usr/bin/grep -m1 -E '^\*\*Next step:\*\*' "$top/$sf" 2>/dev/null; } | git -C "$top" hash-object --stdin 2>/dev/null); _s_mk="${_s_mk:-none}"
   fi
   mkdir -p "$STATE/turnsnap" 2>/dev/null \
     && printf '%s\t%s\t%s\t%s\t%s\n' "$_s_head" "$_s_sf" "$_s_tree" "$_s_mk" "$top" > "$STATE/turnsnap/$(snapkey)" 2>/dev/null
-fi
+  return 0
+}
+# A machine prompt (task notice, peer message, fired cron) rewrites the snapshot only when the session has none yet
+# or its snapshot names ANOTHER repo than this prompt's (the session moved: a cd takes effect when a turn ends, so
+# the next prompt, typed or not, is the first seen in the new folder). Not every machine prompt: one queued while a
+# turn runs is delivered mid-turn and would reset the baseline after the turn's own commit. A typed prompt always
+# rewrites.
+snapshot_for_prompt() {  # $1 = 1 for a machine prompt
+  local _old_top="" _f
+  if [ "$1" = 1 ]; then
+    _f="$STATE/turnsnap/$(snapkey)"
+    if [ -f "$_f" ] && [ ! -L "$_f" ]; then
+      IFS=$'\t' read -r _ _ _ _ _old_top < "$_f" 2>/dev/null
+      [ "$_old_top" = "$top" ] && return 0
+    fi
+  fi
+  write_turn_snapshot
+}
 # The helper tell (see the header): read now, shown and deleted only when this prompt PASSES.
 tell_k=""; tell_path=""; waiting_note=""
 case "$sid" in
@@ -172,7 +205,10 @@ marker_live() {
 if [ -z "$prompt" ] && ! command -v jq >/dev/null 2>&1; then
   echo "doorman: jq is not installed — this hook cannot read the typed prompt and does nothing (install jq)." >&2
 fi
-[ -n "$prompt" ] || exit 0                       # nothing typed (or no jq to read it): nothing to hold or carry
+if [ -z "$prompt" ]; then   # nothing typed (or no jq to read it): nothing to hold or carry
+  [ -z "$mapped_sf" ] && snapshot_for_prompt 0
+  exit 0
+fi
 machine=0
 _cls="$(dirname "$0")/clock-in-context.sh"
 if [ -r "$_cls" ]; then
@@ -193,18 +229,23 @@ if [ "$machine" = 0 ] && [ -n "$safe_sid" ] && [ -f "$STATE/crons/$safe_sid" ] &
   if [ -n "$_json" ] && grep -qxF -- "$_json" "$STATE/crons/$safe_sid" 2>/dev/null; then machine=1; fi
 fi
 
+# The turn snapshot: a chat of the conf, or a mapped one that has a session id (its key is that id).
+if [ -z "$mapped_sf" ] || [ -n "$safe_sid" ]; then snapshot_for_prompt "$machine"; fi
+[ -n "$mapped_sf" ] && exit 0   # a mapped chat is never held, told or delivered to
+
 # ---- the context: one windowed read (guard-lib.sh's stc_ctx_read), all-zero usage lines skipped ----
 # The newest non-zero usage line and the newest compact boundary come from ONE read of the transcript's
 # end (256 KB, widened to 8 MB, then the whole file, only until they are found): a long chat costs
 # milliseconds per prompt, not seconds. An API-error line with every counter 0 is not a measurement.
-ctx_k=""; compact_after=0
+ctx_k=""; ctx_tok=""; compact_after=0
 if [ -n "$tp" ] && [ -r "$tp" ]; then
   stc_ctx_read "$tp"
   # A compact boundary after the newest usage line = the size is stale: unknown.
   if [ "$STC_CTX_CLN" -gt "$STC_CTX_ULN" ]; then
     compact_after=1
   elif [ "$STC_CTX_TOT" -gt 0 ]; then
-    ctx_k=$(( (STC_CTX_TOT + 500) / 1000 ))
+    ctx_k=$(( (STC_CTX_TOT + 500) / 1000 ))   # the figure shown; the cut-off compares ctx_tok, the exact tokens
+    ctx_tok=$STC_CTX_TOT
   fi
   # The size this turn starts from, for the helper tell (never through a symlink).
   if [ -n "$ctx_k" ] && [ -n "$safe_sid" ] && [ ! -L "$STATE/turn-start" ] && [ ! -L "$STATE/turn-start/$safe_sid" ]; then
@@ -239,7 +280,8 @@ show_held() {  # $1 = label ("" or "held for the previous chat")
 # mark_delivered ROLE HELD-SESSION — say under the inbox copy that its text was delivered (to this session,
 # now), so a later holder who reads the inbox does not act on it a second time. Never through a symlink.
 mark_delivered() {
-  [ -f "$STATE/inbox/$1.md" ] && [ ! -L "$STATE/inbox" ] && [ ! -L "$STATE/inbox/$1.md" ] || return 0
+  [ ! -L "$STATE/inbox" ] && [ ! -L "$STATE/inbox/$1.md" ] || return 0
+  mkdir -p "$STATE/inbox" 2>/dev/null || return 0   # one line is written even if the inbox copy was removed
   printf '\n## %s — DELIVERED: the message held for session %s was delivered to session %s (folder %s) — do not act on it again\n' \
     "$(date '+%Y-%m-%d %H:%M')" "$2" "${sid:-?}" "$top" >> "$STATE/inbox/$1.md" 2>/dev/null
 }
@@ -297,7 +339,7 @@ if [ "$compact_after" = 1 ]; then compact_notice; exit 0; fi
 state_word=""; reason=""
 if [ -n "$safe_sid" ] && marker_live "$safe_sid"; then
   state_word=retired; reason="marked RETIRED at its context floor"
-elif [ -n "$ctx_k" ] && [ -n "$STC_FLOOR_K" ] && [ "$ctx_k" -ge "$((10#$STC_FLOOR_K))" ]; then
+elif [ -n "$ctx_tok" ] && [ -n "$STC_FLOOR_K" ] && [ "$ctx_tok" -ge "$((10#$STC_FLOOR_K * 1000))" ]; then
   state_word=full; reason="context ${ctx_k}k at or over its ${STC_FLOOR_K}k floor"
 fi
 if [ -n "$state_word" ] && [ -n "$safe_sid" ] && [ ! -L "$STATE/held" ]; then

@@ -54,8 +54,17 @@
 # Notes that would only reach a stderr nobody reads (the retirement, "no turn snapshot", a skipped check)
 # are also left as a pending notice in $STATE/notices/<source>, shown at the next typed prompt.
 #
-# No hooks/state-check.conf at all, or the folder matches no line in it: EVERY job is off for this
-# session — the safe default for a single-session project with nothing to track. Fails OPEN
+# SHARED-FOLDER CHATS (opt-in per repo): a folder the conf does not name may still hold several chats that
+# share it. A repo opts in by COMMITTING `.claude/state-roles.tsv` at its git top (`<pattern><TAB><state file path
+# from the top>`; see state-check.conf.example); guard-lib.sh's hook_state_role reads the chat's role from its
+# title or first message. Such a chat gets job (2) only, with a lighter rule: a turn whose OWN transcript wrote a
+# file (Edit/Write/MultiEdit/NotebookEdit) or ran a Bash git commit/merge/cherry-pick/revert, and that changed
+# tracked files without changing its state file, is blocked once (a Heartbeat line is asked); a state file with
+# uncommitted changes is asked to be committed by path. Another chat's edit in the same folder never blocks.
+# No retirement, wrap-up or helper tell for these chats. Every threshold above compares the EXACT token count
+# (399,999 is under 400k); the "k" figure in a message is only the rounded display.
+# No hooks/state-check.conf at all, or the folder matches no line in it and no repo mapping: EVERY job is off for
+# this session — the safe default for a single-session project with nothing to track. Fails OPEN
 # (exit 0) outside a git repo, with no readable transcript/cwd, or when hooks/guard-lib.sh (the
 # shared conf reader) is missing (one stderr note).
 #
@@ -87,9 +96,18 @@ if ! command -v state_conf_read >/dev/null 2>&1; then
   exit 0
 fi
 CONF="$(dirname "$0")/state-check.conf"
-state_conf_read "$cwd" "$CONF" || exit 0   # no config, or this folder matches nothing in it: inert
-role="$STC_ROLE"; floor_k=$((10#$STC_FLOOR_K)); top="$STC_TOP"; base="$STC_BASE"
-sf="${STC_STATE_FILE//'{role}'/$role}"
+# A folder the conf does not name may still belong to a repo that opted in with a committed
+# .claude/state-roles.tsv (guard-lib.sh's hook_state_role: chats sharing ONE folder, the role read from the
+# session's title or first message). mapped_sf is set only then, and only job (2) runs for such a chat.
+mapped_sf=""
+if state_conf_read "$cwd" "$CONF"; then
+  role="$STC_ROLE"; floor_k=$((10#$STC_FLOOR_K)); sf="${STC_STATE_FILE//'{role}'/$role}"
+elif [ -n "$sid" ] && command -v hook_state_role >/dev/null 2>&1 && _m=$(hook_state_role "$cwd" "$tp" 2>/dev/null); then
+  role="${_m%%$'\t'*}"; mapped_sf="${_m#*$'\t'}"; floor_k=0; sf="$mapped_sf"
+else
+  exit 0   # no config, or this folder matches nothing in it and no repo mapping: inert
+fi
+top="$STC_TOP"; base="$STC_BASE"
 STATE="${STATE_CHECK_STATE_DIR:-$HOME/.claude/state/state-check}"
 
 # safe_state_file <dir> <name> — true only when neither the folder nor the file is a symlink.
@@ -114,13 +132,14 @@ if [ -n "$sid" ] && command -v jq >/dev/null 2>&1 && safe_state_file crons "$sid
 fi
 
 # ---- (1) retire past the floor, and (4) the helper tell ----
-ctx_k=""
-if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
+ctx_k=""; ctx_tok=""
+if [ -z "$mapped_sf" ] && [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
   # ONE windowed read (guard-lib.sh's stc_ctx_read): the newest usage line whose counters are not all zero
   # (an API-error answer is not a measurement), found from the end of the file, widened only as far as needed.
   stc_ctx_read "$tp"
   if [ "$STC_CTX_TOT" -gt 0 ]; then
-    ctx_k=$(( (STC_CTX_TOT + 500) / 1000 ))
+    ctx_k=$(( (STC_CTX_TOT + 500) / 1000 ))   # the figure shown; every threshold below compares ctx_tok, the exact tokens
+    ctx_tok=$STC_CTX_TOT
 
     # (4) the helper tell. Growth = ctx_k now minus the size doorman.sh wrote at the prompt.
     # "A helper launched this turn" = an Agent or Workflow tool_use after the last top-level
@@ -158,7 +177,7 @@ if [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
     fi
 
     # (1) retire.
-    if [ "$ctx_k" -ge "$floor_k" ]; then
+    if [ "$ctx_tok" -ge "$((floor_k * 1000))" ]; then
       mkdir -p "$STATE/retired"
       # Idempotent: an already-retired sid with its companion is neither rewritten nor re-appended
       # to the inbox. A marker without a companion counts as absent; a symlinked companion is
@@ -237,7 +256,7 @@ fi
 maybe_stop_wrapup() {
   [ "$active" = "true" ] && return 1
   [ -n "$sid" ] || return 1
-  [ -n "$ctx_k" ] && [ "$ctx_k" -ge "$STC_WRAPUP_K" ] || return 1
+  [ -n "$ctx_tok" ] && [ "$ctx_tok" -ge "$((STC_WRAPUP_K * 1000))" ] || return 1
   local _roles _r
   _roles=$(printf ' %s ' "$STC_WRAPUP_ROLES" | tr 'A-Z\t' 'a-z ')
   _r=$(printf '%s' "$role" | tr 'A-Z' 'a-z')
@@ -276,6 +295,8 @@ if [ "$snap_ok" = 1 ] && [ -n "$snap_top" ] && [ "$snap_top" != "$top" ]; then
   ssc_notice stop-state-check-cwd "stop-state-check hook: the state-file check was skipped for the last turn — it started in $(basename "$snap_top") but ended in $base (a cd), so no repo was judged. If the turn changed files in $(basename "$snap_top"), update its state file by hand."
   pass_exit
 fi
+# A mapped chat shares its folder with others: with no snapshot it is never judged (the folder holds their dirt).
+[ -n "$mapped_sf" ] && [ "$snap_ok" != 1 ] && exit 0
 changed=$(git -C "$top" status --porcelain --untracked-files=no 2>/dev/null | /usr/bin/grep -c .)
 
 if [ "$snap_ok" = 1 ]; then
@@ -288,6 +309,27 @@ if [ "$snap_ok" = 1 ]; then
   fi
   # Nothing moved this turn (HEAD and every tracked change's content): pass, whatever was dirty before.
   if [ "$cur_head" = "$snap_head" ] && [ "$cur_tree" = "$snap_tree" ]; then pass_exit; fi
+  # A mapped (shared-folder) chat: the state file must change (blocks once), and a state file with uncommitted
+  # changes is asked to be committed by path. The Current task / Next step lines are not asked of it. The folder is
+  # shared, so a change is THIS chat's only when its own transcript, after the turn's last real user entry (a user
+  # line that is not a tool result), holds a file-writing tool use or a Bash git commit/merge/cherry-pick/revert:
+  # another chat's edit in the same folder never blocks.
+  if [ -n "$mapped_sf" ]; then
+    _m_pl=$(/usr/bin/grep -anE '"type"[[:space:]]*:[[:space:]]*"user"' "$tp" 2>/dev/null | /usr/bin/grep -av '"type"[[:space:]]*:[[:space:]]*"tool_result"' | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
+    _m_own=$(/usr/bin/tail -n "+$((${_m_pl:-0}+1))" "$tp" 2>/dev/null | /usr/bin/grep -aE '"type"[[:space:]]*:[[:space:]]*"tool_use"' | /usr/bin/grep -aE '"name"[[:space:]]*:[[:space:]]*"(Edit|Write|MultiEdit|NotebookEdit)"|"name"[[:space:]]*:[[:space:]]*"Bash".*git[[:space:]]+(commit|merge|cherry-pick|revert)' | head -1)
+    [ -n "$_m_own" ] || exit 0
+    _m_ask=""
+    if [ "$cur_sf" = "$snap_sf" ]; then
+      _m_ask="this turn changed tracked files in $base but $sf did not change since the turn started. Files are memory: rewrite $sf now (under 200 words: current task, next step, open questions, what must not be repeated) with a Heartbeat: line holding the current time."
+    fi
+    if [ -n "$(git -C "$top" status --porcelain --untracked-files=all -- "$sf" 2>/dev/null)" ]; then
+      _m_ask="${_m_ask:+$_m_ask }$sf has uncommitted changes, and work that is not in the repo can be lost: commit it by path (git commit -- $sf)."
+    fi
+    [ -n "$_m_ask" ] || exit 0
+    [ "$active" = "true" ] && { echo "stop-state-check: the mapped state file is still not saved; not blocking twice." >&2; exit 0; }
+    printf '{"decision":"block","reason":"%s"}\n' "$(json_esc "stop-state-check: $_m_ask Then stop.")"
+    exit 0
+  fi
   if [ "$cur_sf" = "$snap_sf" ]; then
     [ "$active" = "true" ] && { maybe_stop_wrapup; echo "stop-state-check: the state file is still untouched; not blocking twice."; exit 0; }
     reason="stop-state-check: this turn changed the repo (a commit and/or the working tree) in $base but $sf did not change since the turn started. Rewrite $sf now (under 200 words — current task, next step, open questions, what must not be repeated), then stop."

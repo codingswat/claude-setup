@@ -3894,5 +3894,155 @@ own="$("${ID[@]}" git -C "$r" commit-tree -p "$(git -C "$r" rev-parse main~1)" -
 git -C "$r" replace "$foreign" "$own" >/dev/null 2>&1
 P10_HOME="$(p10_home none)"; p10_push refuse "P11 an own-identity stand-in (git replace) does not fool the identity check" "$r" 'Claude/Anthropic'; unset P10_HOME
 
+# ---- guard port 2026-10-10 (C1): shared-folder chats, snapshot after a move, exact tokens, inbox line ----
+echo "guard port 2026-10-10 (C1)"
+G1="$T/g1"; GH="$G1/hk"; mkdir -p "$GH"
+cp "$HOOKS_DIR/stop-state-check.sh" "$HOOKS_DIR/doorman.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$GH/"
+# the conf names only the seat folders "g1seat*"; the shared-folder repos below are named so that no row matches them
+g1_conf() { { printf 'STATE_FILE state/{role}.md\n'; local l; for l in "$@"; do printf '%s\n' "$l"; done; } > "$GH/state-check.conf"; }
+g1_conf 'g1seat*  dev  850'
+g1_stop() { c2_sj "$@" | STATE_CHECK_STATE_DIR="$S" bash "$GH/stop-state-check.sh" > "$G1/out" 2> "$G1/err"; }
+g1_prompt() {   # <cwd> <sid> [transcript] [prompt]
+  dj "$1" "$2" "${4:-hello}" "${3:-}" | STATE_CHECK_STATE_DIR="$S" bash "$GH/doorman.sh" > "$G1/pout" 2> "$G1/perr"; G1_RC=$?
+}
+g1_shared() {   # <dir> [tsv text]: a repo of chats that share one folder; notes/reviewer.md and notes/builder.md are the state files
+  local d="$1" tsv="${2-reviewer	notes/reviewer.md}"
+  mkdir -p "$d/notes" "$d/.claude"; git -C "$d" init -q -b main; git -C "$d" config core.hooksPath /dev/null
+  echo "reviewer notes" > "$d/notes/reviewer.md"; echo "builder notes" > "$d/notes/builder.md"; echo seed > "$d/README.md"
+  [ -n "$tsv" ] && printf '# roles\n\n%s\nbuilder\tnotes/builder.md\n' "$tsv" > "$d/.claude/state-roles.tsv"
+  git -C "$d" add -A; "${ID[@]}" git -C "$d" commit -q -m init
+}
+g1_tr() {   # <file> <title|-> <first-user-text> <edit|none>: a chat transcript
+  local f="$1"; : > "$f"
+  [ "$2" != - ] && printf '{"type":"custom-title","customTitle":"%s","sessionId":"x"}\n' "$2" >> "$f"
+  printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' "$3" >> "$f"
+  [ "$4" = edit ] && printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{}}]}}\n' >> "$f"
+  return 0
+}
+g1_blocked() { grep -q '"decision":"block"' "$G1/out"; }
+g1_quiet() { [ ! -s "$G1/out" ]; }
+
+echo "  P5 shared-folder chats: .claude/state-roles.tsv, the role from the title or first message"
+S="$G1/s5"; R="$G1/shared1"; g1_shared "$R"; g1_tr "$G1/t5a" Reviewer "go" edit
+g1_prompt "$R" p5a "$G1/t5a"; echo more >> "$R/README.md"; g1_stop "$R" p5a false "$G1/t5a"
+c2_chk refuse "P5 a mapped chat's turn (own Edit, tracked change) with the state file unchanged blocks, naming the file" bash -c "grep -q '\"decision\":\"block\"' '$G1/out' && grep -q 'notes/reviewer.md did not change' '$G1/out' && grep -q 'Heartbeat' '$G1/out'"
+c2_chk refuse "P5 the prompt hook wrote the turn snapshot for the mapped chat" test -s "$S/turnsnap/p5a"
+g1_stop "$R" p5a true "$G1/t5a"
+c2_chk pass "P5 pair: stop_hook_active true: the second stop passes" g1_quiet
+git -C "$R" checkout -q -- .
+g1_prompt "$R" p5b "$G1/t5a"; echo more >> "$R/README.md"; echo "now at step 2" >> "$R/notes/reviewer.md"; git -C "$R" add -A; "${ID[@]}" git -C "$R" commit -q -m "work and notes"
+g1_stop "$R" p5b false "$G1/t5a"
+c2_chk pass "P5 pair: the state file changed and committed: passes" g1_quiet
+git -C "$R" tag -f base5 >/dev/null 2>&1
+g1_tr "$G1/t5c" Reviewer "go" none
+g1_prompt "$R" p5c "$G1/t5c"; echo other >> "$R/README.md"; g1_stop "$R" p5c false "$G1/t5c"
+c2_chk pass "P5 pair: a change made by ANOTHER chat (no write tool in this transcript) never blocks" g1_quiet
+git -C "$R" checkout -q -- .
+g1_prompt "$R" p5d "$G1/t5a"; echo more >> "$R/README.md"; echo "unsaved note" >> "$R/notes/reviewer.md"; g1_stop "$R" p5d false "$G1/t5a"
+c2_chk refuse "P5 a state file left uncommitted is asked to be committed by path" bash -c "grep -q 'commit it by path (git commit -- notes/reviewer.md)' '$G1/out' && ! grep -q 'did not change' '$G1/out'"
+g1_stop "$R" p5d true "$G1/t5a"
+c2_chk pass "P5 pair: the uncommitted-file ask also blocks once only" g1_quiet
+git -C "$R" checkout -q -- .
+g1_tr "$G1/t5e" - "You are the reviewer chat, check the diff" edit
+g1_prompt "$R" p5e "$G1/t5e"; echo more >> "$R/README.md"; g1_stop "$R" p5e false "$G1/t5e"
+c2_chk refuse "P5 no title: the first user message holding the pattern maps the chat" g1_blocked
+git -C "$R" checkout -q -- .
+g1_tr "$G1/t5f" - "hello there" edit
+g1_prompt "$R" p5f "$G1/t5f"; echo more >> "$R/README.md"; g1_stop "$R" p5f false "$G1/t5f"
+c2_chk pass "P5 pair: no title and a first message without any pattern: not mapped, passes" g1_quiet
+git -C "$R" checkout -q -- .
+g1_tr "$G1/t5g" "the REVIEWER of the week" "go" edit
+g1_prompt "$R" p5g "$G1/t5g"; echo more >> "$R/README.md"; g1_stop "$R" p5g false "$G1/t5g"
+c2_chk refuse "P5 the pattern is matched case-insensitively inside the title" g1_blocked
+git -C "$R" checkout -q -- .
+g1_tr "$G1/t5h" Builder "go" edit
+g1_prompt "$R" p5h "$G1/t5h"; echo more >> "$R/README.md"; g1_stop "$R" p5h false "$G1/t5h"
+c2_chk refuse "P5 a second tsv line maps another chat to its own state file" bash -c "grep -q 'notes/builder.md did not change' '$G1/out'"
+git -C "$R" checkout -q -- .
+for bad_path in '../x.md' '/etc/x.md'; do
+  R2="$G1/shared-bad"; rm -rf "$R2"; g1_shared "$R2" "reviewer	$bad_path"
+  g1_prompt "$R2" p5i "$G1/t5a"; echo more >> "$R2/README.md"; g1_stop "$R2" p5i false "$G1/t5a"
+  c2_chk pass "P5 a tsv path '$bad_path' is ignored: passes (and no snapshot is written)" bash -c "[ ! -s '$G1/out' ] && [ ! -e '$S/turnsnap/p5i' ]"; rm -f "$S/turnsnap/p5i"
+done
+R2="$G1/shared-notsv"; g1_shared "$R2" ""
+g1_prompt "$R2" p5j "$G1/t5a"; echo more >> "$R2/README.md"; g1_stop "$R2" p5j false "$G1/t5a"
+c2_chk pass "P5 pair: a repo with no state-roles.tsv is inert" bash -c "[ ! -s '$G1/out' ] && [ ! -e '$S/turnsnap/p5j' ]"
+g1_noconf() { mv "$GH/state-check.conf" "$GH/conf.off"; g1_prompt "$R" p5k "$G1/t5a"; mv "$GH/conf.off" "$GH/state-check.conf"; }
+g1_noconf
+c2_chk refuse "P5 with no state-check.conf at all a committed mapping still opts the chat in (snapshot written)" test -s "$S/turnsnap/p5k"
+git -C "$R" checkout -q -- .
+# a folder the conf DOES name keeps the conf's rules even when the repo also carries a mapping
+RC="$G1/g1seat1"; c2_repo "$RC"; mkdir -p "$RC/.claude"; printf 'reviewer\tnotes/reviewer.md\n' > "$RC/.claude/state-roles.tsv"; git -C "$RC" add -A; "${ID[@]}" git -C "$RC" commit -q -m map
+g1_prompt "$RC" p5l "$G1/t5a"; echo more >> "$RC/README.md"; g1_stop "$RC" p5l false "$G1/t5a"
+c2_chk pass "P5 pair: a conf-matched folder is judged by the conf (its own state/dev.md), not by the mapping" bash -c "grep -q 'state/dev.md did not change' '$G1/out'"
+# a mapped chat is never retired, held or wrapped up
+g1_conf 'g1seat*  dev  5' 'WRAPUP_ROLES *' 'WRAPUP_K 5'
+c2_tp "$G1/tp9" 900; cat "$G1/t5a" >> "$G1/tp9"
+g1_prompt "$R" p5m "$G1/tp9" "please carry on"
+c2_chk refuse "P5 a mapped chat at 900k is not held (rc 0, nothing on stdout)" bash -c "[ '$G1_RC' = 0 ] && [ ! -s '$G1/pout' ] && [ ! -e '$S/held/p5m' ]"
+g1_stop "$R" p5m false "$G1/tp9"
+c2_chk pass "P5 a mapped chat at 900k is not retired and not wrapped up" bash -c "[ ! -e '$S/retired/p5m' ] && [ ! -e '$S/wrapup-fired/p5m' ] && [ ! -s '$G1/out' ]"
+g1_conf 'g1seat*  dev  850'
+g1_stop "$R" "" false "$G1/t5a"
+c2_chk pass "P5 pair: a Stop with no session id is not judged for a mapped chat" g1_quiet
+
+echo "  P6 a machine prompt rewrites the turn snapshot only after a move to another repo"
+S="$G1/s6"; g1_conf 'g1seat*  dev  850'; RA="$G1/g1seat2"; RB="$G1/g1seat3"; c2_repo "$RA"; c2_repo "$RB"
+MP='<task-notification>helper finished</task-notification>'
+g1_prompt "$RA" m6 "" "$MP"
+c2_chk refuse "P6 a machine prompt with no snapshot yet writes one" bash -c "[ \"\$(cut -f5 '$S/turnsnap/m6')\" = '$(git -C "$RA" rev-parse --show-toplevel)' ]"
+echo edit >> "$RA/README.md"; before6="$(cat "$S/turnsnap/m6")"
+g1_prompt "$RA" m6 "" "$MP"
+c2_chk pass "P6 pair: a machine prompt in the SAME repo leaves the snapshot alone" eq "$(cat "$S/turnsnap/m6")" "$before6"
+g1_prompt "$RB" m6 "" "$MP"
+c2_chk refuse "P6 a machine prompt in ANOTHER repo (the session moved) rewrites it, naming the new repo" bash -c "[ \"\$(cut -f5 '$S/turnsnap/m6')\" = '$(git -C "$RB" rev-parse --show-toplevel)' ]"
+g1_prompt "$RB" m6 "" "typed words"
+echo edit2 >> "$RB/README.md"; before6b="$(cat "$S/turnsnap/m6")"; g1_prompt "$RB" m6 "" "more typed words"
+c2_chk refuse "P6 a typed prompt in the same repo always rewrites (the baseline moves with the edit)" bash -c "[ \"\$(cat '$S/turnsnap/m6')\" != '$before6b' ]"
+git -C "$RA" checkout -q -- .; git -C "$RB" checkout -q -- .
+
+echo "  P12 every context threshold compares exact tokens: 399,999 is under 400k, 400,000 is at it"
+g1_toks() { printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":%d,"output_tokens":5}}}\n' $(( $2 - 1 )) > "$1"; }
+g1_toks "$G1/u399" 399999; g1_toks "$G1/u400" 400000
+g1_conf 'g1seat*  dev  400'
+R="$G1/g1seat4"; c2_repo "$R"; S="$G1/s12a"
+g1_stop "$R" r12a false "$G1/u399"
+c2_chk pass "P12 the retire floor 400k: 399,999 tokens is under it (no marker)" test ! -e "$S/retired/r12a"
+g1_stop "$R" r12b false "$G1/u400"
+c2_chk refuse "P12 the retire floor 400k: 400,000 tokens is at it (marker written)" test -f "$S/retired/r12b"
+S="$G1/s12b"; g1_conf 'g1seat*  dev  850' 'WRAPUP_K 400'
+g1_prompt "$R" w12a "$G1/u399"; g1_stop "$R" w12a false "$G1/u399"
+c2_chk pass "P12 the wrap-up point 400k: 399,999 tokens is under it" g1_quiet
+g1_prompt "$R" w12b "$G1/u400"; g1_stop "$R" w12b false "$G1/u400"
+c2_chk refuse "P12 the wrap-up point 400k: 400,000 tokens is at it" bash -c "grep -q 'wrap-up point' '$G1/out'"
+S="$G1/s12c"; g1_conf 'g1seat*  dev  400'
+g1_prompt "$R" d12a "$G1/u399" "hello there"
+c2_chk pass "P12 the doorman's cut-off 400k: 399,999 tokens passes" bash -c "[ '$G1_RC' = 0 ] && [ ! -e '$S/held/d12a' ]"
+g1_prompt "$R" d12b "$G1/u400" "hello there"
+c2_chk refuse "P12 the doorman's cut-off 400k: 400,000 tokens is held (exit 2)" bash -c "[ '$G1_RC' = 2 ] && [ -f '$S/held/d12b' ]"
+c1_fire "P12 the context note (default 400k): 400,000 tokens prints it" "$(c1_run "$(c1_in UserPromptSubmit "$G1/u400" 'go on')")" 'open your reply with one line on how full'
+c1_quiet "P12 the context note: 399,999 tokens does not (the shown figure rounds to 400k)" "$(c1_run "$(c1_in UserPromptSubmit "$G1/u399" 'go on')")" 'how full'
+c1_fire "P12 pair: the shown figure is still the rounded k" "$(c1_run "$(c1_in UserPromptSubmit "$G1/u399" 'go on')")" 'Context used: 400k tokens'
+WS="$G1/s12d"; mkdir -p "$WS/wrapup-fired"; echo 400 > "$WS/wrapup-fired/c1s"
+c1_fire "P12 the wrap-up words (marker 400): 400,000 tokens switches the note" "$(c1_run "$(c1_in UserPromptSubmit "$G1/u400" 'go on')" STATE_CHECK_STATE_DIR="$WS" CONTEXT_NOTE_K=300)" 'wrapping up: open a fresh chat'
+c1_quiet "P12 the wrap-up words (marker 400): 399,999 tokens keeps the plain note" "$(c1_run "$(c1_in UserPromptSubmit "$G1/u399" 'go on')" STATE_CHECK_STATE_DIR="$WS" CONTEXT_NOTE_K=300)" 'wrapping up'
+
+echo "  P13 a delivered held text leaves exactly one inbox line naming both sessions"
+S="$G1/s13"; g1_conf 'g1seat*  dev  850'; D1="$G1/g1seat5"; D2="$G1/g1seat6"; mkdir -p "$D1" "$D2"
+c2_tp "$G1/tp900" 900
+g1_prompt "$D1" old13 "$G1/tp900" "carry me over"
+c2_chk pass "P13 pair: before any delivery the inbox holds no DELIVERED line" bash -c "! grep -q DELIVERED '$S/inbox/dev.md'"
+mkdir -p "$S/retired" "$S/retired-compacts"; echo "x" > "$S/retired/old13"; echo 0 > "$S/retired-compacts/old13"
+c2_tp "$G1/tp100" 100
+g1_prompt "$D2" new13 "$G1/tp100" "first words"
+c2_chk refuse "P13 the text reached the new chat of the same role" has "carry me over" "$G1/pout"
+c2_chk refuse "P13 exactly one DELIVERED line is appended" eq "$(grep -c DELIVERED "$S/inbox/dev.md")" "1"
+c2_chk refuse "P13 ... naming the receiving session and the original session" bash -c "l=\$(grep DELIVERED '$S/inbox/dev.md'); case \"\$l\" in *new13*) case \"\$l\" in *old13*) true;; *) false;; esac;; *) false;; esac"
+c2_chk refuse "P13 ... and it is written after the held file moved to delivered/" bash -c "[ -f '$S/delivered/old13' ] && [ ! -e '$S/held/old13' ]"
+S="$G1/s13b"; g1_prompt "$D1" old13b "$G1/tp900" "second text"; rm -f "$S/inbox/dev.md"
+mkdir -p "$S/retired" "$S/retired-compacts"; echo "x" > "$S/retired/old13b"; echo 0 > "$S/retired-compacts/old13b"
+g1_prompt "$D2" new13b "$G1/tp100" "first words"
+c2_chk refuse "P13 the line is written even when the inbox copy was removed before the delivery" bash -c "[ \"\$(grep -c DELIVERED '$S/inbox/dev.md')\" = 1 ]"
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
