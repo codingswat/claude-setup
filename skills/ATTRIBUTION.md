@@ -1,6 +1,6 @@
 # Attribution
 
-All fifteen folders below (eleven of my own, four cherry-picked) are installed by
+All sixteen folders below (thirteen of my own, three cherry-picked) are installed by
 `install.sh`; any one of them can be deleted without breaking the others.
 
 ## Own skills in this folder
@@ -16,11 +16,18 @@ Written from scratch, no external pack or author behind them.
   finish, preserve anything that exists in one place, leave the state in the plan file and one
   short state file (not a handover essay), commit it, and write the next session's opening
   prompt — in that order.
-- **handover/** — writes a single self-contained `HANDOVER.md` for a developer who has never seen
-  the project, complete enough to rebuild its behaviour from the document alone.
-- **briefing-subagents/** — the five slots every brief to a helper agent needs (where its output
-  lands, its git boundary, its model and effort, a load check, and a verification line with the
-  measured numbers), so the helper isn't left to invent what the brief left out.
+- **briefing-subagents/** — the six slots every brief to a helper agent needs (where its output
+  lands, its git boundary, its model and effort, a load check, a verification line with the
+  measured numbers, and the privacy, secrets and authorship lines word for word), so the helper
+  isn't left to invent what the brief left out.
+- **coding-method/** — the nine steps from a request to landed code (understand, plan, build the
+  smallest change, when stuck, compare to the plan, records, commit and land, clean up, learn),
+  each with when it starts and when it is done.
+- **testing-method/** — how a check earns trust: seen failing on what it must catch, seen passing
+  on what it must let through, counted, on the real input; which tests run at which moment.
+- **going-live/** — the checks before a deploy, a first public release or sharing beyond the
+  owner, in order: privacy, security review, a blind reviewer, the owner's yes, then the live
+  site checked after.
 - **walkthrough/** — before building a screen or interaction, draws a storyboard from the person's
   first sight to done; before calling it finished, rehearses it in a real running browser and
   answers four questions (know, see, connect, notice) from the pictures alone, driven by a helper
@@ -42,7 +49,7 @@ Written from scratch, no external pack or author behind them.
 
 ## Cherry-picked into this folder
 
-All four skills below were cherry-picked from larger open-source packs released under the MIT
+All three skills below were cherry-picked from larger open-source packs released under the MIT
 license — the skill and its own supporting files, not the surrounding plugin machinery. They are
 not my original work; credit belongs to their authors, linked below. Local modifications are
 noted per skill.
@@ -61,17 +68,6 @@ Source: https://github.com/mattpocock/skills (MIT license)
   creates files.
 - **domain-modeling/** — build a project's shared vocabulary (CONTEXT.md) and
   record decisions as they crystallise. Unmodified.
-
-### From DietrichGebert/ponytail
-
-Source: https://github.com/DietrichGebert/ponytail (MIT license)
-
-- **ponytail/** — the "lazy senior dev" discipline: reuse before writing,
-  standard library before dependencies, the minimum code that works.
-  Modified locally: the skill file only (the always-on plugin machinery was
-  deliberately not adopted); rewritten as an optional tool the session may
-  apply or skip, rather than a mandate active on every task; persistence
-  wording softened to match.
 
 Why cherry-pick instead of installing the packs? Overlapping skills from
 multiple packs compete for the same tasks and confuse sessions. Taking single
@@ -95,13 +91,10 @@ being claimed here.
   d.school/IDEO "Worst Possible Idea" practice); the router's own guardrails name the install
   command `npx skills add danium/lateral-thinking` as where the pack came from. Locally modified:
   the router only (usage guidance, deferring to it over other divergent-thinking skills).
-- **book-to-skill** — converts a book/document into a new skill for Claude Code, Copilot CLI,
-  Amp, or Hermes Agent. Source not recorded in the skill file (a generic cross-agent tool, not
-  written in an operating voice); not locally modified.
 - **frontend-design** — visual/interaction design guidance for building distinctive UI. Source:
   Apache-2.0 licensed (LICENSE.txt in the folder); no specific author or URL named in the file
   beyond the license text. Locally modified: none noted in the file.
-- **grill-me** / **grilling** — a relentless round-by-round interview that maps a plan or decision
+- **grilling** — a relentless round-by-round interview that maps a plan or decision
   as a tree and works it to a shared understanding. Source not recorded in the skill file; not
   locally modified.
 - **prototype** — builds throwaway code (a logic demo or a UI variant page) to answer one design
@@ -134,6 +127,17 @@ being claimed here.
   credit line — but it shares vocabulary with, and is depended on by, **retro** above, which
   explicitly describes itself as adapted from an external author's folder; treated here as likely
   adapted rather than confidently my own, so it is not copied.
+
+- **From mattpocock/skills** (https://github.com/mattpocock/skills, MIT): **codebase-design**,
+  **diagnosing-bugs**, **implement-spec**, **improve-codebase-architecture**, **to-spec**,
+  **to-tickets**, **two-axis-review** (upstream `code-review`, renamed off a built-in command),
+  and a few smaller ones. Locally modified: each carries a short guardrails section fitting it to
+  the decision log, the word list and the landing steps here. They are referenced by name in
+  `coding-method` and the coding-rules map; install them from source.
+
+**Retired, no longer run:** a handover-document skill and a "write the least code" skill
+(DietrichGebert/ponytail) once shipped here. The first was replaced by `handing-off-live-work`'s
+short state file; the second's one rule, write less, is now a line in `coding-method` step 3.
 
 **Not listed above — regenerated, not carried:** **react-router-7**, **tailwind-4**, and
 **tanstack-query-5** are one-sentence reference skills generated per project straight from each

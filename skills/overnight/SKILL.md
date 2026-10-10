@@ -13,8 +13,7 @@ morning, and nothing that needs them blocks the rest.**
 
 1. **Restate the queue**: list what you intend to do tonight, in order, one line each.
    Pull the queue from the project's own state (plan files, the project's notes and
-   decisions log, open work),
-   plus anything the owner names in the invocation.
+   decisions log, open work), plus anything the owner names in the invocation.
 2. **Ask every clarifying question NOW.** None can be asked later. If the owner has
    already left, skip — never wait on an unanswered question; park it instead (see below).
 3. **Confirm the closed gates out loud**: anything that bills money, anything
@@ -23,6 +22,10 @@ morning, and nothing that needs them blocks the rest.**
    stay closed overnight — no exception because it is convenient at 3am.
 4. **If a start time was given**, schedule it (ScheduleWakeup / scheduled task) and
    confirm the start time back in plain words. Until then, do nothing.
+5. **Set the unattended-run end time, if you run the opt-in multi-chat hooks** (INSTALL.md,
+   "An unattended run"): while it is set, dev sessions are not stopped for a wrap-up. Give it
+   the time the queue should be genuinely empty, if known, else a backstop a few hours out.
+   The compaction notice and the cut-off hold are unaffected.
 
 ## Through the night
 
@@ -35,13 +38,16 @@ morning, and nothing that needs them blocks the rest.**
   write the plain-language root-cause explanation into the summary, move on.
 - **Usage limit hit?** Note the reset time, schedule a wakeup for just after it, and
   continue then. Losing an hour is fine; losing the night is not. Record the interruption
-  in the summary.
+  in the summary's FYI.
 - **The owner may interject from a phone.** "pause" and "stop" (defined in the global
   CLAUDE.md process rules) apply overnight exactly as they do by day.
 - **Keep running notes as you go** — the morning summary is assembled from notes, not
   from memory at 6am.
 - Roles still hold: a Planner session does Planner work overnight (rulings, reviews,
   plans), a dev session dev work. Zone rules and coordination files apply unchanged.
+
+**Remove the end-time file** as soon as the queue is genuinely empty — its time is only a
+backstop, never a substitute for this.
 
 ## The morning summary (the last thing written, always)
 

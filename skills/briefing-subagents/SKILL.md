@@ -5,56 +5,35 @@ description: Use when handing work to a subagent or a workflow agent — a read,
 
 # Briefing subagents
 
-## Overview
-
-A brief is the whole world a helper gets; whatever it leaves out, the helper invents. Five
-slots belong in every brief, always in this order. A slot that doesn't apply is written out
-with its reason on one line ("Load check: not applicable — no suite or measurement runs"),
-never simply omitted. A brief missing a slot is not sent yet.
-
-## The five slots
+The brief is the whole world the helper has; what it leaves out, the helper invents. Six slots, in this order, in every brief. A slot that does not apply is written out with its reason on one line ("Load check: not applicable — no suite or measurement runs"), never omitted. A brief with a slot missing is not sent.
 
 | Slot | Contains |
 |---|---|
-| Output on disk | The exact path the result is written to — a real path in the repo or the seat's own working copy, never a throwaway scratch location that disappears on restart. The final measurement runs in the foreground, and the file is written before the helper's turn ends. The reply back to you is short: the path, the counts, one line on what was left undone — no pasted output, no diffs, no root-cause prose. Everything else lives in the file. |
+| Output on disk | The exact path of the result — inside the project or the current worktree (the project's CLAUDE.md says where reports go), never the session scratchpad (it dies with a reboot). The final measurement runs in the foreground and the file is written before the helper's turn ends. The reply is: the path, the counts, one line on what was left undone — no pasted output, no diffs, no root-cause prose. The result is read from the file, never from the reply. |
 | Git boundary | "Do not run git add, commit, push, stash, reset, checkout, clean or branch. Read-only git — status, log, diff, show — is fine." |
-| Model and effort | Haiku for one checkable fact, sonnet for well-defined work, opus for judgment; medium effort for a fully-specified brief, high effort for open judgment. Prefer a purpose-built agent type when your setup has one: something read-only for a review or a fact-check (no ability to write files, so it answers in its reply and you save that reply to the file yourself), something that can edit for a task that must produce a file. A task whose wording trips words like fix, flaky, debug, why, root cause or intermittent is a judgment call, not a mechanical one — brief it as either (a) one capable helper on the strongest model, allowed to edit, or (b) two helpers: the first names the root cause in a short reply, which you save to the output file yourself; the second implements only that named cause and touches no assertion the first didn't call out. |
-| Load check | Before any heavy test suite or measurement: check how busy the machine already is (for example `uptime` on a shared machine). Heavily loaded means wait, not start-anyway. |
-| Verification line | A command and its count, for every number the brief asks for — run the command yourself once before sending, and put the real total in the brief (a total of zero usually means the metric is wrong for this codebase; fix that before sending). Every background figure in the brief — a failure rate, a file count — carries the command that measured it, or is marked "illustrative" or "as told to me." When the helper may touch a test file: the input that MUST make the test fail and the input that MUST NOT, both runs pasted into the output file — the reply itself carries only the two counts. "N of N green" alone is not verification; a loosened assertion is green N of N too. |
+| Model and effort | Haiku for a job whose steps are fully written out and whose answer a command checks — a count or recount, a sweep or verbatim move compared by `cmp`, a test or mutation run read from its result line, a mechanical edit checked by its diff, a named fix re-run to green, a failed CI run read for its failing test, a closing comment's proof claims checked against the repo, a docs lookup that quotes its source, a worktree survey, a name-and-path scan (each passed a haiku trial in the owner's setup, 2026-10-10). Sonnet for well-defined work with a choice left in it. Opus for judgment. Never haiku for a review, a verdict, a diagnosis without a named cause, a design choice, or long multi-step coding (untested on haiku). A haiku job fits within 100k tokens of context, reading included; a bigger one splits before it is sent. Effort medium for a full brief, high for open judgment; the top rung is for one named, bounded job, then back down. Prefer purpose-built agent types when your setup has them — for example, an editing type (`executor`: sonnet, may edit, holds Write), a read-only judgment type (`reviewer`: opus, no Write tool, answers in the reply), a read-only checking type (`fact-checker`: haiku, no Write tool), a read-only exploring type (`Explore`) — and make your own if you have none. A file output needs a type that holds Write (the editing type; or a general-purpose agent on opus when a judgment must reach disk). A no-Write type is briefed for a short reply and you write it to the file. Trigger words: a task sentence holding fix, flaky, debug, why, root cause or intermittent is judgment, in one of two shapes and no third — (a) one brief on opus, may edit; (b) two briefs: the read-only judgment type names the root cause in a short reply (you save it to the output file), then the editing type implements only the named cause and changes no assertion the diagnosis did not name. Do it yourself when briefing would take more words than the change. An always-identical mechanical step is a hook, not a helper. (This kit's `agent-model-guard.sh` hook refuses a helper launch that names no model.) |
+| Load check | Before any test suite or measurement: `uptime`; a 1-minute load at or above the project's stated ceiling (default 10) means wait. |
+| Verification line | A command and its count line for every number the brief asks for — run it once yourself before sending and put the measured total in the brief (a total of 0 means the metric is wrong for this codebase; change it first). Every background figure in the brief — a failure rate, a file count — carries the command that measured it, the word "illustrative", or "owner-supplied". When the files-it-may-touch list holds a test file: the must-fire input (the break on which the test must go red) and the must-not-fire input (correct code on which it must stay green), both runs pasted into the output file, the reply carrying only the two counts — "N of N green" alone is not verification; a loosened assertion is green N of N. |
+| Safety | These three lines, copied word for word: "Never write a real name, a client name or an absolute home-folder path into any file or reply; write `~/` for the home folder. Secrets never go in code, files, commits or replies; they live in `.env`, gitignored. Nothing you write carries a Claude attribution line or any author but your own publishing identity." Helper agent types may start without the rulebook (a Claude Code agent file can set `omitClaudeMd: true`), so the brief is the only place they learn these. |
 
 ## Before dispatch
 
-A helper that waits on a background job blocks on the job itself — its exit, a
-task-completion notification, or a monitoring tool's own exit condition — and then reads
-the result from the file that job wrote. A helper that has to guess from a log line whether
-the job is done is a bug waiting to happen. If a waiting helper matches running processes
-by name, it excludes its own process (or better, waits on the exact process id it captured
-when the job started) — never on a text string the waiter itself contains, or it will match
-itself.
+**A background waiter blocks on the process, never on a marker in its log.** A brief that waits for a job names the job's end — the harness's task notification, the process exit, or a monitoring tool's exit condition — and reads the result from the file the job writes. **A waiter that matches processes by name excludes its own process, or waits on the process id captured when the job started — never on text the waiter itself contains.**
 
-Before dispatching a run that will cost real money at list price, say so in one line and
-wait for a yes rather than assuming the go-ahead. Keep each helper to one clearly bounded
-task; a task that would take a helper far longer than a normal single piece of work should
-be split before it's briefed, not handed over whole. Reviews are cheaper when they cluster
-their findings first and only re-verify the clusters that matter, on the cheapest model that
-can check them.
+A helper that waits on a long job (a test run, a measurement, a process) waits in checks at most 4½ minutes apart, never one long wait: each check is a foreground wait on the job's end (its exit, or the monitoring tool's exit condition) with a timeout of 4½ minutes or less, and each resets the helper's 5-minute prompt cache, which a longer pause loses.
 
-**Size the helper before briefing.** One task is about 150k tokens of work, with a ceiling
-near 200k; the brief lists the file sections to read (a big file is read by section, in every
-helper brief); a bigger task splits before it is sent. The size the last similar helper
-actually used sets the next brief. After a build helper reports, a cheap fact-checker can
-re-run the report's counts (the test total and failure count, the diff summary against the
-brief's file list, both sides of any two-sided test present) instead of you reading the logs
-yourself; it checks the numbers and never judges whether the goal was met.
+A run projected above $10 at list price (about five Sonnet one-task helpers or two Opus helpers): state the projection in one line and wait for the owner's yes — the brake is cost, not agent count. Before a big research round, workflow or paid call, state cost and value in one line; ask if unclear. A yes on an estimate allows up to twice it; ask again only past that. A limit the owner set may be passed only for work sure to fix a named problem (a known cause, a known fix), never to keep hammering an unsolved one.
+
+**Helper size:**
+1. One task per helper, about 150k tokens of work, ceiling 200k (a haiku job smaller: see Model and effort). Size it before briefing, the brief listing the file sections to read; a bigger task splits before it is sent. The last similar helper's token count (its task notification) sets the next brief. A third level only when this brief grants it, naming the grandchild's model and job.
+2. Big files are read by section, in every helper brief.
+3. After a build helper reports, a haiku fact-checker re-runs the report's counts (the result line and failure count, `git diff --stat` against the brief's file list, both two-sided runs present, the quoted requirement line matching the brief) in place of your own log reads; it never judges whether the line is met.
+
+Reviews cluster findings first and verify only blocker and major clusters, on the cheapest capable model. Review a helper's result before trusting it; the main chat keeps the decisions and the commits.
 
 ## Shape of a brief
 
-The task in one sentence → the files it may touch, and no others (read before the brief is
-written, so a "likely cause" names a file and line the writer has actually seen, or says
-plainly "not investigated — the helper starts here") → the five slots → "Stop and report
-back if the brief is unclear, or if the work needs a file outside this list" → the reply:
-the path, the counts, one line on anything left undone. The verification output itself lives
-in the output file, never in the reply.
+The task in one sentence → the files it may touch, and no others — read before the brief is written, so a "likely cause" names a file and line the writer has seen or says "not investigated — the helper starts here" → the six slots → "Stop and report when the brief is unclear or the work needs a file outside those" → the reply: the path, the counts, one line on what was left undone. A helper type without the Skill tool gets the paths of the skill files and project parts its job needs (`testing-method` for any code or check), to read first.
 
 ## One example
 
@@ -62,22 +41,17 @@ in the output file, never in the reply.
 > imports the shared test-routing fixture (measured before sending: 35 files, 414 `test(`
 > calls, 0 imports). Write the table to `docs/reviews/<date>-test-inventory.md`; reply with
 > the path, the three counts (files, `test(` total, fixture-import files), and one line on
-> anything left undone. Read-only: no git add, commit, push, stash, reset, checkout, clean
-> or branch. Model: sonnet, effort: medium. Load check: not applicable — no suite runs.
-> Verification: your file count matches a plain `ls tests/*.test.ts | wc -l`, and your
-> `test(` total matches a plain grep for the word.
-
-## Common mistakes
-
-Reading the result back in chat instead of the file (spending your own budget on it);
-briefing "fix the test" with no diagnosis, so the helper loosens an assertion to make it
-pass; saying nothing about git, so the helper stashes someone else's in-progress work;
-putting a diagnosis on the cheap model and a headcount on the expensive one; a count brief
-whose metric was never actually measured first; a reply that asks the helper for "the
-output in full."
+> anything left undone. Do not run git add, commit, push, stash, reset, checkout, clean or
+> branch. Read-only git — status, log, diff, show — is fine. Model: sonnet, effort: medium.
+> Load check: not applicable — no suite runs. Verification: your file count matches a plain
+> `ls tests/*.test.ts | wc -l`, and your `test(` total matches a plain grep for the word.
+> Safety: Never write a real name, a client name or an absolute home-folder path into any
+> file or reply; write `~/` for the home folder. Secrets never go in code, files, commits or
+> replies; they live in `.env`, gitignored. Nothing you write carries a Claude attribution
+> line or any author but your own publishing identity.
 
 ## Done when
 
-The brief carries all five slots in order, every number in it names the command that
-measured it, and the helper's reply back is the path, the counts, and one line on what was
-left undone. You read the real result from the file it named — never from the reply alone.
+The brief carries all six slots in order, every number in it names the command that measured it, and the helper's reply back is the path, the counts, and one line on what was left undone. You read the real result from the file it named — never from the reply alone.
+
+**Project part:** if the project has `.claude/skill-parts/briefing-subagents.md`, read it now; where it is more specific than this skill, it wins.

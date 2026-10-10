@@ -24,6 +24,31 @@ a short fixed set of questions about it. A finished-looking screen has shipped w
 on the same day its own tests passed — the rehearsal is what a test suite can't do, because it
 never actually looks at the thing.
 
+## From need to done
+
+When the job is building something, the chat follows one fixed path, and starts the step's
+skill itself; I never have to name one:
+
+1. **Idea** — questions until the want is one sentence I agree with.
+2. **Research** — a fact the decision needs, read from its source and cited.
+3. **Decide** — when there is more than one sensible way, a page with a button per option;
+   the chat tests its own favourite against the alternatives before showing me.
+4. **Plan** — every file it will touch read first, and every behaviour written as one input
+   it must refuse and one it must allow.
+5. **Build, test first** — each test seen failing before the code exists, then passing.
+6. **Review** — one helper that never saw the change checks it against the plan.
+7. **Land** — the records (decisions, mistakes) ride in the same commit as the change.
+8. **Deploy or share** — privacy check, security review, a blind reviewer, then my yes, then
+   the live site checked.
+9. **Look back** — at the end of a phase: what slowed us down, with rule changes proposed to
+   me, never made.
+
+A one-line fix goes through every step, quickly. The chat copies the steps into its own to-do
+list, and a skipped step stays on it with the reason. The map itself is
+[TEMPLATE-coding-CLAUDE.md](TEMPLATE-coding-CLAUDE.md); the detail of each step lives in the
+skill for it (`coding-method`, `testing-method`, `going-live`), which loads only when that
+step starts.
+
 ## The card
 
 Every chat reports back in the same shape, so my eye always knows where to look:
@@ -72,9 +97,13 @@ ordinary turn gets one line and "needs my input".
 
 ## Design choices and guards
 
-- **Anything that changes what a user sees is picked on a rendered page** — an example of each
-  option with a button beside it, an artifact rather than a paragraph in chat, and never a
-  drawing that only exists inside the chat window.
+- **Every pick is made on a rendered page** — an example of each option with a button beside
+  it, an artifact rather than a paragraph in chat, and never a drawing that only exists inside
+  the chat window. It started with design choices and now covers any choice I'm asked to make.
+- **One review per moment, not a pile of them.** Every change gets one check by a helper that
+  never saw it; a whole multi-task branch gets one review against its spec; a guard gets one
+  round of someone trying to break it; anything going live gets the fixed checks in
+  `going-live`.
 - **Rules and guards guide a chat; they are not walls.** They are tested against honest mistakes
   and against honest work wrongly refused, never built to make a deliberate bypass impossible.
 - **Before I'm handed a script or a set of steps, it has been run end to end on a throwaway
@@ -99,7 +128,10 @@ was:
 6. **Anything irreversible or outward-facing** — a real deploy, a database change, a
    message sent on my behalf.
 
-Everything else, once started, keeps moving without a check-in.
+Everything else, once started, keeps moving without a check-in. Two habits keep the
+questions down: **look first** — never ask me what the files, git or the chat list already
+show — and **ask everything at once**, every question the job will need in one message, so I
+can step away without being pulled back for each one.
 
 ## The paper trail
 
@@ -126,6 +158,8 @@ as file contents:
 - **Skip what I already know — and only that.** My own field's basics, and why a wrong input in
   it is bad, are never explained; software terms and a project's internal names still get a
   one-line explanation. The words go to what is new: the cause, the change, the choice, the cost.
+- **Explain it my way.** What I will see and what we want, in one plain sentence; how it works
+  — the scripts, the internal names, the steps — only when I ask.
 - **Explain the thing, then use the word.** A technical term gets defined the moment
   it's first used in a message — never assumed, never left for me to look up.
 - **New terms go to the glossary at the moment they're used** — one plain line, added
@@ -154,7 +188,14 @@ as file contents:
 - **Use the lightest tool that can actually do the job.** A cheap, fast model for
   mechanical work; a stronger one only where real judgment is needed. Spending more
   than a task needs isn't caution, it's waste. A hook enforces the habit: a helper agent
-  cannot be launched without naming the model it runs on.
+  cannot be launched without naming the model it runs on. The small model takes any job
+  whose steps are written out and whose answer a command checks; it never gets a review, a
+  verdict or a design choice.
+- **A helper starts with only its brief.** My helper types skip the rulebook, which saves each
+  one thousands of words of reading — so every brief carries three lines word for word: no
+  real names or home-folder paths in anything written, no secrets anywhere, no author but me.
+  A helper waiting on a long job checks back at most every four and a half minutes, because
+  a longer pause throws away the cheap re-read of its own memory.
 - **A budget is a gauge to report, not a stop sign to quietly obey.** Once a job is under way,
   going over an estimate means saying so and continuing — not trimming the work down to fit
   without telling me. An earlier habit did the opposite: work quietly got smaller once an
@@ -174,5 +215,11 @@ as file contents:
 - **The rules file holds rules; their history lives next door.** Dates, quotes, and the story
   behind each rule moved to a changelog, so the file every chat reads stays short enough to be
   read — and a hook refuses a commit that lets it grow past a word cap.
+- **A rule with a moment lives in the skill for that moment.** The rulebook every chat reads
+  keeps only what has no moment — how to talk to me, what a yes covers. A rule about commits,
+  tests or deploys moves into the skill that runs at that moment, with a one-line pointer
+  left behind.
+- **A correction becomes a check or a rule.** When I correct a chat, it proposes an automatic
+  check if the mistake was mechanical, a rule line if it needs judgment.
 - **A chat proposes; it doesn't just write.** Nothing goes into the standing rules
   without my yes first — a proposal in the chat, then a save, never the reverse.

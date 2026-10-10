@@ -1,75 +1,56 @@
 ---
 name: walkthrough
-description: Use when someone asks for a screen, flow, animation or interaction; when two points are named ("from A to B") with the path unstated; before any mockup of a screen a person will touch; and before a screen or interaction is reported done.
+description: Use when the requester asks for a screen, a flow, an animation or an interaction; when they name two points ("from A to B", "when they press this, then the panel") and the path between is unstated; when they say "imagine the workflow" or "picture it"; before any mockup of a screen a person will touch; and before a screen, animation or interaction is reported done or verified.
 ---
 
-# Walkthrough — sitting in the user's seat
+# Walkthrough — sitting in the person's shoes
 
 ## Overview
 
-Someone names two points, A and B, and rarely the path between them. This skill walks from
-A to B the way an actual person would: in time, at phone size, from first sight to done —
-and brings back a strip of pictures to react to. A chat cannot picture motion, so it
-observes instead of imagining: draw the **storyboard** before anything is built, do the
-**rehearsal** in a real running browser before anything is called done.
+The requester names two points, A and B, and rarely the path. Walk from A to B as the person would: in time, at phone size, from first sight to done, and bring back a strip the requester reacts to. A chat cannot picture motion, so the walkthrough observes instead of imagining: the storyboard is drawn, the rehearsal is done in the real browser and judged from pictures. Two moments, one story: the **storyboard** before anything is built, the **rehearsal** before anything is called done.
 
 ## The story (both moments start here)
 
-1. One person, one goal, from A (the first point named) to B (the second), both in the
-   requester's own words.
-2. Expand the path into **moments**, one line each: anything the person does, sees, or
-   waits for. Every path has these moments, listed even when nobody mentioned them:
+1. One person, one goal, from A (the requester's first point) to B (the second point), both written in the person's words.
+2. Expand the path into **moments**, one line each: anything the person does, sees, or waits for. Every path holds these moments, listed even when the requester never mentioned them:
    - first sight of the screen, and what tells them what to do;
    - the touch;
    - the wait after the touch, and what shows during it;
    - the change;
    - the sign that something happened, at the moment it happens;
    - the next thing to do, and the way back;
-   - the empty state (nothing there yet) and the error state (it failed).
-3. Where the path forks, draw two reasonable versions and let the requester pick between
-   the drawings, never between sentences.
-4. If the product supports more than one language or reading direction, walk that path too,
-   as its own strip, wherever a direction, number, or label differs.
+   - the empty state (nothing yet) and the error state (it failed).
+3. Where the path forks, two reasonable ways from one moment to the next, keep both as two strips. The requester picks between drawn options, never between sentences.
+4. Every language the product ships is walked; a path in a language that reads in another direction is its own strip wherever a direction, a number, or a label differs.
 
 ## Moment 1 — the storyboard, before building
 
-One frame per moment, drawn (a design tool, a mockup widget, or a quick sketch), in order.
-A frame holds what the person sees plus one caption: what they're doing and what they
-expect. The waiting, empty, and error frames are frames like any other.
-Deliver the strip with one decision to make: is this the story? Pick between drawn options
-wherever the path forked.
-Done when every moment has a frame and the pick has been made.
+One frame per moment, drawn (a canvas, a widget or an image), in order. A frame holds what the person sees and one caption line: what they are doing and what they expect. The waiting, empty, and error frames are frames like any other.
+Deliver the strip to the requester with one question: is this the story? A or B wherever the path forks.
+Done when every moment has a frame and the requester has picked.
 
 ## Moment 2 — the rehearsal, before "done"
 
-1. Open the real, running app at a phone width (around 390px), then once at desktop size.
-2. For each moment of the picked strip, do the action as the person would: tap, press and
-   hold, drag, type. Take three pictures: at touch, during (the hold, or the wait), after.
-3. Every language and theme the change actually touches.
-4. For each moment, answer four questions from the pictures alone:
+1. Open the real app in a real browser at 390 px wide (the mobile preset), then once at desktop size.
+2. For each moment of the picked strip, do the action as the person would: tap, press and hold, drag, type. Take three pictures: at touch, during (the hold, or the wait), after.
+3. Every language the product ships, and both themes, for the screens the change touched.
+4. For each moment answer four questions from the pictures alone:
    - **Know**: would they know what to do here?
-   - **See**: is the control visible, reachable, and at least a finger wide (roughly 44px)?
+   - **See**: is the control visible, reachable, and at least a finger wide (44 px)?
    - **Connect**: does the action visibly cause the effect?
    - **Notice**: do they see that something happened, at the moment it happens?
-   A "no" to any of these is a defect: name the moment, the question, and the picture.
-5. **Whoever drives the rehearsal should not be whoever built the thing.** A separate,
-   disposable helper that never saw the change drives the browser, writes the pictures to
-   disk, and answers the four questions; the person running the walkthrough reports those
-   answers unchanged. Walking through your own work yourself is not the check — you already
-   know where to click.
+   A "no" is a defect: the moment, the question, the picture.
+5. The tester is not the builder: a helper that never saw the diff (sonnet or lighter; see the `briefing-subagents` skill) drives the browser, writes the pictures to disk and answers the four questions; you report its answers unchanged and carry the strip to the requester. Your own walk is not the check.
 
-Deliver: the strip of "after" pictures at full-screen scale; any picture with markup shown
-beside its plain original at the same crop and size; the defect list.
-Done when every moment has its three pictures, every "no" has a fix landed or a tracked
-follow-up, and the strip has actually been shown to whoever asked for the walkthrough.
+Deliver: the strip of "after" pictures at whole-screen scale; any marked picture beside its plain original at the same crop and size; the defect list in your report to the requester.
+Done when every moment has its three pictures, every "no" has a fix landed or a task, and the requester has seen the strip.
 
 ## The strip's columns
 
 | Moment | The person does | Sees at touch | Sees during | Sees after | Know · See · Connect · Notice | Defect |
 |---|---|---|---|---|---|---|
 
-The "during" column is the one that surprises people. Fill it for every moment — "nothing
-to wait for" is a valid, and common, answer.
+The "during" column is the one that surprises people. It is filled for every moment, "nothing to wait for" included.
 
 ## One example
 
@@ -84,26 +65,12 @@ Rehearsal at phone width found: during the hold, the list's text became selectab
 text-drag instead of a tap. Notice failed at "touch." Defect logged with its picture; the
 fix made the surface non-selectable.
 
-## Common mistakes
+## Common errors
 
-A path with only A and B, leaving the wait, empty, and error states unlisted. Judging from
-the code ("the data updates on release") instead of from the pictures. One picture per
-moment instead of three. Prose sent instead of a drawn strip. A fork asked as a question
-instead of shown as two strips. Checking desktop size only.
+A path of only A and B, with the wait, the empty state, and the error unlisted. Judging from the code ("the data moves on release") instead of the pictures. One picture per moment. Prose to the requester instead of a drawn strip. A fork asked as a question instead of two strips. The desktop size only.
 
-## Baseline
+## The pictures are committed
 
-Illustrative: in one real project, a day of testing a complex interactive screen turned up
-several real defects that a large automated test suite had all missed — every one of them
-found by a person, and every one of them in the "during" column: the hold or the wait,
-mid-interaction, that a static test never sits through. That gap is the reason this skill
-exists.
+Commit the rehearsal pictures a landing cites into the repo; a scratch or worktree folder is lost when it is removed.
 
-## Commit the rehearsal pictures
-
-Every rehearsal picture cited in a "done" report belongs in the actual repo (for example,
-under a path like `docs/design/<task>/pictures/`) in the same commit that reports it done —
-not only in a throwaway working copy. Screenshots that were the only evidence a check had
-passed have been lost before, along with a retired temporary workspace; treat them as part
-of the deliverable, not scratch. Take them from fixtures or test accounts only, never from a
-real user's screen — a committed screenshot can carry personal data into a public repo.
+**Project part:** if the project has `.claude/skill-parts/walkthrough.md`, read it now; where it is more specific than this skill, it wins.

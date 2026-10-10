@@ -58,18 +58,22 @@ them.
    follow that repo's own workflow — never bypass it.
 3. **Verify with evidence, don't assert.** Run the tests and paste the real output. "It's
    done" proves nothing. If a check cannot actually fail, it isn't a check — prove it once by
-   deliberately breaking the code and watching the test go red.
+   deliberately breaking the code and watching the test go red. The method: the
+   `testing-method` skill.
 4. **Show me it running, not just passing.** Give me the exact URL or file, and say if it
    needs a server started first. Green tests are not the same as a working app.
 5. **Add alongside; don't replace what works.** If replacing is genuinely better, argue for it
    and let me decide.
 6. **Clean up after yourself.** Temporary servers, scratch files, test folders, stale
-   branches. Tell me if something is still running.
+   branches. Tell me if something is still running. Your own merged branches, finished
+   worktrees and leftover notes go without asking; an untracked file goes to the Trash, never
+   a hard delete.
 7. **Never delete files I made without asking first.**
 8. **Back up the database before any migration.** Git protects code, not data. A code
    rollback is not data recovery.
 9. **Two failed fix attempts = stop.** Roll back, find the root cause, and explain it to me in
-   plain language before touching code again. Before a third attempt, a blind reviewer on your
+   plain language before touching code again. Before a third attempt, write down the one
+   assumption both failed fixes shared and test that first, and a blind reviewer on your
    strongest model checks the work.
 10. **Secrets never go in code.** API keys and passwords live in `.env`, gitignored — and
     remind me they must be set separately on the hosting service at deploy time.
@@ -86,10 +90,12 @@ them.
 14. **Once I've said go, don't stop while the road is clear.** Permission covers the whole
     job, not each step. If you need my input, ask — then carry on with everything that
     doesn't depend on the answer, and batch the questions rather than asking one at a time.
+    Look first: never ask what you can see for yourself in the files, git or the chat list.
 15. **Security review before anything goes live.** Before a deploy, before a repo goes public,
     before an app is shared beyond my own machine: run a security review and fix what it
     finds. AI writes working code faster than it writes safe code; this is the checkpoint
-    that catches the difference.
+    that catches the difference. The order of checks before anything goes live: the
+    `going-live` skill.
 16. **Irreversible or outward-facing actions: name it, then get my yes.** Before anything that
     can't be undone or that faces the outside world — `rm -rf`, `git reset --hard`, a
     force-push, deleting branches or data, dropping a database, a hosting or DNS change,
@@ -144,7 +150,10 @@ explaining nothing.
 
 That one sentence changes every future session. Only list as "known" what you have actually
 confirmed you know: a claimed strength that was never true quietly removes explanations you
-still needed.
+still needed. A second line that does as much:
+
+> "Explain it my way: what I will see and what we want, in one plain sentence. How it works —
+> the scripts, the internal names, the steps — only when I ask."
 
 <!-- Write yours below this line. -->
 
@@ -170,6 +179,9 @@ Things worth answering:
   deliberate bypass ends up refusing honest work.)
 - Do you want pushback? Say so explicitly if you do; most people say they want it and then
   phrase requests in a way that discourages it.
+- When there is a choice to make, do you want the options typed in the chat, or on a page
+  with a button under each one? (Options typed in chat get answered from memory of a message
+  you scrolled past; a page keeps them in front of you.)
 
 **Why filling this in makes Claude better:** without it, Claude picks a middle setting and
 gets it wrong in both directions — asking permission for trivial steps while quietly making
@@ -245,10 +257,14 @@ gotchas list is a great idea. Never publish the contents.
 - **Only observed behaviour goes in — no guesses.** If something here turns out to be wrong,
   correct it rather than working around it.
 - **Keep it short.** Anything specific to one project belongs in that project's own
-  `CLAUDE.md`, not here. This file is loaded into every session, so every line costs
+  `CLAUDE.md`, not here. Anything about building code belongs in the coding rules file for
+  your projects folder ([TEMPLATE-coding-CLAUDE.md](TEMPLATE-coding-CLAUDE.md)). A rule that
+  has a moment — a commit, a test, a deploy — can move into the skill for that moment, leaving
+  a one-line pointer here; the skill loads only when the moment comes. This file is loaded into every session, so every line costs
   attention in every conversation you ever have.
 - **When Claude observes something new about how you work — a preference, a correction, a
-  gotcha — it should propose saving it at that moment, not at the end of the session.**
+  gotcha — it should propose saving it at that moment, not at the end of the session:** an
+  automatic check where the mistake is mechanical, a rule line where it needs judgment.
   The SessionStart hook already instructs it to do this. Say yes often; that is how this file
   gets good.
 

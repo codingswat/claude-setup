@@ -1,115 +1,52 @@
 ---
 name: shared-tree-commit
-description: Use when committing, landing or pushing in a shared git checkout or a seat's own worktree, when a git guard refuses a command (a pathspec, dangerous-git, heavy-suite, or channel-size guard, a commit-size ceiling, a pre-push type-check), or when a push is rejected as non-fast-forward.
+description: Use when committing, landing or pushing in a git checkout that several sessions share or in your own worktree, when a hook or guard refuses a git command, when a push is rejected as non-fast-forward, when a rebase conflicts or stops, or when a commit is about to touch a file another session may also have edited.
 ---
 
-# Committing in a shared tree
+# Committing where others work too
 
-## Overview
+Read `coding-method` §7 first (general commit-and-land steps). This adds only what a shared checkout or second worktree changes.
 
-When several sessions or people share one working tree and one git index, a commit takes
-whatever the working tree currently holds for the paths you name — so the discipline is
-two-fold: name your own paths, and never carry another session's lines into your commit. A
-seat working in its own worktree instead follows **In your own worktree** below.
+A shared checkout has one tree and one index; a commit takes whatever the tree holds for the paths it names. So name your paths and carry no other session's lines. In your own worktree nothing is shared, but the same read still catches a rebase that kept the wrong side.
 
-## The recipe (shared root folder)
+## In a shared checkout
 
-1. Pull, in its own step: `git pull --ff-only`.
-2. Write, in its own step: an editor tool, or a shell command that names the exact file.
-3. Read the content before staging: `git diff HEAD -- <path>` for every shared/channel file
-   (a live notes file, a decision log, a mistakes ledger, a plan file — anything several
-   sessions append to). Every hunk in that diff should be yours — if it isn't, stop.
-4. Commit by path, in its own step: `git commit <path> <path> -m "…"`, then `git push`. If a
-   pre-push check runs a type-check (or similar) and refuses on failure, let it finish —
-   don't bypass it.
-5. If a guard refuses: re-read `git diff HEAD -- <path>` again, in a fresh step, right after
-   the refusal (the branch tip or the tree may have moved since your first read) — the retry
-   is the very next thing you do, not something done later.
+Each step is its own tool call. A guard judges a call before it runs, so a call that writes and commits is judged on the file as it was before the write.
 
-The write and the commit are separate steps on purpose: a guard evaluating a command judges
-the file as it stood *before* that command ran, so a single step that both writes and
-commits is judged on stale content.
+1. Pull: `git pull --ff-only`.
+2. Write (the Edit or Write tool, or a script whose command names the file).
+3. Read the content (`coding-method` §7) of every shared file (a shared log, a memo file, a plan).
+4. Commit by path (`coding-method` §7), then `git push`. A push hook that type-checks or tests runs to the end.
+5. If a guard refuses, run `git diff HEAD -- <path>` again in its own call, after the refusal: HEAD or the tree may have moved; the retry is the very next call after that re-read. A read made before the refusal is not a re-read, however clean it was. Type an override flag only after that re-read, and only for lines you have read and mean to carry. An override counts only at the start of a command segment; inside a message, a heredoc or a quoted string it does nothing.
 
 ## In your own worktree
 
-A seat with its own worktree shares no folder and no index with anyone else, so whole-index
-guards and provenance checks that watch the shared root don't apply there. Attribution
-rules, file-size bands, and a pre-push type-check still apply everywhere. The recipe
-becomes:
+`git rev-parse --path-format=absolute --git-dir --git-common-dir` printing two different paths means a linked worktree: no shared folder, no shared index. Recipe:
 
-1. Sync, in its own step: `git fetch origin && git rebase origin/main`. On a conflict,
-   resolve it by re-applying each side's original intent — never `git merge --abort`, and
-   never fold unrelated changes into the conflict-resolution commit. On a shared channel
-   file, keep both entries (yours above theirs) and say so in your commit message.
-2. Write, in its own step.
-3. Read the content: `git diff HEAD -- <path>` for every channel file — every hunk should be
-   yours by construction; this catches a rebase that accidentally kept the wrong side of a
-   conflict.
-4. Commit by path: `git commit <path> <path> -m "…"`.
-5. Land it: `git push origin HEAD:main`. On "non-fast-forward," repeat step 1, then push
-   again — never `--force`, never `--no-verify`. This direct push is for a repo you alone
-   own; a team repo, branch protection, or required reviews mean you follow that repo's own
-   workflow (a pull request), never a direct push to main.
+1. Sync (`coding-method` §7) in its own call. A conflict: use `resolving-merge-conflicts` if you have it; by hand, that means re-applying each side's original intent, never `git merge --abort`, and never folding unrelated changes into the resolution commit.
+2. Write, read the diff of every shared file, then commit by path: each in its own call.
+3. Before any push, check the rebase finished: `test ! -d "$(git rev-parse --git-path rebase-merge)"`. Never push a rebase stopped on a conflict as if finished.
+4. Land as `coding-method` §7 says. On `rejected … non-fast-forward`, `main` moved: step 1 again (`git fetch origin && git rebase origin/main`), then push again.
 
-**Gate every chained step on its actual exit code, never by piping its output through
-something else** (`| grep`, `| tail`, `| head` hide the real exit code of the command
-before the pipe). A test run that gates anything should write its own output to a file and
-be judged on its own exit status. After a rebase, check that no conflict is still open
-(for example, that git reports no in-progress rebase directory) before treating the rebase
-as finished — a rebase stopped mid-conflict should never get pushed as if it succeeded. A
-pre-push hook that exports the exact commit being pushed into a clean folder and
-type-checks it there is checking the commit, not your working folder — your own uncommitted
-edits can neither block nor pass it, and this kind of hook is usually opt-in per repo, not
-automatic everywhere you clone.
+**Gates are exit codes, never pipes** (`coding-method` §7). `| grep`, `| tail` or `| head` on a commit, push or rebase step hides the exit code of git and of test runners. A test run that gates anything writes its output to a file and is judged on `$?`. A push hook that checks the pushed commit in a clean export is not affected by your uncommitted edits, for or against.
+
+**`CONFLICT (content)` on a shared append-only file** (a log or memo file where each side adds an entry at the top; another session added one): keep both entries, yours above theirs, say so in the commit message. Then drop from the kept side any entry the other side had just archived: a rebase re-adds archived entries, so check each kept entry's heading against the archive or tombstone before `git rebase --continue`.
 
 | The message | Meaning | Do |
 |---|---|---|
-| `rejected … non-fast-forward` | The shared branch moved since your rebase | `git fetch origin && git rebase origin/main`, then push again |
-| A conflict on a shared channel file | Another session landed an entry at the same spot | Keep both entries, yours above theirs; then drop from the kept side any entry the file already carries an archive pointer for (a rebase can re-add entries the other session had just archived); continue the rebase; say so |
-| `pre-push … typecheck failed on commit …` | The pushed COMMIT doesn't type-check (your folder may be fine) | Fix it, commit again, push again |
-| `fatal: '<branch>' is already checked out` | You tried to check out the shared branch inside your own worktree | You never need it locally — land with `git push origin HEAD:main` |
-
-## When a guard speaks
-
-| The message | Meaning | Do |
-|---|---|---|
-| `commit-pathspec-guard`: no paths, index already holds files | Something else got staged | Commit by path — a pathspec commit ignores whatever else is staged; don't unstage anything |
-| `commit-pathspec-guard`: `-a` / `.` refused | A whole-tree sweep was attempted | Name your files instead |
-| A provenance / "no record" refusal | This session never wrote that file, or wrote it before committing | Re-read the diff again after the refusal; if every hunk really is yours, set `SWEEP=1` for that one commit; otherwise stop |
-| A "changed since you read it" refusal | Another session's lines are now in the file too | Wait for their commit, pull, re-read the diff, retry |
-| `channel-size-guard` refusal | The file crossed its size band (for example, 9,000 words for a notes file, with a lower target to sweep down to) | Archive resolved entries down toward the lower target first, then write |
-| `block-dangerous-git` refusal | `reset --hard`, `clean`, a force-push, deleting a branch, and similar | State the target, scope and consequence, get an explicit yes, then set `GITGUARD=1` for that one command |
-| `heavy-suite-guard` refusal | Another session is already running a full suite | Wait; a single targeted test file is exempt. If you must run anyway, after the owner's yes, set `SUITE_OK=1` for that one command |
-| Pre-commit ceiling refusal | Your commit adds an unusually large number of lines to a shared file in one go — only checked when the channel conf (`~/.claude/hooks/channel-ceiling.conf`, set up by the installer's opt-in) is present | Confirm it's deliberate (a genuine sweep), read the diff, then set `SWEEP=1` for that one commit |
-
-An override flag only counts at the very start of a command segment — one written inside a
-commit message, a heredoc, or a quoted string does nothing.
-
-## Report
-
-Record what you actually did, in the commit message body, below the subject line — a slot
-with nothing to report says "none," it never just disappears:
-
-- Pulled/synced: what the command actually said
-- Wrote: which path, and what the entry says
-- Diff read: which step(s), what the hunks were
-- Guard: the refusal text, unedited, or "none"
-- Committed: the command as typed, override prefix included if used
-
-In chat, one sentence is enough: "Landed on main: `<old>..<new>`" (or "committed on the
-branch `<hash>`, not landed," or the guard's refusal in plain words).
+| a push hook says the commit fails its check | the commit is broken (your folder may be fine) | fix, commit, push again |
+| `fatal: '<branch>' is already checked out` | you tried `git checkout main` in a worktree | never needed locally; land with `git push origin HEAD:main` |
+| a hook refuses a bare `git commit` while the index holds files | another session staged files | commit by path; a path commit ignores their staged files; unstage nothing |
+| a hook refuses `git commit -a` or `git commit .` | a whole-tree commit | name your files |
+| a guard says another session's lines are in the file | the tree holds hunks you did not write | wait for their commit, pull, read the diff again, retry |
+| a guard says the history moved under your edit | HEAD moved after you wrote | pull, read the diff again, retry |
 
 ## Red flags
 
-A whole-tree add or commit in a shared folder; stashing in a shared folder; resetting a
-shared file back to HEAD; merging or pulling in the shared root to land a worktree's branch;
-calling a push to a side branch a "landing"; using an override before actually reading the
-diff; retrying immediately after a refusal with no fresh diff read in between; a shared file
-left uncommitted at the end of a session (the next session's cleanup will end up rewriting
-it); claiming a check ran when no command actually backs that claim.
+`git add -A`, `git commit -a`, `git stash` in a shared checkout, `git reset HEAD -- <file>` on a shared file, `git merge` or `git pull` in the shared checkout to land a worktree's branch, `git push origin <branch>` called a landing, an override typed before the diff was read, a retry straight after a refusal with no diff call between, a report claiming a check no command matches, a shared file left uncommitted at the end of a task (the next session may commit it whole).
 
 ## Done when
 
-The push shows the branch moving forward on the shared branch (never sideways), the commit
-body carries the audit lines above, and the chat's result names the landing range in one
-sentence. A commit still sitting only on a side branch is not done.
+The push line reads `<old>..<new> HEAD -> main` (or `main -> main` from the shared checkout). A commit sitting on a branch is not landed; say which it is.
+
+**Project part:** if the project has `.claude/skill-parts/shared-tree-commit.md`, read it now; where it is more specific than this skill, it wins.

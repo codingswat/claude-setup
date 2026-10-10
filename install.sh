@@ -11,7 +11,7 @@
 #   ~/.claude/git-hooks/           commit-msg, pre-commit, pre-merge-commit, pre-push
 #                                  (opt-in to run them machine-wide — see that step)
 #   ~/.claude/project-template/    starter files for new projects
-#   ~/.claude/skills/              the cherry-picked skills (never overwrites)
+#   ~/.claude/skills/              the skills (never overwrites)
 #   ~/.claude/settings.json        adds hook registrations, keeps everything else
 #   ~/.claude/.redaction-names.local   created empty if missing, so the privacy check
 #                                  (git-hooks/pre-commit) has a names list to read at all
@@ -294,8 +294,8 @@ while IFS= read -r d; do
   if [ -e "$DEST/skills/$name" ]; then sskip=$((sskip+1)); continue; fi
   cp -R "$d" "$DEST/skills/$name" && scount=$((scount+1))
 done < <(find "$SRC/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-# The skills are third-party MIT files; their notices travel with them.
-for lic in ATTRIBUTION.md LICENSE-mattpocock LICENSE-ponytail; do
+# Some skills are third-party MIT files; their notices travel with them.
+for lic in ATTRIBUTION.md LICENSE-mattpocock; do
   [ -f "$SRC/skills/$lic" ] && [ ! -f "$DEST/skills/$lic" ] \
     && cp "$SRC/skills/$lic" "$DEST/skills/$lic"
 done

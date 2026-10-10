@@ -49,7 +49,7 @@ promises, and a paper trail for everything.*
 
 ---
 
-## The seven ideas worth stealing
+## The eight ideas worth stealing
 
 **1. Rules are enforced by hooks, not hoped for.** A `CLAUDE.md` is advisory — over a long
 session a model drifts away from it. A hook is a small script Claude Code runs itself, every
@@ -78,6 +78,14 @@ messages. If you can't understand your own setup, you can't trust it.
 
 **7. The cheapest model that can do the job.** Mechanical work goes to a small model, choices
 to a mid-size one, verdicts to the best. Spending more than a task needs is waste, not caution.
+A helper starts with only its brief, so every brief carries the privacy, secrets and
+authorship lines word for word.
+
+**8. One path from an idea to landed code.** Nine steps — idea, research, decide, plan, build
+test-first, review, land, deploy, look back — in a one-page map. Each step's detail lives in
+the skill for that step, which loads only when the step starts, so the rulebook every session
+reads stays short. A chat copies the steps into its own to-do list, and a skipped step stays
+there with its reason.
 
 ---
 
@@ -88,14 +96,15 @@ Read them in this order if you're reading rather than installing.
 | File | What it is | Read time |
 |---|---|---|
 | **[HOW-I-WORK.md](HOW-I-WORK.md)** | **Start here.** The daily loop: the card every chat answers in, the control words, what a "yes" covers, the paper trail habits. | 10 min |
-| [LESSONS.md](LESSONS.md) | The rules as lessons — 57 of them, each with the incident that taught it, the sentence to paste into your own rulebook, and what enforces it. | 25 min |
+| [LESSONS.md](LESSONS.md) | The rules as lessons — 62 of them, each with the incident that taught it, the sentence to paste into your own rulebook, and what enforces it. | 25 min |
 | [MULTI-CHAT-ROLES.md](MULTI-CHAT-ROLES.md) | Running several Claude chats on one codebase: five roles, one private folder each, the files they coordinate through, and the one commander. | 10 min |
 | [GLOSSARY.md](GLOSSARY.md) | Every technical term ever explained to me, one plain-English line each. My substitute for a CS degree. | as needed |
-| [TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md) | The rulebook as a form: sections to fill in, each saying what changes when you do, plus 17 starter rules that are live from your next session. This is what the installer puts at `~/.claude/CLAUDE.md`. | 10 min |
+| [TEMPLATE-CLAUDE.md](TEMPLATE-CLAUDE.md) | The rulebook as a form: sections to fill in, each saying what changes when you do, plus 18 starter rules that are live from your next session. This is what the installer puts at `~/.claude/CLAUDE.md`. | 10 min |
+| [TEMPLATE-coding-CLAUDE.md](TEMPLATE-coding-CLAUDE.md) | The coding rules for every project in your projects folder: the nine-step map from an idea to landed code, each step pointing at the skill that runs it. You copy it into that folder as `CLAUDE.md`. | 3 min |
 | [TEMPLATE-project-CLAUDE.md](TEMPLATE-project-CLAUDE.md) | The per-project rulebook, as a form. | 5 min |
 | [hooks/](hooks/) | The scripts that enforce the rules: the rules injector, the card injector, the dangerous-git blocker (which also refuses switching the git hooks off, the going-public commands, and deleting a remote branch that is not merged yet), the bare-commit guard, a guard that refuses to start a helper agent unless the launch names which model it runs on, the heavy-test-suite guard, the gate guard (refuses a test run piped into a reader and then committed on the back of it, raced against a commit with `;`, or waited on with a log-polling loop instead of the job itself), a growth watcher for shared files like a running notes doc that re-measures after every write, the auto-backup with a secret scan, a ledger that records what each helper agent cost, an override-use ledger that logs every time you tell a hook to stand down — plus an opt-in group for running more than one Claude Code session on the same repo (an edit-provenance pair that tracks who wrote which line of a shared file, a doorman that holds back a message sent to a session that is already at its context limit, and an end-of-turn check that a session actually updated its state file, and asks a long-running one to wrap up) — and a test suite of over a thousand cases that proves each one fires and each one stays quiet. | — |
 | [git-hooks/](git-hooks/) | Four git-side guards, opt-in: commits carry your name not the assistant's, no home-directory path or listed name gets committed, a merge carries the same privacy scan as a normal commit, a commit is refused if it stages a key or token or is unusually large, and a push is type-checked first. | — |
-| [skills/](skills/) | Eleven of my own skills plus four cherry-picked from bigger packs — and a credited list of everything else I run. See [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md). Several of my own (`briefing-subagents`, `shared-tree-commit`, `rally`, `context-floors`, `handing-off-live-work`) only matter once you're running more than one Claude Code session on the same project — see [MULTI-CHAT-ROLES.md](MULTI-CHAT-ROLES.md) — and are optional; `summarize` shapes every report you get, so delete its folder if you don't want that. | — |
+| [skills/](skills/) | Thirteen of my own skills plus three cherry-picked from bigger packs — and a credited list of everything else I run. See [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md). Three of mine carry the coding path that the coding-rules map puts in order: `coding-method` (the nine steps from a request to landed code), `testing-method` (every check seen failing, then passing, and counted) and `going-live` (the checks before anything is deployed, made public or shared). Several of my own (`briefing-subagents`, `shared-tree-commit`, `rally`, `context-floors`, `handing-off-live-work`) only matter once you're running more than one Claude Code session on the same project — see [MULTI-CHAT-ROLES.md](MULTI-CHAT-ROLES.md) — and are optional; `summarize` shapes every report you get, so delete its folder if you don't want that. | — |
 | [project-template/](project-template/) | Starter files every new project gets: a gitignore that keeps secrets out, an empty decision log, a specs folder, a minimal README. Note: the installed `domain-modeling` skill keeps its own decision log in ADR format (`docs/adr/`) — pick one decision-log convention per project. | — |
 | [DECISIONS.md](DECISIONS.md) | A few entries from this repo's own decision log, to show the format. | 2 min |
 

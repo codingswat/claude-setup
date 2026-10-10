@@ -72,3 +72,6 @@ Only offer to create an ADR when all three are true:
 3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
+
+## Local guardrails (override upstream where they conflict)
+- If the project keeps one decision log (for example `DECISIONS.md`: what, why, what it rules out) and no `docs/adr/`, a decision that passes the three tests above is offered as an entry in that log in that shape; do not create `docs/adr/`.

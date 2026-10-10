@@ -58,8 +58,9 @@ the first two hadn't worked. The owner's fix, after one problem kept coming back
 strongest-model reviewer look at the work blind before the third try.
 **The rule to copy** — after two failed fix attempts, stop, roll back to the last working
 version, and get a plain explanation of the real cause before touching the code again. Before a
-third attempt, a blind reviewer on your strongest model checks the work so far.
-**Enforced by** — habit.
+third attempt, write down the one assumption both failed fixes shared and test that assumption
+first; a blind reviewer on your strongest model checks the work so far.
+**Enforced by** — habit; the `coding-method` skill's "When stuck" step.
 
 ### Security review before anything goes live
 
@@ -286,9 +287,13 @@ project's own process instead of overriding it.
 moment they're no longer needed.
 **What happened** — test servers and throwaway files have been left running or lying around
 after a task finished, quietly using resources and confusing the next session about what's real.
-**The rule to copy** — at the end of every task, close any temporary server, delete scratch
-files and stale branches, and say out loud if anything is still running.
-**Enforced by** — habit.
+Later a chat asked the owner to run the command that removed its own leftover working copy; the
+answer was "you remove it", and then "you always remove branches and leftover docs".
+**The rule to copy** — at the end of every task, close any temporary server you started, and
+remove your own merged branches, finished working copies and leftover notes without asking; an
+untracked file goes to the Trash, never a hard delete; a file the project's docs point at is a
+record, not a leftover. Say out loud if anything is still running.
+**Enforced by** — habit; the `coding-method` skill's "Clean up" step.
 
 ### Back up the data before you touch its shape
 
@@ -479,6 +484,40 @@ for a recommendation only, and wait for an explicit go before anything gets buil
 or changed.
 **Enforced by** — habit.
 
+### Ask everything at once
+
+**Lesson** — gather every question the approved work will need and ask them in one message,
+not one at a time as each comes up.
+**What happened** — questions arrived one by one through an evening of work, each pulling the
+owner back to the chat. In the owner's words: "my time and attention is limited ... i need you
+to ask me all the things that you need at once so that when i go sleep for example or go do
+other work i am not always asked and distracted".
+**The rule to copy** — before I step away, and at each new task, put every question you can
+foresee in one message; while I'm away keep working on everything that doesn't need an answer,
+and hold new questions for the next batch. Only something unsafe interrupts.
+**Enforced by** — habit.
+
+### Look before you ask
+
+**Lesson** — before asking whether something happened, check what you can see for yourself.
+**What happened** — a chat asked the owner twice to close two other chats, when its own list
+of open chats already showed them gone. The owner: "why do you keep asking me you see from the
+list they are not there".
+**The rule to copy** — look first: the files, git and the list of chats; ask only what you
+can't see.
+**Enforced by** — habit.
+
+### Explain it the user's way
+
+**Lesson** — say what the user will see and what we want, in one plain sentence; how it works
+only when asked.
+**What happened** — explanations kept walking through scripts, internal names and steps when
+the owner wanted the outcome. The owner: "i want you explanation method to follow mine".
+**The rule to copy** — explain the owner's way: what the user sees and what we want, in one
+plain sentence; the scripts, internal names and steps only when I ask.
+**Enforced by** — the reply-shape text a hook injects on every prompt
+(`hooks/owner-card.md`).
+
 ### Skip what the reader already knows
 
 **Lesson** — tell your assistant exactly what you know, so its words go to what is new, and
@@ -539,17 +578,19 @@ trip is a round of the owner's attention for nothing.
 recorded on the task's file, and covers the review's follow-on work; nobody asks twice.
 **Enforced by** — habit.
 
-### Design picks are clicked, not typed
+### Every pick is clicked, not typed
 
-**Lesson** — when there's more than one way something could look, the choice gets made by
-clicking an option on the actual rendered page, not by naming a letter back in chat.
+**Lesson** — when there's a choice to make, the options go on a rendered page with a button
+under each, and the choice is made by clicking there, not by naming a letter back in chat.
 **What happened** — an owner kept typing back which mockup they'd picked from a description in
 chat; asking for a real button next to each option, on the page itself, ended the back-and-forth. Since then it has happened three more ways: options shown
 only as words while a preview sat open elsewhere; a question about what a tester would see, asked
 twice in prose and unanswered; and storyboards drawn inside the chat, which reached the owner
-only once they were put on a page.
-**The rule to copy** — for anything visual, or any question whose answer changes what a user
-sees, put the options on a real rendered page (an artifact, with the pictures and buttons on it)
+only once they were put on a page. Then it spread past design: asked to choose between
+options typed in chat, the owner answered "if you need me to pick something make an artifact for
+me to see".
+**The rule to copy** — for every pick, and above all anything visual or any question whose
+answer changes what a user sees, put the options on a real rendered page (an artifact, with the pictures and buttons on it)
 with a way to pick one there, and read the pick back from the page — never choose from a
 paragraph in chat, and never from a drawing rendered inside the chat or a preview open somewhere
 else, which never reaches the reader.
@@ -565,10 +606,18 @@ expensive one for real judgment calls.
 lowest model possible." The test that decides it: if explaining the change to a helper would
 take more words than just making the change, do it yourself; if it's bigger than the
 instructions, hand it to the cheapest model that can actually do it.
-**The rule to copy** — keep three tiers in mind: a small model for fully-specified mechanical
-work, a mid-size model for anything needing a real choice, and your best model only for a final
-verdict or review — default every task to the cheapest tier that fits.
-**Enforced by** — habit.
+Later a trial gave seven routine chores to the smallest model — recounts, a mechanical sweep
+checked by its diff, reading a failed test run, checking a closing note's claims against the
+repo, a docs lookup, a name-and-path scan — and each passed, so the small model's list grew
+from "one checkable fact" to "any job whose steps are written out and whose answer a command
+checks".
+**The rule to copy** — keep three tiers in mind: a small model for any fully-specified job a
+command can check, a mid-size model for anything needing a real choice, and your best model only
+for a final verdict or review — default every task to the cheapest tier that fits. Never the
+small model for a review, a verdict, a diagnosis without a named cause, a design choice or long
+coding; and size its job to stay under 100k tokens of context, where it is cheapest.
+**Enforced by** — a hook refuses a helper launch that names no model; the
+`briefing-subagents` skill holds the job lists.
 
 ### Weigh the payoff against the cost before spending big
 
@@ -609,6 +658,22 @@ memory the file was meant to save.
 **The rule to copy** — a brief that names an output file names a helper type that holds the write
 tool; review-only and fact-check types are briefed for a short answer in chat.
 **Enforced by** — habit; the brief template names the type next to the output path.
+
+### A helper that starts without your rulebook gets the safety lines in its brief
+
+**Lesson** — if your helper types skip the rulebook to save memory, the privacy, secrets and
+identity rules have to travel in every brief, word for word.
+**What happened** — the helper types were set to start without the rules files, which saves
+each helper thousands of words of reading. A review then noticed that no brief carried the
+privacy, secrets or authorship rules: a helper writing a file had nothing telling it not to
+write a home-folder path or a real name into it. The commit-time check would catch it only if
+the file were ever committed; a file written and never committed is unguarded.
+**The rule to copy** — every brief carries three lines, copied word for word: never a real
+name, a client name or an absolute home-folder path in any file or reply (write `~/`); secrets
+never in code, files, commits or replies; nothing written carries an AI attribution line or any
+author but your own publishing identity.
+**Enforced by** — the `briefing-subagents` skill's Safety slot (a brief missing a slot is not
+sent); the commit-time privacy check as the backstop.
 
 ### A waiter blocks on the process, not a line in a log
 
@@ -704,6 +769,25 @@ describe the same underlying data; one task's change silently broke the other's 
 **The rule to copy** — before running two pieces of work in parallel, check for shared data
 behind them, not only separate file names.
 **Enforced by** — habit.
+
+## Where the rules live
+
+### A rule with a moment lives in the skill for that moment
+
+**Lesson** — the always-loaded rulebook keeps only the rules with no moment (how to talk to
+me, what a yes covers); a rule for a commit, a test or a deploy moves into the skill for that
+moment, and a one-page map gives the order.
+**What happened** — the files every session loaded had grown to about 4,600 words. Every chat
+paid for all of it on every turn, coding or not, and the rule for a commit sat far from the
+commit. Moving each rule with a moment into the skill for that moment, with a one-line pointer
+left behind, let the global file shrink to a fraction of that; a nine-step map from idea to
+landed code went into the coding rules file, which loads only inside the projects folder.
+**The rule to copy** — keep the global rulebook for rules with no moment; give each rule that
+has one (commit, test, deploy, brief a helper) to the skill for that moment; keep one short map
+of the order in a coding rules file for your projects folder
+([TEMPLATE-coding-CLAUDE.md](TEMPLATE-coding-CLAUDE.md)).
+**Enforced by** — habit; the opt-in pre-commit git hook refuses a commit that grows a
+repo's top-level CLAUDE.md past a word cap.
 
 ---
 

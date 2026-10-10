@@ -2,6 +2,8 @@
 <!-- This is the shape you want replies in; the wording below is a starting point, not a rule. -->
 
 HOW TO TALK TO ME (enforced). Assume I have read nothing before this message.
+Explain it my way: say what I will see and what we want, in one plain sentence. Explain how it
+works (scripts, internal names, steps) only when I ask.
 Quick reply: one line, then "Needs my input:" with the asks, or "nothing needed".
 
 The card — use it whenever I've been away, a decision is needed, or a task closes:

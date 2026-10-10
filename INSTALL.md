@@ -23,10 +23,10 @@ through filling in your rulebook afterwards — which is the part that actually 
 |---|---|
 | `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `agent-model-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-size-post.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Six more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`, `commit-size`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
 | `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-merge-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
-| `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 17 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
+| `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 18 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/.redaction-names.local` | Created **only if missing**, empty, with a comment explaining its two sections (`[guard]`, `[redact-only]`) — `git-hooks/pre-commit`'s privacy check fails CLOSED (refuses every commit) with no file there at all, so a fresh machine needs at least this to unblock ordinary commits. The installer's closing summary tells you to open it and fill it in |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
-| `~/.claude/skills/` | Every skill folder in this repo (currently fifteen); any skill folder of the same name is left alone |
+| `~/.claude/skills/` | Every skill folder in this repo (currently sixteen); any skill folder of the same name is left alone |
 | `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`), to `Agent` (`agent-model-guard.sh`, which refuses a helper launch that does not name its model) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), `PostToolUse` on the same matcher (`channel-size-post.sh`), and `Stop` (the helper cost ledger) — up to **eleven** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` and `SessionStart` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **five** more, so **sixteen** in total with everything on. The two hooks that run on every message you type (`clock-in-context.sh`, `doorman.sh`) and the end-of-turn check (`stop-state-check.sh`) are registered with a 10-second time limit, so a stuck one cannot hang your session Everything else in the file is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
 | git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
@@ -183,6 +183,20 @@ does nothing at all — that is deliberate, because a session in a random folder
 one-off task, not a project.
 
 No file means no roots, which switches the interview off entirely.
+
+### 3b. Optional: the coding rules for that folder
+
+The script does not do this step, because your projects folder may already hold a
+`CLAUDE.md` of your own. [TEMPLATE-coding-CLAUDE.md](TEMPLATE-coding-CLAUDE.md) is the map
+from an idea to landed code; Claude Code loads a `CLAUDE.md` from every folder above the one a
+session starts in, so one copy in the projects folder binds every project inside it:
+
+```bash
+cp -n TEMPLATE-coding-CLAUDE.md "$HOME/projects/CLAUDE.md"
+```
+
+Then delete its instructions block. `-n` refuses to replace a file that is already there; if
+you have one, paste the map into it instead.
 
 ### 4. Register the SessionStart hook
 

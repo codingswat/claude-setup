@@ -24,9 +24,6 @@ state file is the note left on the desk.
 report. It never means interrupting work mid-flight. Killing a running agent destroys work nobody
 has written down yet — which is the exact loss this skill exists to prevent.
 
-Not the same as `handover`, which documents a finished project for someone who has never seen the
-code. This is a session handing live, half-finished work to the session replacing it.
-
 ## Two rules
 
 **1. Every claim names where it lives.** A handover fails not by saying false things but by saying
@@ -49,7 +46,7 @@ the work, not at its end:
 - **Tried-and-rejected is a section of the plan**, each idea with the reason it died, so a
   fresh session cannot re-propose it.
 - **A costly fact is written where the next reader trips over it** — the command that
-  silently fails, the port another seat owns, the test that cannot fail — beside the file or
+  silently fails, the port another session owns, the test that cannot fail — beside the file or
   line it concerns.
 - **The self-sufficiency drill:** from the plan alone, answer "what am I building, and why
   not the obvious alternative?" A plan that cannot answer is unfinished — name what it

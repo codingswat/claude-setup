@@ -70,6 +70,10 @@ rest of the form is still the part that actually matters:
 
 ## Also worth mentioning, briefly
 
+- [TEMPLATE-coding-CLAUDE.md](TEMPLATE-coding-CLAUDE.md) — the map from an idea to landed
+  code, for anyone who builds software with Claude. The installer does not place it. Offer to
+  copy it into their projects folder as `CLAUDE.md` (INSTALL.md step 3b); if that folder
+  already has one, offer to paste the map into theirs instead, and never overwrite it.
 - [MULTI-CHAT-ROLES.md](MULTI-CHAT-ROLES.md) — running several Claude chats on one codebase
   without them overwriting each other. Only relevant once a project outgrows one session;
   mention it exists, don't walk them through it unprompted.
