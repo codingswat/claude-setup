@@ -1,0 +1,11 @@
+# issue-number.conf — OPT-IN list for git-hooks/pre-push check (1b). Copy this file to
+# hooks/issue-number.conf (next to the other hook conf files) and list one repo per line as
+# owner/name. A push to refs/heads/main of a listed repo is then refused when any commit it
+# adds changes a path outside docs/** and the root *.md files (CLAUDE.md counts as outside)
+# without an issue number (#<N>, N >= 1) in its message. No conf file, or a repo not listed
+# here: the check never runs. Lines starting with # and blank lines are ignored; case does not
+# matter. The repo is recognised by the push TARGET (the last two parts of its URL, without a
+# trailing / or .git), not by the folder you push from.
+# Deliberate exception for one push: ISSUE_OK=1 git push ... (one line in the override ledger).
+#
+# example-owner/example-repo

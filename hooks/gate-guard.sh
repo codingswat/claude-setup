@@ -1,5 +1,5 @@
 #!/bin/bash
-# gate-guard.sh — PreToolUse hook on Bash. Two things a hook can catch mechanically that a
+# gate-guard.sh — PreToolUse hook on Bash. Three things a hook can catch mechanically that a
 # rulebook sentence can't enforce on its own:
 # (a) a gate (a test run, a typecheck, a build check) is trustworthy only when its EXIT CODE
 #     decides what happens next, joined with `&&`. Refused when the gate's output is piped
@@ -17,6 +17,17 @@
 #     CONDITION checks a process or a port instead (curl/nc/kill -0/pgrep/lsof) is a
 #     "is the server up yet" wait, not a log-marker poll, and is exempt. The loop is read
 #     FLATTENED, so writing it across several lines is not a way out.
+# (c) a `git push`, a `git rebase` or a `git pull --rebase` whose output goes through a single
+#     `|` or `|&` into ANY program is refused: the exit code that reaches the shell is the
+#     reader's, so a rejected push looks like success. Found at the start of a statement or
+#     after `;` `&` `|` `$(` `if` `then` `elif` `else` `do` `while` `until`, after VAR=value
+#     assignments (a quoted value too), after a backslash-newline, and after git's global
+#     options (`-C <path>`, `-c k=v`, `--no-pager`, `-P`, `--git-dir=...`). Passes: `--dry-run`
+#     / `-n`; `set -o pipefail` earlier in the command; `${PIPESTATUS[0]}` read; `||` (that is
+#     not a pipe); a plain `git pull`. Write the output to a file and read that instead.
+#     NOT ENFORCED (deliberate-bypass shapes, left passing): eval, xargs, function wrappers, a
+#     variable holding the command, process substitution <(...), quote-split verbs,
+#     /usr/bin/git, an env/command/exec/nice/time/! prefix, and ( ... ) or { ...; } groups.
 #
 # WHAT IS NOT A GATE RUN, even though the word appears:
 #   - a gate word that is some other command's ARGUMENT — `ls node_modules/.bin | grep
@@ -94,6 +105,10 @@ if [ -f "$CONF" ]; then
 fi
 verdict="$(printf '%s' "$cmd" | GATE_EXTRA="$GATE_EXTRA" "$GUARD_PY" -c "$GUARD_PY_COMMON"'
 s = clean(sys.stdin.read())
+# (c): a quoted assignment value (VAR="a b" git push) is reduced BEFORE the quotes are blanked, so
+# the assignment still reads as one word; the PIPESTATUS test reads this copy, quotes intact.
+s = re.sub(r"(?<![\w-])(\w+)=(?:\"(?:[^\"\\]|\\.)*\"|\x27[^\x27]*\x27)", r"\1=x", s)
+s_open = s
 s = blank_quoted(s)
 gate = r"(?:(?:npx\s+)?(?:vitest|playwright|tsc)\b|npm\s+(?:(?:-w|--workspace|--prefix)(?:=|\s+)\S+\s+)*(?:run\s+)?(?:test(?::[\w-]+)?|t(?![\w:-])|typecheck)\b)"
 extra = [ln.strip() for ln in os.environ.get("GATE_EXTRA", "").split("\n") if ln.strip()]
@@ -122,6 +137,19 @@ for m in re.finditer("(?:" + cmdpos + ")(" + gate + seg + ")", s_flat):
         out("pipe", m.start(1))
     if re.match(r";\s*" + rides, rest):
         out("semicolon", m.start(1))
+# (c): a push, a rebase or a pull --rebase piped into anything. Where the command may start,
+# after the global options of git, and the verbs that count.
+pr_bound = r"(?:^|[;&|]|\$\(|\b(?:if|then|elif|else|do|while|until)\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)*"
+pr_gopt = r"(?:(?:-[Cc]\s+\S+|--[\w-]+(?:=\S+)?|-\w)\s+)*"
+pr_verb = r"(?:push|rebase|pull(?=[^|;&\n]*\s--rebase(?!=false)\b))"
+for m in re.finditer(pr_bound + r"(git)\s+" + pr_gopt + pr_verb + r"\b" + seg + r"\|(?!\|)&?", s_flat):
+    if re.search(r"\s(?:--dry-run|-n)\b", m.group(0)):
+        continue
+    if re.search(r"\bset\s+(?:-[a-z]+\s+)*-[a-z]*o\s+pipefail\b", s_flat[:m.start()]):
+        continue
+    if "PIPESTATUS[0]" in s_open:
+        continue
+    out("pushpipe", m.start(1))
 for m in re.finditer(r"\b(?:while|until|for)\b(.*?)(?:;|\bdo\b)", s_flat):
     cond = m.group(1)
     if re.search(r"\b(?:curl|nc|kill\s+-0|pgrep|lsof)\b", cond):
@@ -144,6 +172,7 @@ fi
 case "$rule" in
   ok) exit 0;;
   pipe) echo "gate-guard: REFUSED — a gate piped into a reader hides its exit code (gate on the EXIT CODE, joined with &&; write the output to a log file and read that afterwards). Deliberate override: GATE_OK=1 <command>." >&2; exit 2;;
+  pushpipe) echo "gate-guard: REFUSED — a pipe after git push, git rebase or git pull --rebase hides its exit code (a rejected push would look like success); run it without the pipe and judge \$?, or write its output to a file and read that. Deliberate override: GATE_OK=1 <command>." >&2; exit 2;;
   semicolon) echo "gate-guard: REFUSED — ';' (or a bare newline) after a gate lets a red run continue into the commit or push; join with &&. Deliberate override: GATE_OK=1 <command>." >&2; exit 2;;
   waiter) echo "gate-guard: REFUSED — a loop polling a log waits on a marker: wait on the process, a job-control/monitor tool, or a task-completion notification, and read the result file it writes. Deliberate override: GATE_OK=1 <command>." >&2; exit 2;;
   *) echo "gate-guard: REFUSED — could not parse the command (fail closed)." >&2; exit 2;;

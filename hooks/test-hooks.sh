@@ -3729,5 +3729,170 @@ INPUT="$(json_bash 'pkill x')"
 msg="$(printf '%s' "$INPUT" | bash "$GPA/ok/heavy-suite-guard.sh" 2>&1 >/dev/null)"
 if printf '%s' "$msg" | grep -q 'kill <PID>' && printf '%s' "$msg" | grep -qi 'Claude app'; then ok; else bad "P3 the refusal must say it can stop the Claude app and name kill <PID> (got: $msg)"; fi; refuse_n=$((refuse_n+1))
 
+# ---- guard port 2026-10-10 (B): piped push/rebase, encoded home path, worktree exception, issue number, replace objects ----
+echo "guard port 2026-10-10 (B)"
+GPB="$T/gpb"; mkdir -p "$GPB"
+GPBL="$GPB/ledger.tsv"
+gpb() {   # <refuse|pass> <label> <command>: gate-guard on one command
+  local kind="$1" label="$2" c="$3"
+  INPUT="$(json_bash "$c")"
+  if [ "$kind" = refuse ]; then expect refuse 2 "$label: $c" env OVERRIDE_LEDGER="$GPBL" bash "$HOOKS_DIR/gate-guard.sh"
+  else expect pass 0 "$label: $c" env OVERRIDE_LEDGER="$GPBL" bash "$HOOKS_DIR/gate-guard.sh"; fi
+}
+# ---- P4: a push or rebase piped into a reader ----
+for c in 'git push | tail -3' 'git push 2>&1 | grep -v x' 'git -C repo push |& cat' 'git rebase main | head' 'git pull --rebase | tail' \
+         'VAR="a b" git push | tail' 'if true; then git push | tail; fi' $'git push \\\n| tail' $'git push \\\n  origin main \\\n  | tail' 'git --no-pager push | tail' \
+         'git -c k=v push origin main | tee push.log' 'cd x && git push | tee l' $'echo hi\ngit push | tail' 'git push origin main | wc -l' \
+         'git rebase -i main | head' 'git pull --rebase origin main |& tail' 'GATE_OK=1 true && git push | tail' ; do
+  gpb refuse "P4 piped push/rebase must refuse" "$c"; done
+for c in 'git push' 'git push || echo failed' 'git push --dry-run | tail' 'git push -n | tail' 'set -o pipefail; git push | tail' 'git push | tail; echo ${PIPESTATUS[0]}' \
+         'git log | head' 'echo "git push | tail"' 'git pull | tail' 'git pull --rebase=false | tail' 'git push > out.log 2>&1' \
+         'git status | head' 'git commit -m "x" | tail' 'git rebase --abort' 'git push && git log | head' 'git diff | git apply' 'echo git push | tail'; do
+  gpb pass "P4 pair: must allow" "$c"; done
+gpb pass "P4 pair: pipefail set on an earlier line" $'set -eo pipefail\ngit push | tail'
+rm -f "$GPBL"; gpb pass "P4 GATE_OK=1 at the segment start waives it" 'GATE_OK=1 git push | tail'
+if ledger_has "$GPBL" GATE_OK; then ok; else bad "P4 the GATE_OK waiver of a piped push must be recorded in the ledger"; fi; pass_n=$((pass_n+1))
+GPB_BADL="$GPB/badledger"; mkdir -p "$GPB_BADL"; : > "$GPB_BADL/blocker"
+INPUT="$(json_bash 'GATE_OK=1 git push | tail')"
+expect refuse 2 "P4 an unrecordable GATE_OK override is refused" env OVERRIDE_LEDGER="$GPB_BADL/blocker/overrides.tsv" bash "$HOOKS_DIR/gate-guard.sh"
+INPUT="$(json_bash 'git push | tail')"
+msg="$(printf '%s' "$INPUT" | bash "$HOOKS_DIR/gate-guard.sh" 2>&1 >/dev/null)"
+if printf '%s' "$msg" | grep -q 'hides its exit code' && printf '%s' "$msg" | grep -q 'GATE_OK=1'; then ok; else bad "P4 the refusal must say the pipe hides the exit code and name GATE_OK=1 (got: $msg)"; fi; refuse_n=$((refuse_n+1))
+
+# ---- P8: the encoded home-path form ----
+UP="/User""s"; EU="-User""s-"; EH="-hom""e-"
+RB_WANT='home path'
+rb_case refuse "P8 an encoded home path after a slash" "$RBH" a.txt "see /x/${EU}alice/y"
+rb_case refuse "P8 the encoded form at the start of a line" "$RBH" a.txt "${EU}alice-proj-notes"
+rb_case refuse "P8 the Linux encoded form" "$RBH" a.txt "${EH}alice-proj"
+rb_case refuse "P8 an encoded form in a staged FILE NAME" "$RBH" "proj/${EU}alice-proj/n.md" "harmless body"
+rb_case refuse "P8 the slashed form still refuses" "$RBH" a.txt "see ${UP}/alice/x"
+rb_case pass "P8 pair: a placeholder account passes" "$RBH" a.txt "${EU}<account>-proj"
+rb_case pass "P8 pair: a word that only ENDS in the form passes" "$RBH" a.txt "see${EU}guide and more"
+rb_case pass "P8 pair: an excluded name passes (encoded runner)" "$RBH" a.txt "${EU}runner-work"
+rb_case pass "P8 pair: an excluded name passes (encoded Linux you)" "$RBH" a.txt "${EH}you-proj"
+rb_case pass "P8 pair: the slashed excluded name still passes" "$RBH" a.txt "${UP}/runner/work"
+rb_case pass "P8 pair: the form in a file name with a letter before it passes" "$RBH" "proj/my${EU}alice/n.md" "harmless body"
+rb_case pass "P8 pair: a bare dash-Users-dash with no name passes" "$RBH" a.txt "${EU} and ${EH}"
+RB_WANT='.'
+
+# ---- P9: a worktree of a listed repo counts as the listed repo (names limb only) ----
+H9="$(rb_home wt9)"; M9="$(rb_new)"; M9R="$(cd "$M9" && pwd -P)"
+env HOME="$H9" "${ID[@]}" git -C "$M9" commit -q --no-verify --allow-empty -m seed >/dev/null 2>&1
+git -C "$M9" worktree add -q "$RB/wt9" -b wt9 >/dev/null 2>&1
+printf '# listed\n%s\n' "$M9R" > "$H9/.claude/.privacy-name-exceptions.local"
+printf 'the guard refuses zebulonquixote\n' > "$RB/wt9/n.txt"
+rb_run pass "P9 a listed name in a worktree of a LISTED repo passes" "$RB/wt9" "$H9"
+printf 'see %s/alice/x\n' "$UP" > "$RB/wt9/p.txt"; RB_WANT='home path'
+rb_run refuse "P9 a home path still binds in a worktree of a listed repo" "$RB/wt9" "$H9"; git -C "$RB/wt9" reset -q; rm "$RB/wt9/p.txt"; RB_WANT='.'
+M9B="$(rb_new)"; env HOME="$H9" "${ID[@]}" git -C "$M9B" commit -q --no-verify --allow-empty -m seed >/dev/null 2>&1
+git -C "$M9B" worktree add -q "$RB/wt9b" -b wt9b >/dev/null 2>&1
+printf 'the guard refuses zebulonquixote\n' > "$RB/wt9b/n.txt"; RB_WANT='name'
+rb_run refuse "P9 pair: the same name in a worktree of an UNLISTED repo refuses" "$RB/wt9b" "$H9"; RB_WANT='.'
+
+# ---- P10: the issue number on a push to main (opt-in by hooks/issue-number.conf) ----
+P10="$T/p10"; mkdir -p "$P10"; P10L="$P10/ledger.tsv"
+p10_home() {   # name [conf lines...] -> a HOME with the ledger script and, when given, the conf
+  local h="$P10/home-$1"; shift; mkdir -p "$h/.claude/hooks"; cp "$HOOKS_DIR/override-ledger.sh" "$h/.claude/hooks/"
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$h/.claude/hooks/issue-number.conf"; fi
+  printf '%s' "$h"
+}
+P10H="$(p10_home on '# the repos that need an issue number' 'o/r')"
+p10_repo() {   # name [owner/name of the origin URL, default o/r]: a repo whose remote main already holds a seed commit
+  local n="$1" on="${2:-o/r}" r="$P10/$1" b
+  b="$P10/srv-$n/$on.git"; mkdir -p "$r" "${b%/*}"; git init -q --bare "$b"
+  git -C "$r" init -q -b main; git -C "$r" config core.hooksPath "$GIT_HOOKS_DIR"; git -C "$r" remote add origin "$b"
+  echo seed > "$r/seed.txt"; git -C "$r" add -A; "${ID[@]}" git -C "$r" commit -q -m seed
+  git -C "$r" push -q --no-verify origin main >/dev/null 2>&1
+  printf '%s' "$r"
+}
+p10_commit() {   # repo path message
+  mkdir -p "$(dirname "$1/$2")"; echo "$RANDOM$RANDOM" >> "$1/$2"; git -C "$1" add -A; "${ID[@]}" git -C "$1" commit -q -m "$3"
+}
+p10_push() {   # <refuse|pass> <label> <repo> <want-regex> [refspec [env...]]
+  local kind="$1" label="$2" r="$3" want="$4" spec="${5:-main}"; shift $(( $# < 5 ? $# : 5 ))
+  local err rc; err="$(env HOME="${P10_HOME:-$P10H}" OVERRIDE_LEDGER="$P10L" "$@" git -C "$r" push origin "$spec" 2>&1 >/dev/null)"; rc=$?
+  if [ "$kind" = refuse ]; then
+    if [ "$rc" != 0 ] && printf '%s' "$err" | grep -q 'REFUSED' && printf '%s' "$err" | grep -qE "$want"; then ok; else bad "$label (must refuse for '$want'; rc=$rc err='$err')"; fi
+    refuse_n=$((refuse_n+1))
+  else
+    if [ "$rc" = 0 ]; then ok; else bad "$label (must pass; rc=$rc err='$err')"; fi
+    pass_n=$((pass_n+1))
+  fi
+}
+r="$(p10_repo c1)"; p10_commit "$r" src/app.txt "feat: no number"; p10_push refuse "P10 a code commit without #N must refuse" "$r" 'issue number'
+r="$(p10_repo c2)"; p10_commit "$r" docs/x.md "docs: a note"; p10_push pass "P10 pair: docs/x.md only passes" "$r" .
+r="$(p10_repo c3)"; p10_commit "$r" README.md "docs: readme"; p10_push pass "P10 pair: README.md only passes" "$r" .
+r="$(p10_repo c4)"; p10_commit "$r" CLAUDE.md "rules"; p10_push refuse "P10 CLAUDE.md without #N must refuse" "$r" 'issue number'
+r="$(p10_repo c4b)"; p10_commit "$r" claude.md "rules"; p10_push refuse "P10 claude.md (lower case) without #N must refuse" "$r" 'issue number'
+r="$(p10_repo c4c)"; p10_commit "$r" Notes.MD "notes"; p10_push pass "P10 pair: a root Notes.MD (any case) passes" "$r" .
+r="$(p10_repo c4d)"; p10_commit "$r" sub/notes.md "notes"; p10_push refuse "P10 a .md below the root is not a record" "$r" 'issue number'
+r="$(p10_repo c5)"; p10_commit "$r" src/app.txt "fix: the thing, fixes #12"; p10_push pass "P10 pair: 'fixes #12' passes" "$r" .
+r="$(p10_repo c5b)"; p10_commit "$r" src/app.txt "#7 first words"; p10_push pass "P10 pair: a message starting with #7 passes" "$r" .
+r="$(p10_repo c5c)"; p10_commit "$r" src/app.txt "fix: x (#31)"; p10_push pass "P10 pair: (#31) passes" "$r" .
+n=0; for m in "fix: C#12" "fix: x#3" 'fix: &#38; entity' "fix: ##3" "fix: #0" "fix: #01a" "fix: a_#4"; do
+  n=$((n+1)); r="$(p10_repo cm$n)"; p10_commit "$r" src/app.txt "$m"; p10_push refuse "P10 '$m' does not count as an issue" "$r" 'issue number'
+done
+r="$(p10_repo d1)"; p10_commit "$r" src/app.txt "feat: no number"; p10_push pass "P10 pair: a push to another branch is not judged" "$r" . main:refs/heads/topic
+r="$(p10_repo d2 o/other)"; p10_commit "$r" src/app.txt "feat: no number"; p10_push pass "P10 pair: another repo as the target is not judged" "$r" .
+P10_HOME="$(p10_home off)"; r="$(p10_repo d3)"; p10_commit "$r" src/app.txt "feat: no number"; p10_push pass "P10 pair: no conf file, the check never runs" "$r" .
+P10_HOME="$(p10_home off2 '# only a comment' '' 'x/y')"; r="$(p10_repo d4)"; p10_commit "$r" src/app.txt "feat: no number"; p10_push pass "P10 pair: a conf without this repo, the check never runs" "$r" .
+P10_HOME="$(p10_home crlf $'# c\r' $'O/R\r')"; r="$(p10_repo d5)"; p10_commit "$r" src/app.txt "feat: no number"; p10_push refuse "P10 a conf with CRLF and capitals still binds" "$r" 'issue number'
+unset P10_HOME
+r="$(p10_repo e1)"; p10_commit "$r" src/app.txt "feat: no number"; rm -f "$P10L"; p10_push pass "P10 ISSUE_OK=1 passes" "$r" . main ISSUE_OK=1
+if ledger_has "$P10L" ISSUE_OK; then ok; else bad "P10 the ISSUE_OK waiver must be recorded in the ledger"; fi; pass_n=$((pass_n+1))
+r="$(p10_repo e2)"; p10_commit "$r" src/app.txt "feat: no number"; mkdir -p "$P10/badl"; : > "$P10/badl/blocker"
+err="$(env HOME="$P10H" OVERRIDE_LEDGER="$P10/badl/blocker/o.tsv" ISSUE_OK=1 git -C "$r" push origin main 2>&1 >/dev/null)"; rc=$?
+if [ "$rc" != 0 ] && printf '%s' "$err" | grep -q 'could not be recorded'; then ok; else bad "P10 an unwritable ledger must refuse the ISSUE_OK override (rc=$rc err=$err)"; fi; refuse_n=$((refuse_n+1))
+# first push into an empty remote: the root commit is judged (--root)
+r="$P10/f1"; b="$P10/srv-f1/o/r.git"; mkdir -p "$r" "${b%/*}"; git init -q --bare "$b"; git -C "$r" init -q -b main; git -C "$r" config core.hooksPath "$GIT_HOOKS_DIR"; git -C "$r" remote add origin "$b"
+echo code > "$r/main.txt"; git -C "$r" add -A; "${ID[@]}" git -C "$r" commit -q -m "first"
+p10_push refuse "P10 the root commit of a first push is judged (--root)" "$r" 'issue number'
+# the hook run by hand: stdin is the ref line, $1 the remote, $2 the target
+p10_hook() {   # <refuse|pass> <label> <repo> <want-regex> <stdin-line> <remote-arg> <url-arg>
+  local kind="$1" label="$2" r="$3" want="$4" line="$5" a1="$6" a2="$7"
+  local err rc; err="$(cd "$r" && printf '%s\n' "$line" | env HOME="${P10_HOME:-$P10H}" OVERRIDE_LEDGER="$P10L" bash "$GIT_HOOKS_DIR/pre-push" "$a1" "$a2" 2>&1 >/dev/null)"; rc=$?
+  if [ "$kind" = refuse ]; then
+    if [ "$rc" != 0 ] && printf '%s' "$err" | grep -q 'REFUSED' && printf '%s' "$err" | grep -qE "$want"; then ok; else bad "$label (must refuse for '$want'; rc=$rc err='$err')"; fi
+    refuse_n=$((refuse_n+1))
+  else
+    if [ "$rc" = 0 ]; then ok; else bad "$label (must pass; rc=$rc err='$err')"; fi
+    pass_n=$((pass_n+1))
+  fi
+}
+r="$(p10_repo g1)"; p10_commit "$r" src/app.txt "feat: no number"; tip="$(git -C "$r" rev-parse main)"; seedsha="$(git -C "$r" rev-parse main~1)"
+ZERO40="$(printf '0%.0s' {1..40})"; BOGUS40="$(printf 'a%.0s' {1..40})"
+p10_hook refuse "P10 a target spelled in capitals, with a trailing slash and .GIT, is normalised" "$r" 'issue number' "refs/heads/main $tip refs/heads/main $seedsha" origin 'https://example.test/O/R.GIT/'
+p10_hook refuse "P10 an scp-style target is read by its last two parts" "$r" 'issue number' "refs/heads/main $tip refs/heads/main $seedsha" origin 'git@example.test:o/r.git'
+p10_hook pass "P10 pair: a target one level off (o/r-extra) is not this repo" "$r" . "refs/heads/main $tip refs/heads/main $seedsha" origin 'https://example.test/o/r-extra.git'
+git -C "$r" config remote.fake.url 'https://example.test/x/unlisted.git'; git -C "$r" config remote.fake.pushurl 'https://example.test/o/r.git'
+p10_hook refuse "P10 a remote NAME is read as its pushurl (listed) even when its url is not" "$r" 'issue number' "refs/heads/main $tip refs/heads/main $seedsha" fake fake
+git -C "$r" config remote.fake2.url 'https://example.test/o/r.git'; git -C "$r" config remote.fake2.pushurl 'https://example.test/x/unlisted.git'
+p10_hook pass "P10 pair: a remote NAME whose pushurl is unlisted passes though its url is listed" "$r" . "refs/heads/main $tip refs/heads/main $seedsha" fake2 fake2
+p10_hook refuse "P10 remote main unknown to this copy refuses, saying fetch first" "$r" 'fetch first' "refs/heads/main $tip refs/heads/main $BOGUS40" origin 'https://example.test/o/r.git'
+p10_hook refuse "P10 a commit range git cannot list refuses (fail closed)" "$r" 'could not be listed' "refs/heads/main $BOGUS40 refs/heads/main $seedsha" origin 'https://example.test/o/r.git'
+p10_hook pass "P10 pair: deleting main pushes nothing to judge" "$r" . "(delete) $ZERO40 refs/heads/main $seedsha" origin 'https://example.test/o/r.git'
+p10_hook pass "P10 pair: remote main unknown but the target is unlisted passes" "$r" . "refs/heads/main $tip refs/heads/main $BOGUS40" origin 'https://example.test/x/unlisted.git'
+# a commit whose tree object is gone: rev-list lists it, diff-tree cannot read it
+r="$(p10_repo g2)"; p10_commit "$r" src/app.txt "feat: no number"; tip="$(git -C "$r" rev-parse main)"; seedsha="$(git -C "$r" rev-parse main~1)"
+tr_sha="$(git -C "$r" rev-parse "main^{tree}")"; rm -f "$r/.git/objects/${tr_sha:0:2}/${tr_sha:2}"
+p10_hook refuse "P10 a commit whose paths cannot be read refuses (diff-tree failure, pipefail)" "$r" 'could not be read' "refs/heads/main $tip refs/heads/main $seedsha" origin 'https://example.test/o/r.git'
+
+# ---- P11: a git replace stand-in fools no check of the push ----
+r="$(p10_repo h1)"; p10_commit "$r" src/app.txt "feat: no number"
+codec="$(git -C "$r" rev-parse main)"; parent="$(git -C "$r" rev-parse main~1)"
+blob="$(echo doc | git -C "$r" hash-object -w --stdin)"
+standin_tree="$(cd "$r" && export GIT_INDEX_FILE="$r/.git/standin-index" && git read-tree "$parent" && git update-index --add --cacheinfo "100644,$blob,docs/n.md" && git write-tree)"
+standin="$("${ID[@]}" git -C "$r" commit-tree -p "$parent" -m "docs only" "$standin_tree")"
+git -C "$r" replace "$codec" "$standin" >/dev/null 2>&1
+p10_push refuse "P11 a docs-only stand-in (git replace) does not fool the issue-number check" "$r" 'issue number'
+AN_B="$(printf '%s%s' anthro pic).com"
+r="$(p10_repo h2)"; echo z > "$r/z.txt"; git -C "$r" add -A
+env GIT_AUTHOR_NAME=Claude GIT_AUTHOR_EMAIL="noreply@$AN_B" GIT_COMMITTER_NAME=Claude GIT_COMMITTER_EMAIL="noreply@$AN_B" git -C "$r" commit -q --no-verify -m "foreign #1"
+foreign="$(git -C "$r" rev-parse main)"
+own="$("${ID[@]}" git -C "$r" commit-tree -p "$(git -C "$r" rev-parse main~1)" -m "own #1" "$(git -C "$r" rev-parse "main^{tree}")")"
+git -C "$r" replace "$foreign" "$own" >/dev/null 2>&1
+P10_HOME="$(p10_home none)"; p10_push refuse "P11 an own-identity stand-in (git replace) does not fool the identity check" "$r" 'Claude/Anthropic'; unset P10_HOME
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

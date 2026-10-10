@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fires on every `git push` from a machine that has this registered (global
-# core.hooksPath). Two checks, in this order:
+# core.hooksPath). Three checks, in this order (the second is opt-in):
 #
 # (1) IDENTITY of every commit being pushed — the author AND the committer of each commit
 #     in <what the remote has>..<what you are pushing>, for every ref in the push. This is
@@ -16,6 +16,20 @@
 #     per-repo opt-out (`git config --local hooks.identity false`) git-hooks/pre-commit
 #     uses. No AUTHOR line, or the opt-out: only the Claude/Anthropic half applies.
 #     A commit already on the remote is never re-judged — only what this push adds.
+#
+# (1b) ISSUE NUMBER, OPT-IN. Only for a repo listed in hooks/issue-number.conf (copy of
+#     hooks/issue-number.conf.example; one `owner/name` per line, # comments). No conf file,
+#     or no line matching, and this check never runs. For a push to refs/heads/main of a listed
+#     repo, every commit the push adds that changes any path outside the records set
+#     (docs/** and the root *.md files other than CLAUDE.md, in any letter case) must name an
+#     issue in its message: `#<N>` standing alone, N >= 1 (not `C#12`, `x#3`, `&#38;`, `##3`,
+#     `#0`). Which repo is judged on the push TARGET (the URL git passes; a remote name is read
+#     as its pushurl, else its url), lower-cased, one trailing `/` and one `.git` dropped, last
+#     two path parts compared. A merge commit is read with a combined diff, the root commit
+#     with --root, renames off. Fails CLOSED: the remote's main is not in this copy ("fetch
+#     first"), the commits cannot be listed, or a commit's paths cannot be read. Format only,
+#     no network. `ISSUE_OK=1 git push ...` waives it and writes a ledger line
+#     (hooks/override-ledger.sh); a ledger that cannot be written refuses instead.
 #
 # (2) TYPE-CHECK. When the repo root's package.json has a "typecheck" script, every
 # commit being pushed (the local sha of each ref on stdin; deletions skipped) is exported
@@ -38,6 +52,9 @@
 # happens to define. It only runs after `git config --local hooks.typecheck true` in
 # THAT repo; otherwise it says so and does nothing.
 # Tests: hooks/test-hooks.sh.
+# A `git replace` stand-in must fool no check below (identity, issue number, type-check): the
+# hook reads the real objects, whatever refs/replace holds.
+export GIT_NO_REPLACE_OBJECTS=1
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 refs="$(cat)"          # <local ref> <local sha> <remote ref> <remote sha>, one line per ref
 
@@ -81,6 +98,97 @@ while read -r _lref lsha _rref rsha; do
     judge "$sha" "${who%%|*}" "${who#*|}"
   done <<<"$(git -C "$root" log --format="%H|author|%an <%ae>%n%H|committer|%cn <%ce>" "${range[@]}" 2>/dev/null)"
 done <<<"$refs"
+
+# ---- (1b) every commit a push adds to main names its issue (opt-in, hooks/issue-number.conf) ----
+issue_conf="$HOME/.claude/hooks/issue-number.conf"
+issue_target="${2:-$1}"   # the URL git pushes to; a remote NAME is read as that remote's push URL
+if [ -n "$issue_target" ]; then
+  issue_u="$(git -C "$root" config --get "remote.$issue_target.pushurl" 2>/dev/null || git -C "$root" config --get "remote.$issue_target.url" 2>/dev/null)"
+  [ -n "$issue_u" ] && issue_target="$issue_u"
+else
+  issue_target="$(git -C "$root" config --get remote.origin.url 2>/dev/null)"
+fi
+issue_listed() {   # 0 = the push target is a repo listed in the conf (normalised as (1b) above says)
+  [ -f "$issue_conf" ] || return 1
+  local u o r want line
+  u="$(printf '%s' "$issue_target" | tr '[:upper:]' '[:lower:]')"
+  u="${u%/}"; u="${u%.git}"; u="${u//://}"
+  r="${u##*/}"; o="${u%/*}"; o="${o##*/}"
+  [ -n "$o" ] && [ -n "$r" ] && [ "$o" != "$u" ] || return 1
+  want="$o/$r"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"; line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    case "$line" in ''|'#'*) continue ;; esac
+    [ "$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')" = "$want" ] && return 0
+  done < "$issue_conf"
+  return 1
+}
+is_record_path() {   # $1 a repo-relative path; 0 = records (no issue needed): docs/**, or a root *.md that is not CLAUDE.md
+  case "$1" in
+    docs/*) return 0 ;;
+    */*) return 1 ;;
+  esac
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    claude.md) return 1 ;;
+    *.md) return 0 ;;
+  esac
+  return 1
+}
+names_issue() {      # $1 a whole commit message; 0 = it holds "#<N>" standing alone, N >= 1
+  printf '%s\n' "$1" | LC_ALL=C grep -qE '(^|[^[:alnum:]_&#])#[1-9][0-9]*([^[:alnum:]_]|$)'
+}
+issue_scan() {       # stdin: NUL-separated paths; prints 1 when any lies outside the records set, else 0 (reads them ALL, so git never writes into a closed pipe)
+  local o=0 p
+  while IFS= read -r -d '' p; do is_record_path "$p" || o=1; done
+  echo "$o"
+}
+issue_missing=""
+if issue_listed; then
+  while read -r _lref lsha rref rsha; do
+    [ "$rref" = "refs/heads/main" ] || continue                 # only main: another branch is never judged
+    case "$lsha" in ''|*[!0-9a-fA-F]*) continue ;; esac
+    case "$lsha" in *[!0]*) ;; *) continue ;; esac               # deleting main: nothing pushed
+    if [ -z "$rsha" ] || [ -z "${rsha//0/}" ]; then
+      issue_range=("$lsha" --not --remotes)
+    else
+      if ! git -C "$root" cat-file -e "$rsha^{commit}" 2>/dev/null; then
+        echo "pre-push hook: REFUSED — the remote's main (${rsha:0:7}) is not in your copy: fetch first (git fetch ${1:-origin}), put your commits on top of it (rebase), then push again. Until then the commits this push adds to main cannot be listed, so none can be judged." >&2
+        exit 1
+      fi
+      issue_range=("$rsha..$lsha")
+    fi
+    if ! issue_list="$(git -C "$root" rev-list "${issue_range[@]}" 2>/dev/null)"; then
+      echo "pre-push hook: REFUSED — the commits this push adds to main could not be listed (git rev-list failed), so none can be judged. Check the repository (git fsck), then push again." >&2
+      exit 1
+    fi
+    for c in $issue_list; do
+      # the path listing's own exit status is read (pipefail): a commit git cannot read is refused, never passed as records-only
+      if ! outside="$(set -o pipefail; git -C "$root" diff-tree -r -c --root --no-commit-id --name-only --no-renames -z "$c" 2>/dev/null | issue_scan)"; then
+        echo "pre-push hook: REFUSED — the paths commit ${c:0:7} changes could not be read (git diff-tree failed), so it cannot be judged; an unreadable commit is never passed as records-only. Check the repository (git fsck), then push again." >&2
+        exit 1
+      fi
+      [ "$outside" = 1 ] || continue
+      names_issue "$(git -C "$root" log -1 --format=%B "$c" 2>/dev/null)" && continue
+      issue_missing="${issue_missing}  $(git -C "$root" log -1 --format='%h %s' "$c" 2>/dev/null)"$'\n'
+    done
+  done <<<"$refs"
+fi
+if [ -n "$issue_missing" ]; then
+  if [ "${ISSUE_OK:-0}" = "1" ]; then
+    L="$HOME/.claude/hooks/override-ledger.sh"
+    if ! { [ -f "$L" ] && bash "$L" ISSUE_OK "git push to main (pre-push: the issue-number check lifted)" "main: $(printf '%s' "$issue_missing" | awk '{print $1}' | tr '\n' ' ')" </dev/null; }; then
+      echo "pre-push hook: REFUSED — the ISSUE_OK override could not be recorded in the override ledger (hooks/override-ledger.sh is missing, or its ledger file cannot be written), so it is NOT honoured. Fix the ledger path, then push again." >&2
+      exit 1
+    fi
+    echo "pre-push hook: ISSUE_OK=1 — pushing to main with commit(s) that name no issue (written to the override ledger):" >&2
+    printf '%s' "$issue_missing" >&2
+  else
+    echo "pre-push hook: REFUSED — a push to main of this repo needs an issue number (#<N>) in every commit that changes anything outside docs/ and the root *.md files (CLAUDE.md counts as outside). Missing in:" >&2
+    printf '%s' "$issue_missing" >&2
+    echo "  Add the number to each message listed (the tip: git commit --amend; an older commit: reword it in a rebase), then push again. Work with no issue behind it, on purpose: ISSUE_OK=1 git push ... (written to the override ledger). (gap: --no-verify skips this hook; do not use it.)" >&2
+    exit 1
+  fi
+fi
 
 # ---- (2) the type-check of every commit being pushed ----
 if [ "$(git -C "$root" config --local --get hooks.typecheck 2>/dev/null)" != "true" ]; then

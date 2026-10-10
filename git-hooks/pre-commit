@@ -41,7 +41,8 @@
 #       blob git calls binary (a UTF-16 document has a NUL in every other byte, so it has
 #       no "+" lines at all). What it looks for:
 #         - an absolute home path (`/Users/<name>/` or `/home/<name>/`, macOS and Linux)
-#           whose <name> isn't a known placeholder (node, runner, user, app, USERNAME,
+#           or its encoded form (`-Users-<name>`, `-home-<name>`: a Claude Code project-folder
+#           name) whose <name> isn't a known placeholder (node, runner, user, app, USERNAME,
 #           username, you, yourname, example — Docker base images, CI runners and doc
 #           placeholders all use these);
 #         - any name listed in $HOME/.claude/.redaction-names.local (one per line, #
@@ -79,8 +80,8 @@
 #       is REFUSED if that line cannot be written.
 #   Privacy exceptions: a repo whose toplevel is listed (one absolute path per line, # comments)
 #       in ~/.claude/.privacy-name-exceptions.local skips the NAMES limb only (a repo that
-#       legitimately documents the guard's own names); home-path, email and key checks still
-#       bind there. A repo whose toplevel is ~/.claude itself skips the EMAIL limb only
+#       legitimately documents the guard's own names; a git worktree of a listed repo counts
+#       as that repo); home-path, email and key checks still bind there. A repo whose toplevel is ~/.claude itself skips the EMAIL limb only
 #       (vendored skill text carries example addresses).
 #   The python3 run here is /usr/bin/python3 when present, else the first on PATH, so a broken
 #       shim earlier on PATH cannot refuse honest work (GUARD_PYTHON_PREFERRED is a test seam).
@@ -334,13 +335,30 @@ if _root:
     skip_email = _root == os.path.realpath(os.path.expanduser("~/.claude"))
     try:
         with open(os.path.expanduser("~/.claude/.privacy-name-exceptions.local"), encoding="utf-8") as fh:
-            if _root in {os.path.realpath(x.strip()) for x in fh if x.strip() and not x.strip().startswith("#")}:
+            _listed = {os.path.realpath(x.strip()) for x in fh if x.strip() and not x.strip().startswith("#")}
+            # A git worktree of a listed repo counts as that repo: its shared .git folder sits
+            # inside the listed top-level folder (--git-common-dir, absolute, is <listed>/.git).
+            _main = None
+            try:
+                _common = subprocess.run(["git", "-C", _root, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                         capture_output=True, text=True, timeout=10).stdout.strip()
+                if os.path.basename(_common) == ".git":
+                    _main = os.path.realpath(os.path.dirname(_common))
+            except Exception:
+                _main = None
+            if _root in _listed or (_main and _main in _listed):
                 needles = []
     except OSError:
         pass
 
 EXCLUDED = {"node", "runner", "user", "app", "USERNAME", "username", "you", "yourname", "example"}
 home_path = re.compile(r"/(?:Users|home)/([A-Za-z0-9_.-]+)/")
+# The encoded form too: Claude Code names a project folder after its path (a dash, Users or home,
+# a dash, the account name). No letter or digit may stand before the first dash, so a word that
+# only ENDS in it passes, and a placeholder such as <account> passes. Counted and excluded exactly
+# like the slashed form. Staged file NAMES are read for this form only (a folder copied out of
+# the project store is named this way), never for the slashed one.
+home_enc = re.compile(r"(?<![A-Za-z0-9])-(?:Users|home)-([A-Za-z0-9_.]+)")
 
 def name_hits(text):
     low = dezw(text).lower()
@@ -353,7 +371,11 @@ def name_hits(text):
     return n
 
 def home_hits(text):
-    return sum(1 for m in home_path.finditer(dezw(text)) if m.group(1) not in EXCLUDED)
+    d = dezw(text)
+    return sum(1 for m in home_path.finditer(d) if m.group(1) not in EXCLUDED) + enc_hits(d)
+
+def enc_hits(text):
+    return sum(1 for m in home_enc.finditer(dezw(text)) if m.group(1) not in EXCLUDED)
 
 # Email domains: a small, universal built-in default plus anything the user adds in
 # hooks/allowed-email-domains.conf (one domain per line, # comments allowed). No conf file
@@ -415,7 +437,7 @@ staged = [p for p in git_bytes(["diff", "--cached", "--name-only", "-z", "--diff
 for p in staged:
     # names only: a staged path is always repo-relative, so it can never BE an absolute
     # home path, and a repo with a folder called home inside docs must not be refused for it.
-    n = name_hits(p)
+    n = name_hits(p) + enc_hits(p)
     if n:
         offenders[p] = offenders.get(p, 0) + n
 
