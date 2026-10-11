@@ -118,7 +118,7 @@ if [ -f "$CONF" ]; then
     GATE_EXTRA="${GATE_EXTRA}${GATE_EXTRA:+$'\n'}$line"
   done < "$CONF"
 fi
-verdict="$(printf '%s' "$cmd" | GATE_EXTRA="$GATE_EXTRA" "$GUARD_PY" -c "$GUARD_PY_COMMON"'
+verdict="$(printf '%s' "$cmd" | GATE_EXTRA="$GATE_EXTRA" "$GUARD_PY" -I -c "$GUARD_PY_COMMON"'
 s0 = clean(sys.stdin.read())
 
 # ---- text copies, all with comments removed (a comment is never a command or a read) ----

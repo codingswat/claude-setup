@@ -86,7 +86,7 @@ if [ -z "$cmd" ]; then
 fi
 cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"; [ -z "$cwd" ] && cwd="$PWD"
 sid="$(printf '%s' "$input" | jq -r '.session_id // empty')"; [ -z "$sid" ] && sid="nosession"
-verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" "$GUARD_PY" -c "$GUARD_PY_COMMON"'
+verdict="$(printf '%s' "$cmd" | CWD="$cwd" HOOKDIR="$(dirname "$0")" "$GUARD_PY" -I -c "$GUARD_PY_COMMON"'
 import subprocess, shlex
 raw = sys.stdin.read()
 s = clean(raw)

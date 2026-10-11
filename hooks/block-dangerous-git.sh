@@ -105,7 +105,7 @@ fi
 # by one RECORD PER SEGMENT (; && || | & and newlines, split outside quotes), because both
 # the match and the override that could waive it belong to one segment, never to the line:
 #   <override here 0|1> TAB <match copy> TAB <hidden-command-word copy> TAB <blanked copy>
-norm="$(printf '%s' "$rawcmd" | "$GUARD_PY" -c "$GUARD_PY_COMMON"'
+norm="$(printf '%s' "$rawcmd" | "$GUARD_PY" -I -c "$GUARD_PY_COMMON"'
 raw=sys.stdin.read()
 # The subcommands this guard judges by their ARGUMENTS: a variable after one of these cannot be
 # read (`git push origin $F`), while a variable in a read-only command (`git diff -- $paths`) is fine.

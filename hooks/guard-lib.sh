@@ -74,12 +74,14 @@
 # stub that exits non-zero, and choosing it would fail every guard closed (test-hooks.sh "D1b").
 guard_resolve_python() {
   local p="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
-  if [ -x "$p" ] && "$p" -c '' >/dev/null 2>&1; then printf '%s' "$p"; else command -v python3 2>/dev/null; fi
+  if [ -x "$p" ] && "$p" -I -c '' >/dev/null 2>&1; then printf '%s' "$p"; else command -v python3 2>/dev/null; fi
 }
 GUARD_PY="$(guard_resolve_python)"
 
 # Python helper definitions, prepended to each guard's own python snippet:
-#   python3 -c "$GUARD_PY_COMMON"'<the guard-specific code>'
+#   "$GUARD_PY" -I -c "$GUARD_PY_COMMON"'<the guard-specific code>'
+# Always -I (isolated): without it Python searches the current folder first, so a file named re.py in a
+# cloned repo would run inside every guard (test-hooks.sh S4).
 GUARD_PY_COMMON='
 import re, sys, os
 _HEREDOC = re.compile(r"<<-?\s*[\x27\"]?(\w+)[\x27\"]?[^\n]*\n.*?\n\1(?=\n|$)", re.S)
@@ -660,8 +662,8 @@ function bashw(t, raw,   u, rest, w, hit, n, a, i, k, seg, st, opt, lastw) {
   }
   rest = u
   while (match(rest, /(^|[[:space:];&|(])tee([[:space:]]|$)/)) {
-    seg = substr(rest, RSTART + RLENGTH); rest = seg; hit = 1
-    st = match(seg, /[;&|]/); if (st > 0) seg = substr(seg, 1, st - 1)
+    seg = substr(rest, RSTART + RLENGTH); hit = 1
+    st = match(seg, /[;&|]/); if (st > 0) { rest = substr(seg, st); seg = substr(seg, 1, st - 1) } else rest = ""
     n = split(seg, a, /[ \t]+/)
     for (i = 1; i <= n; i++) if (a[i] != "" && a[i] !~ /^-/) addpath(a[i])
   }

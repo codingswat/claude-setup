@@ -52,8 +52,8 @@ if [ -r "$names_file" ]; then
   # The preferred interpreter must RUN, as in hooks/guard-lib.sh guard_resolve_python — a Mac's
   # /usr/bin/python3 stub must not refuse every message. Tests: `review fixes (critical)` 1 (commit-msg).
   PY="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
-  if ! { [ -x "$PY" ] && "$PY" -c '' >/dev/null 2>&1; }; then PY="$(command -v python3 2>/dev/null)"; fi
-  nhit="$(printf '%s\n' "$msg" | "$PY" -c '
+  if ! { [ -x "$PY" ] && "$PY" -I -c '' >/dev/null 2>&1; }; then PY="$(command -v python3 2>/dev/null)"; fi
+  nhit="$(printf '%s\n' "$msg" | "$PY" -I -c '
 import re, sys
 text = sys.stdin.read().lower()
 n = 0

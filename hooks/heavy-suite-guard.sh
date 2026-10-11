@@ -125,7 +125,8 @@ if [ -f "$CONF" ]; then
   done < "$CONF"
 fi
 
-# The python reading prints two blocks joined by a \001 byte:
+# The python reading prints two blocks joined by a \001 byte (a \001 or \037 byte in the command itself is
+# read as a space, so it can never cut or shift a record: test-hooks.sh S2):
 #   (1) kill records, one per segment judged a stop-by-name:   <bad 0|1> TAB <KILL_OK at the
 #       segment start 0|1> TAB <segment>
 #   (2) test records, one per command segment, fields joined by \037: <SUITE_OK at the start of
@@ -134,8 +135,8 @@ fi
 #       (`T=npm; $T test`) also gets a record with `npm` standing in for the hidden word.
 # Messages and heredocs are dropped, wrappers unwrapped, whitespace (and `${IFS}`) normalised,
 # quoted text blanked and redirections turned into separators before either reading.
-both="$(printf '%s' "$cmd" | "$GUARD_PY" -c "$GUARD_PY_COMMON"'
-raw = sys.stdin.read()
+both="$(printf '%s' "$cmd" | "$GUARD_PY" -I -c "$GUARD_PY_COMMON"'
+raw = sys.stdin.read().replace("\x01", " ").replace("\x1f", " ")   # the two record separators below never come from the command
 
 # ---- unwrapping a shell -c / eval / env -S body, as the shell would de-escape it ----
 _QSTR = r"(?:\"(?:[^\"\\]|\\.)*\"|\x27[^\x27]*\x27)"
@@ -536,7 +537,7 @@ def kill_lines(t, depth=0):
         else:
             assigns.append((m.group(3), (m.group(4) if m.group(4) is not None else m.group(5)) or ""))
     # a lookup piped into a read (while read, { read ...; }, mapfile) taints what it reads; a PID file piped in does not
-    for m in re.finditer(r"([^;&|\n]*)\|\s*[{(]?\s*(?:while\s+)?(?:IFS=\S*\s+)?(?:read|mapfile|readarray)\b([^;&|\n]*)", b0):
+    for m in re.finditer(r"(?:^|(?<=[;&|\n])|(?=\|))([^;&|\n]*)\|\s*[{(]?\s*(?:while\s+)?(?:IFS=\S*\s+)?(?:read|mapfile|readarray)\b([^;&|\n]*)", b0):
         stage = m.group(1)
         if not (is_pid_read(stage) and not any(f in tfiles for f in words_of(stage))):
             taint.update(read_names(m.group(2)))

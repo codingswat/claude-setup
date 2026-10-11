@@ -113,7 +113,7 @@ GUARD_LIB_PC="$(dirname "$0")/../hooks/guard-lib.sh"
 if [ -r "$GUARD_LIB_PC" ]; then . "$GUARD_LIB_PC"; PY="$GUARD_PY"
 else
   PY="${GUARD_PYTHON_PREFERRED:-/usr/bin/python3}"
-  if ! { [ -x "$PY" ] && "$PY" -c '' >/dev/null 2>&1; }; then PY="$(command -v python3 2>/dev/null)"; fi
+  if ! { [ -x "$PY" ] && "$PY" -I -c '' >/dev/null 2>&1; }; then PY="$(command -v python3 2>/dev/null)"; fi
 fi
 if [ -z "$PY" ]; then echo "pre-commit hook: REFUSED — no python3 found, so the privacy check cannot run." >&2; exit 1; fi
 
@@ -253,7 +253,7 @@ if [ -z "$SECRET_RE_SRC" ]; then
   echo "${HOOK_LABEL:-pre-commit hook}: REFUSED — cannot read SECRET_RE from hooks/auto-backup.sh (missing or changed), so the key scan cannot run. Restore that file." >&2
   exit 1
 fi
-HOOK_LABEL="${HOOK_LABEL:-pre-commit hook}" SECRET_RE_SRC="$SECRET_RE_SRC" PLACEHOLDER_RE_SRC="$PLACEHOLDER_RE_SRC" "$PY" - <<'PY' || exit 1
+HOOK_LABEL="${HOOK_LABEL:-pre-commit hook}" SECRET_RE_SRC="$SECRET_RE_SRC" PLACEHOLDER_RE_SRC="$PLACEHOLDER_RE_SRC" "$PY" -I - <<'PY' || exit 1
 import os, re, subprocess, sys
 LABEL = os.environ.get("HOOK_LABEL") or "pre-commit hook"
 SECRET_RE = re.compile(os.environ["SECRET_RE_SRC"])
@@ -310,7 +310,7 @@ PY
 # only when it WOULD have refused is the bypass written to hooks/override-ledger.sh — and REFUSED if
 # that line cannot be written. The ledger line names no file or name (a listed name can be a path).
 if [ "${PRIVACY_OK:-}" = "1" ]; then PRIV_ERR="$(mktemp)"; exec 3>"$PRIV_ERR"; else PRIV_ERR=""; exec 3>&2; fi
-HOOK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" HOOK_LABEL="$HOOK_LABEL" "$PY" - <<'PY' 2>&3
+HOOK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" HOOK_LABEL="$HOOK_LABEL" "$PY" -I - <<'PY' 2>&3
 
 import re, subprocess, sys, os
 

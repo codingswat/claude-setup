@@ -404,7 +404,7 @@ register_hook() {   # event  command  timeout  statusMessage  [matcher]
         console.log("ADDED");
       ' "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" "$mt" 2>/dev/null) ;;
     python3)
-      out=$(python3 - "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" "$mt" <<'PYEOF' 2>/dev/null
+      out=$(python3 -I - "$DEST/settings.json" "$ev" "$cmd" "$to" "$sm" "$mt" <<'PYEOF' 2>/dev/null
 import json,os,sys
 p,ev,cmd,to,sm,mt = sys.argv[1:7]
 # Resolve first — see the note in the node branch above.

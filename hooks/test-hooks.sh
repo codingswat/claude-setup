@@ -4900,5 +4900,58 @@ if grep -q 'turn_scan' "$HOOKS_DIR/chapter-note.sh" && grep -q 'Not covered' "$H
 if grep -q 'trailing' "$HOOKS_DIR/wake-warning.sh" && grep -q 'link' "$HOOKS_DIR/wake-warning.sh"; then ok; else bad "B-hdr wake-warning header must name the conf comment and the link rule"; fi; refuse_n=$((refuse_n+1))
 
 
+
+# ======================================================================================
+echo "security review 2026-10-11 (S1-S4): fixes for the review of the guard port"
+# S4: a python module planted in the folder a hook runs in (a cloned repo's re.py) must never run inside a
+# guard: every python3 -c / python3 - in the hooks runs isolated (-I), so the current folder is not on its path.
+PL="$T/sr-plant"; mkdir -p "$PL"
+printf 'open(%s, "a").write("ran\\n")\nraise SystemExit("planted re.py imported")\n' "$(jstr "$PL/PLANTED")" > "$PL/re.py"
+sr_in() { ( cd "$PL" && printf '%s' "$INPUT" | env "${@:2}" bash "$HOOKS_DIR/$1" >/dev/null 2>&1 ); }
+sr_planted_clean() { [ ! -e "$PL/PLANTED" ]; }
+for h in heavy-suite-guard.sh gate-guard.sh block-dangerous-git.sh commit-pathspec-guard.sh; do
+  rm -f "$PL/PLANTED"; INPUT="$(jbs ls "$PL")"; sr_in "$h"; rc=$?
+  if [ "$rc" = 0 ] && sr_planted_clean; then ok; else bad "S4 $h: an honest ls in a folder holding a planted re.py must pass (exit $rc) without running it"; fi; pass_n=$((pass_n+1))
+done
+rm -f "$PL/PLANTED"; INPUT="$(jbs 'pkill node' "$PL")"; sr_in heavy-suite-guard.sh; rc=$?
+if [ "$rc" = 2 ] && sr_planted_clean; then ok; else bad "S4 pair: pkill node beside a planted re.py is still refused by the real check (exit $rc)"; fi; refuse_n=$((refuse_n+1))
+rm -f "$PL/PLANTED"; INPUT="$(jbs 'npm test 2>&1 | tail -3 && git commit -m x' "$PL")"; sr_in gate-guard.sh; rc=$?
+if [ "$rc" = 2 ] && sr_planted_clean; then ok; else bad "S4 pair: a piped gate before a commit beside a planted re.py is still refused (exit $rc)"; fi; refuse_n=$((refuse_n+1))
+SRR="$T/sr-repo"; git init -q -b main "$SRR"; cp "$PL/re.py" "$SRR/re.py"; sed -i.bak "s#$PL/PLANTED#$SRR/PLANTED#" "$SRR/re.py"; rm -f "$SRR/re.py.bak"
+git -C "$SRR" config core.hooksPath "$GIT_HOOKS_DIR"; echo a > "$SRR/a.txt"; git -C "$SRR" add a.txt
+if ( cd "$SRR" && "${ID[@]}" git commit -q -m 'notes: a clean message' ) >/dev/null 2>&1 && [ ! -e "$SRR/PLANTED" ]; then ok; else bad "S4 pre-commit and commit-msg: an honest commit in a repo holding a planted re.py must pass without running it"; fi; pass_n=$((pass_n+1))
+rm -f "$SRR/PLANTED"; U="/User""s"; printf 'cfg = "%s/zqplanted/x"\n' "$U" > "$SRR/b.txt"; git -C "$SRR" add b.txt
+if ( cd "$SRR" && "${ID[@]}" git commit -q -m 'notes: b' ) >/dev/null 2>&1; then bad "S4 pair: a staged home path beside a planted re.py must still be refused"; elif [ -e "$SRR/PLANTED" ]; then bad "S4 pair: the refusal must come from the real check, not the planted re.py"; else ok; fi; refuse_n=$((refuse_n+1))
+SR_HOOKS=(); for f in "$HOOKS_DIR"/*.sh; do case "$(basename "$f")" in test-*) ;; *) SR_HOOKS+=("$f") ;; esac; done   # hooks only, never the test scripts
+if grep -nE '"\$(GUARD_PY|PY)" +-c|"\$PY" +- ' "${SR_HOOKS[@]}" "$GIT_HOOKS_DIR"/pre-commit "$GIT_HOOKS_DIR"/commit-msg | grep -v '^[^:]*:[0-9]*: *#' | grep -q .; then bad "S4 pin: no hook runs \"\$GUARD_PY\" -c / \"\$PY\" -c / \"\$PY\" - without -I"; else ok; fi; refuse_n=$((refuse_n+1))
+if [ "$(grep -cE '"\$(GUARD_PY|PY)" +-I +-c|"\$PY" +-I +- ' "${SR_HOOKS[@]}" "$GIT_HOOKS_DIR"/pre-commit "$GIT_HOOKS_DIR"/commit-msg | awk -F: '{s+=$2} END {print s}')" -ge 7 ]; then ok; else bad "S4 pin: at least 7 isolated python calls are found (the scan reached them)"; fi; pass_n=$((pass_n+1))
+
+# S1: one long unquoted stretch (no ; & | or newline) must not stall the stop-process reading (the taint
+# regex for a lookup piped into read was unanchored, so its time grew with the square of the stretch).
+sr_secs() { local t0 t1; t0=$(python3 -c 'import time;print(time.time())'); "$@"; SR_RC=$?; t1=$(python3 -c 'import time;print(time.time())'); SR_S=$(python3 -c 'import sys;print(int(float(sys.argv[2])-float(sys.argv[1])))' "$t0" "$t1"); }
+big="$(python3 -c 'print("a"*40000)')"
+INPUT="$(json_bash "echo $big")"; sr_secs expect pass 0 "S1 echo of a 40,000-character word passes" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+if [ "$SR_S" -le 5 ]; then ok; else bad "S1 a 40,000-character word is judged in 5 s or less (took ${SR_S} s)"; fi; refuse_n=$((refuse_n+1))
+INPUT="$(json_bash "echo $big; pgrep x | { read p; kill \$p; }")"; expect refuse 2 "S1 pair: a lookup piped into read after a long word is still refused" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+INPUT="$(json_bash 'pgrep x | read a | read p; kill $p')"; expect refuse 2 "S1 pair: a lookup read through a chained read is still refused" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+INPUT="$(json_bash 'cat run.pid | while read p; do kill $p; done')"; expect pass 0 "S1 pair: a PID file piped into read still passes" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+
+# S2: the reading's own record separators (\001, \037) inside the command must not cut or shift the records.
+INPUT="$(json_bash $'echo \x01; pkill node')"; expect refuse 2 "S2 a \\001 byte before pkill node does not hide it" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+INPUT="$(json_bash $'echo \x1f; pkill node')"; expect refuse 2 "S2 a \\037 byte before pkill node does not hide it" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+INPUT="$(json_bash $'echo \x01; npm test')"; expect refuse 2 "S2 a \\001 byte before a full test run at high load: still refused" env HEAVY_SUITE_LOAD_OVERRIDE=50 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+INPUT="$(json_bash $'echo \x01; ls')"; expect pass 0 "S2 pair: a \\001 byte in an honest command passes" env HEAVY_SUITE_LOAD_OVERRIDE=2 bash "$HOOKS_DIR/heavy-suite-guard.sh"
+
+# S3: a transcript command that repeats tee must not stall the end-of-turn reader (guard-lib.sh turn_scan,
+# the tee loop re-split the whole rest on every pass).
+tees="$(python3 -c 'print("tee "*5000 + "out.txt")')"
+ch_mk "$CH/sr3" P "B:$tees" N; sr_secs ch_stop sr3 "$CH/sr3"
+if [ "$SR_S" -le 5 ]; then ok; else bad "S3 a 20 KB run of tee in one command is read in 5 s or less (took ${SR_S} s)"; fi; refuse_n=$((refuse_n+1))
+c2_chk refuse "S3 the long tee command still counts as the first change: note" ch_note sr3
+ch_mk "$CH/sr3b" P "B:echo hi | tee a.txt; echo x | tee -a b.txt" N; ch_stop sr3b "$CH/sr3b"
+c2_chk refuse "S3 pair: two tees separated by ; still count as a change: note" ch_note sr3b
+ch_mk "$CH/sr3c" P "B:echo \"tee a.txt\"" N; ch_stop sr3c "$CH/sr3c"
+c2_chk pass "S3 pair: tee inside quotes is no change" ch_nonote sr3c
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
