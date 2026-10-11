@@ -161,6 +161,16 @@ references just work.
   alongside
 - The authors credited in [skills/ATTRIBUTION.md](skills/ATTRIBUTION.md)
 
+## Tests
+
+The PC tester (the owner's Windows PC, running this repo's tests unattended) tests every branch pushed under `ci/`:
+
+```bash
+git push origin HEAD:ci/my-change
+```
+
+Within a few minutes, for commits under 48 hours old, one result file per commit lands on the `ci-results` branch, in `results/<day>-<first 8 characters of the commit>.md`: GREEN or RED, the commands, and the last lines of their output. It runs `bash hooks/test-hooks.sh`.
+
 ## License
 
 My files: MIT ([LICENSE](LICENSE)). The cherry-picked skills in `skills/` are MIT by their
