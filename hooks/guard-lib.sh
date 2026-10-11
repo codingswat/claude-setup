@@ -53,6 +53,13 @@
 #                   inline literal out to the top level; it cannot bring out text that
 #                   does not exist until the shell runs, so that wrapper is refused.
 #                   Checked BEFORE unwrap, on text that still holds the wrapper.
+#   lead / canon / is_query — the canonical reading of a command segment, shared by
+#                   heavy-suite-guard.sh and gate-guard.sh: lead() peels what stands in front
+#                   of the command word (VAR=value, redirections, ! time nohup env sudo nice
+#                   timeout stdbuf watch ... and the keywords then/do/{/( ), canon() spells
+#                   npm / pnpm / yarn / npx / bunx / node_modules/.bin/ paths one way
+#                   (`npm test`, `npx vitest ...`), is_query() says it only asks (--version,
+#                   --help, tsc --init ...).
 # A guard that cannot find this file REFUSES the command (fail closed) — never carries on
 # with un-normalised text, which would silently reopen every bypass above.
 # Tests: hooks/test-hooks.sh (sections 28 and 30; `refresh 2026-09-29 (a)` for A01 and A85).
@@ -211,6 +218,121 @@ def override_at_start(s, word):
 def override_here(s, word, pos):
     a, b = seg_bounds(s, pos)
     return override_at_start(s[a:b], word)
+# ---- peeling wrappers off the front of a segment ----
+# word -> the options of that wrapper that take a value (so the value is skipped with the option)
+LEADVAL = {"time": (), "nohup": (), "builtin": (), "command": (), "eval": (), "coproc": (), "doas": ("-u", "-C"), "exec": ("-a",),
+    "stdbuf": ("-i", "-o", "-e"), "arch": ("-e", "-d"), "xcrun": ("--sdk", "-sdk", "--toolchain", "-toolchain"),
+    "script": ("-t",), "watch": ("-n", "--interval"),
+    "env": ("-u", "--unset", "-C", "--chdir", "-P", "-S"), "nice": ("-n", "--adjustment"),
+    "timeout": ("-s", "--signal", "-k", "--kill-after"), "caffeinate": ("-t", "-w"),
+    "sudo": ("-u", "-g", "-C", "-h", "-p", "-U", "-r", "-t", "-D", "-R", "-T", "--user", "--group"),
+    "xargs": ("-n", "-I", "-P", "-L", "-s", "-d", "-E", "-J", "-R", "-S", "--max-args",
+        "--max-procs", "--max-lines", "--max-chars", "--delimiter", "--eof")}
+LEADKW = ("!", "then", "do", "else", "if", "elif", "while", "until", "{", "(", "}", ")")
+FINDEXEC = ("-exec", "-execdir", "-ok", "-okdir")
+def lead(toks):
+    # returns (the tokens from the command word on, whether xargs stood in front)
+    via = False
+    i = 0
+    n = len(toks)
+    while i < n:
+        t = toks[i]
+        b = t.rsplit("/", 1)[-1]
+        if t in LEADKW or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=\S*", t):
+            i += 1
+            continue
+        if re.fullmatch(r"\d*(?:<<<|[<>]{1,2}|&>>?)", t):      # `> file` : operator and its target
+            i += 2
+            continue
+        if re.fullmatch(r"\d*(?:<<<|[<>]{1,2}|&>>?)\S+", t):   # `>file`
+            i += 1
+            continue
+        if b not in LEADVAL:
+            break
+        if b == "command" and i + 1 < n and toks[i + 1] in ("-v", "-V"):
+            break
+        if b == "xargs":
+            via = True
+        i += 1
+        while i < n and toks[i].startswith("-") and toks[i] != "-":
+            if toks[i] == "--":
+                i += 1
+                break
+            i += 2 if toks[i] in LEADVAL[b] else 1
+        if b in ("timeout", "script") and i < n:        # timeout takes its duration, script its file, as a bare word
+            i += 1
+        if b == "coproc" and i + 1 < n and toks[i + 1] == "{":     # coproc NAME { ...; }
+            i += 1
+    return toks[i:], via
+
+# ---- one canonical spelling ----
+BINS = ("vitest", "playwright", "tsc", "kill-port")
+NPMVAL = ("-w", "--workspace", "--prefix", "-C", "--loglevel", "--userconfig", "--cwd", "--dir", "--filter", "-F")
+def skipflags(t, i, val):
+    while i < len(t) and t[i].startswith("-") and t[i] != "-":
+        if t[i] == "--":
+            return i + 1
+        i += 2 if t[i] in val else 1
+    return i
+def binname(x):
+    return re.sub(r"(?<=.)@.*$", "", x)          # vitest@latest -> vitest
+def canon(t):
+    # returns (canonical tokens, how many of them name the command: `npm test` 2, `npx vitest` 2)
+    if not t:
+        return t, 0
+    w = t[0]
+    b = w.rsplit("/", 1)[-1]
+    m = re.search(r"node_modules/\.bin/(vitest|playwright|tsc)$", w)
+    if m:
+        return ["npx", m.group(1)] + t[1:], 2
+    if b == "node":
+        i = skipflags(t, 1, ("-r", "--require", "--import"))
+        if i < len(t):
+            m = re.search(r"node_modules/(?:\.bin/(vitest|playwright|tsc)$|(vitest|typescript|playwright|@playwright/test)/)", t[i])
+            if m:
+                k = m.group(1) or {"vitest": "vitest", "typescript": "tsc", "playwright": "playwright", "@playwright/test": "playwright"}[m.group(2)]
+                return ["npx", k] + t[i + 1:], 2
+        return t, 1
+    if b in ("npm", "pnpm", "yarn"):
+        i = skipflags(t, 1, NPMVAL)
+        if i < len(t) and b == "yarn" and t[i] == "workspace":
+            i = skipflags(t, i + 2, NPMVAL)
+        if i >= len(t):
+            return t, 1
+        cm = t[i]
+        if cm in ("exec", "x", "dlx"):
+            return canon(["npx"] + t[i + 1:])
+        if cm == "test" or (b == "npm" and cm in ("t", "tst", "it", "cit", "install-test", "install-ci-test")):
+            return ["npm", "test"] + t[i + 1:], 2
+        if cm in ("run", "run-script", "rum", "urn"):
+            j = skipflags(t, i + 1, NPMVAL)
+            if j < len(t):
+                if t[j] == "test":
+                    return ["npm", "test"] + t[j + 1:], 2
+                if b != "npm" and binname(t[j]) in BINS:
+                    return ["npx", binname(t[j])] + t[j + 1:], 2
+                return ["npm", "run", t[j]] + t[j + 1:], 3
+            return t, 1
+        if b != "npm":
+            if binname(cm) in BINS:
+                return ["npx", binname(cm)] + t[i + 1:], 2
+            return ["npm", "run", cm] + t[i + 1:], 3
+        return ["npm"] + t[i:], 2
+    if b in ("npx", "bunx"):
+        i = skipflags(t, 1, ("-p", "--package", "-c", "--call", "-w", "--workspace"))
+        if i < len(t):
+            return ["npx", binname(t[i])] + t[i + 1:], 2
+        return t, 1
+    return t, 1
+def is_query(t, h):
+    if any(x in ("--version", "--list", "--help") for x in t):
+        return True
+    a = t[h:]
+    if a in (["-h"], ["-v"], ["-V"]):
+        return True
+    if t[:h] in (["npx", "tsc"], ["tsc"]) and any(x in ("--init", "--showConfig", "--listFiles", "--listEmittedFiles") for x in a):
+        return True
+    return t[:h] in (["npx", "vitest"], ["vitest"]) and a[:1] == ["list"]
 '
 
 # guard_parsed NAME PARSER STATUS OUTPUT INPUT — the ONE check every guard runs after a

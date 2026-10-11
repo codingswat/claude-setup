@@ -3746,7 +3746,7 @@ for c in 'git push | tail -3' 'git push 2>&1 | grep -v x' 'git -C repo push |& c
          'git rebase -i main | head' 'git pull --rebase origin main |& tail' 'GATE_OK=1 true && git push | tail' ; do
   gpb refuse "P4 piped push/rebase must refuse" "$c"; done
 for c in 'git push' 'git push || echo failed' 'git push --dry-run | tail' 'git push -n | tail' 'set -o pipefail; git push | tail' 'git push | tail; echo ${PIPESTATUS[0]}' \
-         'git log | head' 'echo "git push | tail"' 'git pull | tail' 'git pull --rebase=false | tail' 'git push > out.log 2>&1' \
+         'git log | head' 'echo "git push | tail"' 'git push > out.log 2>&1' \
          'git status | head' 'git commit -m "x" | tail' 'git rebase --abort' 'git push && git log | head' 'git diff | git apply' 'echo git push | tail'; do
   gpb pass "P4 pair: must allow" "$c"; done
 gpb pass "P4 pair: pipefail set on an earlier line" $'set -eo pipefail\ngit push | tail'
@@ -4507,6 +4507,38 @@ F1_LABEL="A-m pair: a real type-check still refuses (20% free)"
 f1m refuse 'npx tsc --noEmit' 'npx tsc -p .'
 if grep -q 'vue-tsc' "$HOOKS_DIR/heavy-suite.conf.example" && grep -q 'PATTERN/MEMPATTERN' "$HOOKS_DIR/heavy-suite.conf.example"; then ok; else bad "A-m the conf example must say other runners (vue-tsc, bun, turbo ...) go in PATTERN/MEMPATTERN"; fi; refuse_n=$((refuse_n+1))
 if grep -q 'NOT enforced' "$HOOKS_DIR/heavy-suite-guard.sh" && grep -q 'split by quotes' "$HOOKS_DIR/heavy-suite-guard.sh"; then ok; else bad "A-m the guard header must list what is NOT enforced (quote-split words, variable as command ...)"; fi; refuse_n=$((refuse_n+1))
+
+# ---- guard port 2026-10-10 (F2): gate-guard, the routes a blind attacker found ----
+echo "guard port 2026-10-10 (F2)"
+F2L="$T/f2-ledger.tsv"
+f2g() {   # <refuse|pass> <label> <command...>: gate-guard on each command
+  local kind="$1" label="$2"; shift 2; local c
+  for c in "$@"; do
+    INPUT="$(json_bash "$c")"
+    if [ "$kind" = refuse ]; then expect refuse 2 "$label: $c" env OVERRIDE_LEDGER="$F2L" bash "$HOOKS_DIR/gate-guard.sh"
+    else expect pass 0 "$label: $c" env OVERRIDE_LEDGER="$F2L" bash "$HOOKS_DIR/gate-guard.sh"; fi
+  done
+}
+f2_count() { [ -f "$1" ] || { echo 0; return; }; cut -f3 "$1" | grep -cxF "$2"; }
+f2g refuse "A-B1 a gate with 2>&1 then a pipe, then a commit/push/READY" 'npm test 2>&1 | tail -3 && git commit -m x' 'npx vitest run 2>&1 | tail -20 && git push' 'npx tsc --noEmit 2>&1 | head && echo READY' 'npm test 2>&1; git commit -m x' 'npm test 2>&1 >log | tail && git commit'
+f2g pass "A-B1 pair: the same gates with nothing riding on them, or joined with &&" 'npm test 2>&1 && git commit -m x' 'npx vitest run 2>&1 | tail -20' 'git commit -m x && npm test 2>&1 | tail' 'npm test 2>&1 | tail -3'
+f2g refuse "A-B4 a piped git pull hides a failed merge or rebase" 'git pull -r | tail' 'git -c pull.rebase=true pull | tail' 'git config pull.rebase true && git pull | tail' 'git pull | tail' 'git pull --rebase=false | tail'
+f2g pass "A-B4 pair: dry run, unpiped, or only a config read piped" 'git pull --dry-run | tail' 'git pull' 'git pull --ff-only && git log | head' 'git config pull.rebase | cat'
+f2g refuse "A-M8 a gate then a commit/push anywhere after a non-&& join" 'pnpm test | tail && git commit -m x' 'yarn test | tail && git commit -m x' 'npm test; git add -A && git commit -m x' 'timeout 600 npm test; git commit -m x' 'npm test; true; git commit -m x' 'npm test || true; git commit -m x' 'npm test & git commit -m x' 'npm test || git commit -m x' $'npm test\ngit add -A\ngit commit -m x'
+f2g pass "A-M8 pair: the exit code decides, or nothing rides on the gate" 'pnpm test && git commit -m x' 'timeout 600 npm test && git commit -m x' 'npm test || exit 1; git commit -m x' 'if npm test; then git commit -m x; fi' 'git commit -m x; npm test' 'npm test; echo done' 'yarn test && git push'
+rm -f "$F2L"; f2g refuse "A-M9 every violation is judged, not only the first" 'GATE_OK=1 git push | tail; git rebase x | tail' 'GATE_OK=1 npm test | tail && git push | tail'
+if [ "$(f2_count "$F2L" GATE_OK)" = 0 ]; then ok; else bad "A-M9 a refused command must leave no GATE_OK ledger line"; fi; refuse_n=$((refuse_n+1))
+rm -f "$F2L"; f2g pass "A-M9 pair: each violation carries its own override" 'GATE_OK=1 git push | tail; GATE_OK=1 git rebase x | tail'
+if [ "$(f2_count "$F2L" GATE_OK)" = 2 ]; then ok; else bad "A-M9 pair: both waivers must be recorded when the command passes (got $(f2_count "$F2L" GATE_OK))"; fi; pass_n=$((pass_n+1))
+f2g refuse "A-M10 PIPESTATUS must be READ after the pipeline, in code" 'echo PIPESTATUS[0]; git push | tail' 'git push | tail # PIPESTATUS[0]' 'echo ${PIPESTATUS[0]}; git push | tail' 'git push | tail; echo '"'"'${PIPESTATUS[0]}'"'" 'set -o pipefail; set +o pipefail; git push | tail'
+f2g pass "A-M10 pair: a real read after the pipeline, or pipefail left on" 'git push | tail; echo "${PIPESTATUS[0]}"' 'git push | tail; [ ${PIPESTATUS[0]} -eq 0 ]' 'set -o pipefail; echo hi; git push | tail' 'set +o pipefail; set -o pipefail; git push | tail'
+f2g pass "A-M11 honest reads of git help and state" 'git rebase --show-current-patch | head' 'git rebase --edit-todo | cat' 'git push --help | head' 'git rebase --help | head' 'git rebase-helper | tail' 'git pushall | tail'
+f2g refuse "A-M11 pair: the real verbs still refuse" 'git rebase main | head' 'git push origin main | head' 'git rebase -i main | head'
+f2g refuse "A-m honest spellings of the same push" 'git --git-dir .git push | tail' 'git --work-tree . push | tail' 'git --namespace foo push | tail' 'git push -o -n | tail' 'time git push | tail' '! git push | tail' '{ git push; } 2>&1 | tail' '( git push ) | tail' '(git push) | tail' '{ git push; echo done; } | tail' 'x=$(git push | tail)' 'echo $(git push 2>&1 | tail -1)'
+f2g pass "A-m pair: not piped, dry run, or a real -n after -o" 'time git push' '{ git push; } > out.log 2>&1' 'git push -o x -n | tail' 'git --git-dir .git push' '( git push )' 'git push -o -n --dry-run | tail'
+f2g refuse "A-m a loop polling a file or a log" 'while :; do rg -q DONE log && break; sleep 5; done' 'while :; do [ -f done.marker ] && break; sleep 5; done' 'while ! test -s result.json; do sleep 5; done' 'until [ "$(tail -1 log)" = DONE ]; do sleep 1; done' 'until [ "$(cat status)" = ok ]; do sleep 1; done'
+f2g pass "A-m pair: a loop waiting on a process or a port, or not waiting at all" 'while kill -0 $pid 2>/dev/null; do sleep 1; done' 'while ! nc -z localhost 3000; do sleep 1; done' 'until [ "$(curl -s localhost:3000/health)" = ok ]; do sleep 1; done' 'until pgrep -x vite; do sleep 1; done' 'for i in 1 2 3; do echo $i; sleep 1; done' 'while :; do [ -z "$x" ] && break; sleep 1; done'
+if grep -q 'NOT enforced' "$HOOKS_DIR/gate-guard.sh" && grep -q 'quote-split' "$HOOKS_DIR/gate-guard.sh"; then ok; else bad "A-m the gate-guard header must list what is NOT enforced (quote-split words, a variable as the command ...)"; fi; refuse_n=$((refuse_n+1))
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
