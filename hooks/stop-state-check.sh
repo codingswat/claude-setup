@@ -58,7 +58,7 @@
 # share it. A repo opts in by COMMITTING `.claude/state-roles.tsv` at its git top, tracked (an untracked or ignored file does not count) (`<pattern><TAB><state file path
 # from the top>`; see state-check.conf.example); guard-lib.sh's hook_state_role reads the chat's role from its
 # title or first message. Such a chat gets job (2) only, with a lighter rule: a turn whose OWN transcript wrote one
-# of the tracked files that changed, or committed (git commit/merge/cherry-pick/revert, with or without -C/-c
+# of the tracked files that changed (or a folder holding one), or committed (git commit/merge/cherry-pick/revert, with or without -C/-c
 # options), or wrote something whose target cannot be read (sed -i, a quoted or variable redirect target, git
 # apply, an interpreter body that writes), and that did not change its state file, is blocked once (a Heartbeat
 # line is asked); a state file with uncommitted changes is asked to be committed by path. Another chat's edit in
@@ -344,7 +344,7 @@ if [ "$snap_ok" = 1 ]; then
         _m_chg="$_m_chg
 $(git -C "$top" -c core.quotepath=false diff --no-ext-diff --no-textconv --name-only "$snap_head" HEAD 2>/dev/null)"
       fi
-      _m_topp=$(cd "$top" 2>/dev/null && pwd -P); _m_cwdp=$(cd "$cwd" 2>/dev/null && pwd -P); _m_rel=""
+      _m_topp=$(cd "$top" 2>/dev/null && pwd -P); _m_cwdp=$(cd "$cwd" 2>/dev/null && pwd -P); _m_rel=""; _m_nl=$'\n'
       case "$_m_cwdp/" in "$_m_topp/"*) _m_rel="${_m_cwdp#"$_m_topp"}"; _m_rel="${_m_rel#/}";; esac
       while IFS= read -r _m_p; do
         [ -n "$_m_p" ] || continue
@@ -357,7 +357,9 @@ $(git -C "$top" -c core.quotepath=false diff --no-ext-diff --no-textconv --name-
         esac
         _m_p="${_m_p%/}"
         [ -n "$_m_p" ] || continue
-        if printf '%s\n' "$_m_chg" | /usr/bin/grep -qxF -- "$_m_p" || printf '%s\n' "$_m_chg" | /usr/bin/grep -qF -- "$_m_p/"; then _m_own=1; break; fi
+        # a changed line that IS the path, or starts with the path and a slash (a folder holding it): read from the
+        # start of the line, so a write to ocs is not one inside docs/ (test-hooks.sh "kit follow-up 2026-10-11" K1)
+        case "$_m_nl$_m_chg$_m_nl" in *"$_m_nl$_m_p$_m_nl"*|*"$_m_nl$_m_p/"*) _m_own=1; break;; esac
       done <<EOF_P
 $TS_PATHS
 EOF_P

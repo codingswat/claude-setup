@@ -4765,6 +4765,8 @@ fb_mapped() {   # <refuse|pass> <label> <changed file> <items...>: a fresh share
     untracked) mkdir -p "$R/.claude"; printf 'reviewer\tnotes/reviewer.md\n' > "$R/.claude/state-roles.tsv";;
     ignored) printf '.claude/\n' > "$R/.gitignore"; git -C "$R" add .gitignore; "${ID[@]}" git -C "$R" commit -q -m ignore; mkdir -p "$R/.claude"; printf 'reviewer\tnotes/reviewer.md\n' > "$R/.claude/state-roles.tsv";;
   esac
+  # a changed file the repo does not hold yet (docs/notes.txt) is committed first, so the change below is to a tracked path
+  [ -e "$R/$chg" ] || { mkdir -p "$(dirname "$R/$chg")"; echo seed > "$R/$chg"; git -C "$R" add -- "$chg"; "${ID[@]}" git -C "$R" commit -q -m seed; }
   FB_R="$R" python3 "$FB/mk.py" "$FB/t$fb_n" "$@"
   g1_prompt "$R" "fb$fb_n" "$FB/t$fb_n"
   echo more >> "$R/$chg"
@@ -4952,6 +4954,24 @@ ch_mk "$CH/sr3b" P "B:echo hi | tee a.txt; echo x | tee -a b.txt" N; ch_stop sr3
 c2_chk refuse "S3 pair: two tees separated by ; still count as a change: note" ch_note sr3b
 ch_mk "$CH/sr3c" P "B:echo \"tee a.txt\"" N; ch_stop sr3c "$CH/sr3c"
 c2_chk pass "S3 pair: tee inside quotes is no change" ch_nonote sr3c
+
+# ---- kit follow-up 2026-10-11: two gaps a port of the turn reader into a private copy found ----
+echo "kit follow-up 2026-10-11: the shared-folder path test, short push hashes"
+echo "  K1 a written path matches a changed path only as that path or a folder holding it"
+fb_mapped pass "K1 a write to ocs (the tail of the changed folder's name; docs/notes.txt changed): no hold" docs/notes.txt TITLE P "B:echo x > ocs" N
+fb_mapped pass "K1 a Write to <repo>/ocs: no hold" docs/notes.txt TITLE P "E:Write:@R@/ocs" N
+fb_mapped pass "K1 a write to sub (a folder of that name deeper down; docs/sub/n.txt changed): no hold" docs/sub/n.txt TITLE P "B:echo x > sub" N
+fb_mapped refuse "K1 pair: a cp into the changed folder (docs) holds" docs/notes.txt TITLE P "B:cp /tmp/x.txt docs" N
+fb_mapped refuse "K1 pair: an Edit of the changed file itself holds" docs/notes.txt TITLE P "E:Edit:@R@/docs/notes.txt" N
+echo "  K2 a push printed with short hashes (core.abbrev below 7) still counts as a push"
+# the ref lines git printed for `git -c core.abbrev=4 push ../bare main dev` with dev behind the remote (git's
+# error: and hint: lines are left out: the builder reads a colon as the end of the text)
+f3_cn 15 P "B:git push origin main dev" $'R:1:To ../bare\n   63ec..3142  main -> main\n ! [rejected]  dev -> dev (fetch first):err' N
+c2_chk refuse "K2 a push of two refs, one updated with 4-character hashes, one rejected: note" ch_note f15
+f3_cn 16 P "B:git push origin dev" $'R:1:To ../bare\n ! [rejected]  dev -> dev (fetch first):err' N
+c2_chk pass "K2 pair: the same setting, the only ref rejected: no note" ch_nonote f16
+f3_cn 17 P "B:git push origin dev" $'R:1:pre-push checks 1..2  dev -> skipped\nTo ../bare\n ! [rejected]  dev -> dev (fetch first):err' N
+c2_chk pass "K2 pair: hex runs shorter than 4 (git never prints fewer) are no hash range: no note" ch_nonote f17
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

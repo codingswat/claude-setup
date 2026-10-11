@@ -691,9 +691,11 @@ function isprompt(l) {
   if (l ~ /"(content|text)"[ \t]*:[ \t]*"([ \t]|\\n)*<(task-notification|command-|local-command-)/) return 0
   return 1
 }
-# did a push result show a ref that went? (an updated ref, a new branch or tag, a deleted ref)
+# did a push result show a ref that went? (an updated ref, a new branch or tag, a deleted ref; a hash is 4 hex
+# characters or more, as core.abbrev can print fewer than 7 but git refuses below 4: test-hooks.sh "kit
+# follow-up 2026-10-11" K2)
 function went(l) {
-  return (l ~ /[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+\.\.\.?[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+[ \t]+[^ \t]+[ \t]+->/ || l ~ /\[new (branch|tag)\]/ || l ~ /- \[deleted\]/)
+  return (l ~ /[0-9a-f][0-9a-f][0-9a-f][0-9a-f]+\.\.\.?[0-9a-f][0-9a-f][0-9a-f][0-9a-f]+[ \t]+[^ \t]+[ \t]+->/ || l ~ /\[new (branch|tag)\]/ || l ~ /- \[deleted\]/)
 }
 BEGIN {
   Q1 = "\"[^\"]*\""; Q2 = "\047[^\047]*\047"; ARG = "(" Q1 "|" Q2 "|[^[:space:]]+)"
