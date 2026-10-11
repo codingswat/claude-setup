@@ -1,0 +1,20 @@
+# Copy to hooks/wake-warning.conf (next to wake-warning.sh) to change the numbers. Without a conf
+# the defaults below apply. KEY=VALUE lines only; the file is read as text, never run. An
+# environment variable of the same name wins over this file.
+#
+# A chat that has sat idle for about an hour loses its saved copy (the prompt cache), so your
+# next message re-reads the whole chat at full price. wake-warning.sh holds that one message
+# once and tells you; send it again to go ahead.
+
+# Minutes of silence (either side) after which the saved copy counts as expired.
+WAKE_IDLE_MIN=60
+
+# Only a chat holding MORE than this many tokens is worth a warning.
+WAKE_CTX_TOKENS=200000
+
+# The EXTRA cost, in dollars per million tokens, of re-reading an expired chat. Compute it from
+# your own model's list prices: the cache-write price minus the cache-read price (both per million
+# tokens). The default below is an EXAMPLE (6.25 write minus 0.50 read), not your model's price;
+# look yours up and change it. On a subscription there is no per-token bill: the same re-read
+# counts against your usage limit instead, and the dollar figure is only a size guide.
+WAKE_EXCESS_PER_MTOK=5.75

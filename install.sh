@@ -165,6 +165,7 @@ copy_if_present  "$SRC/hooks/channel-provenance-post.sh" "$DEST/hooks/channel-pr
 copy_if_present  "$SRC/hooks/provenance.py"              "$DEST/hooks/provenance.py"              "provenance.py (used by the provenance hooks, opt-in)"
 copy_if_present  "$SRC/hooks/doorman.sh"                 "$DEST/hooks/doorman.sh"                 "doorman.sh (UserPromptSubmit, opt-in)"
 copy_if_present  "$SRC/hooks/stop-state-check.sh"        "$DEST/hooks/stop-state-check.sh"        "stop-state-check.sh (Stop, opt-in)"
+copy_if_present  "$SRC/hooks/wake-warning.sh"           "$DEST/hooks/wake-warning.sh"           "wake-warning.sh (UserPromptSubmit, opt-in)"
 copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.sh"            "test-hooks.sh (run it yourself to check the hooks)"
 # The next two are not hooks — test-hooks.sh runs them as subprocesses and folds their
 # counts into its own RESULT line, so they need to sit alongside it to make that promise true.
@@ -176,7 +177,7 @@ chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/ho
          "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/override-ledger.sh" "$DEST/hooks/gate-guard.sh" \
          "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/channel-size-post.sh" "$DEST/hooks/helper-ledger.py" \
          "$DEST/hooks/channel-provenance-pre.sh" "$DEST/hooks/channel-provenance-post.sh" \
-         "$DEST/hooks/provenance.py" "$DEST/hooks/doorman.sh" "$DEST/hooks/stop-state-check.sh" \
+         "$DEST/hooks/provenance.py" "$DEST/hooks/doorman.sh" "$DEST/hooks/stop-state-check.sh" "$DEST/hooks/wake-warning.sh" \
          "$DEST/hooks/test-hooks.sh" "$DEST/hooks/test-helper-ledger.sh" "$DEST/hooks/test-rules-cap.sh" 2>/dev/null
 
 # .conf.example files for the new guards — copied as EXAMPLES only, never as a live conf:
@@ -629,6 +630,24 @@ else
   res=$(register_hook "Stop" '/bin/bash "$HOME/.claude/hooks/stop-state-check.sh"' "10" "")
   report_hook_result "$res" "the Stop hook (stop-state-check.sh)"
   unset SETUP_ONLY_EXISTING
+fi
+
+# The wake-up warning (opt-in, its own question, default no): copied above, registered only on a yes.
+head2 "The wake-up warning (optional)"
+say "  wake-warning.sh (needs jq): when a big chat has sat idle for an hour or more, its saved copy has"
+say "  expired and your next message re-reads the whole chat at full price. This holds that ONE message"
+say "  and says so; send it again to go ahead. Downside: it holds one message, once per long idle wake."
+say "  Numbers can be changed in hooks/wake-warning.conf (copy wake-warning.conf.example)."
+if ask "Register the wake-up warning?" "n"; then
+  if have jq; then
+    res=$(register_hook "UserPromptSubmit" '/bin/bash "$HOME/.claude/hooks/wake-warning.sh"' "10" "")
+    report_hook_result "$res" "the UserPromptSubmit hook (wake-warning.sh)"
+  else
+    warn "jq not found — skipping wake-warning.sh (it reads the typed prompt with jq and is inert"
+    say  "     without it). Install jq, then run this again."
+  fi
+else
+  skip "Skipped — wake-warning.sh is copied but not registered."
 fi
 
 # #9: a backup copy only earns its place if we actually changed the file.

@@ -2878,7 +2878,7 @@ pid,fd=pty.fork()
 if pid==0:
     os.environ["HOME"]=home
     os.execvp("bash",["bash",script])
-os.write(fd,b"\ny\n\n\n")
+os.write(fd,b"\ny\n\n\n\n")
 while True:
     try:
         if not os.read(fd,4096): break
@@ -4043,6 +4043,159 @@ S="$G1/s13b"; g1_prompt "$D1" old13b "$G1/tp900" "second text"; rm -f "$S/inbox/
 mkdir -p "$S/retired" "$S/retired-compacts"; echo "x" > "$S/retired/old13b"; echo 0 > "$S/retired-compacts/old13b"
 g1_prompt "$D2" new13b "$G1/tp100" "first words"
 c2_chk refuse "P13 the line is written even when the inbox copy was removed before the delivery" bash -c "[ \"\$(grep -c DELIVERED '$S/inbox/dev.md')\" = 1 ]"
+
+# ---- guard port 2026-10-10 (C2): the wake-up warning (P7) and the installer for it ----
+echo "guard port 2026-10-10 (C2): wake-warning.sh (P7) and install.sh"
+W="$T/c2w"; mkdir -p "$W"; WNOW=1800000000
+w_iso() { python3 -c 'import sys,datetime;print(datetime.datetime.fromtimestamp(int(sys.argv[1]),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"; }
+w_tr() {   # <file> <tokens> <age-seconds of the newest line>: a user line, then an assistant line with that usage
+  local f="$1" tok="$2" age="$3"
+  printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":"hi"}}\n' "$(w_iso $((WNOW - age - 60)))" > "$f"
+  printf '{"type":"assistant","timestamp":"%s","message":{"role":"assistant","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":%d,"output_tokens":5}}}\n' "$(w_iso $((WNOW - age)))" $((tok - 1)) >> "$f"
+}
+w_in() {   # <sid> <transcript> [prompt] [event]
+  python3 -c 'import json,sys;print(json.dumps({"hook_event_name":sys.argv[4],"session_id":sys.argv[1],"transcript_path":sys.argv[2],"prompt":sys.argv[3]}))' "$1" "$2" "${3:-go on}" "${4:-UserPromptSubmit}"
+}
+w_run() {   # <hook-dir> <state> <json> [ENV=val ...]: stdout -> $W/out, stderr -> $W/err, rc -> W_RC
+  local hd="$1" st="$2" js="$3"; shift 3
+  printf '%s' "$js" | env STATE_CHECK_STATE_DIR="$st" WAKE_NOW="$WNOW" "$@" bash "$hd/wake-warning.sh" > "$W/out" 2> "$W/err"; W_RC=$?
+}
+WS="$W/state"; mkdir -p "$WS"
+IDLE61=$((61 * 60 + 10)); IDLE59=$((59 * 60 + 10))
+w_tr "$W/t61" 250000 $IDLE61
+w_run "$HOOKS_DIR" "$WS" "$(w_in w1 "$W/t61")"
+c2_chk refuse "P7 idle 61 min with 250k tokens is held (exit 2)" eq "$W_RC" 2
+c2_chk refuse "P7 the hold prints nothing on stdout" test ! -s "$W/out"
+c2_chk refuse "P7 the hold writes the record of the wake" test -s "$WS/wake-warned/w1"
+c2_chk refuse "P7 the message says idle 61 minutes and about 250k tokens" bash -c "grep -q 'idle 61 minutes' '$W/err' && grep -q 'about 250k tokens' '$W/err'"
+c2_chk refuse "P7 the message says saved copy expired, the figure, list price and the subscription note" bash -c "grep -q 'saved copy has expired' '$W/err' && grep -q 'about \$1.44 extra at list price' '$W/err' && grep -q 'subscription' '$W/err'"
+c2_chk refuse "P7 the message says NOT sent, send again, a fresh chat is cheaper" bash -c "grep -q 'NOT sent' '$W/err' && grep -q 'send it again' '$W/err' && grep -q 'fresh chat is cheaper' '$W/err'"
+w_run "$HOOKS_DIR" "$WS" "$(w_in w1 "$W/t61" 'a different text')"
+c2_chk pass "P7 pair: the same chat's next message passes" eq "$W_RC" 0
+# a later wake (a newer line, still idle over the limit) warns again
+printf '{"type":"assistant","timestamp":"%s","message":{"role":"assistant","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":249999,"output_tokens":5}}}\n' "$(w_iso $((WNOW - 3700)))" >> "$W/t61"
+w_run "$HOOKS_DIR" "$WS" "$(w_in w1 "$W/t61")"
+c2_chk refuse "P7 a later wake (a newer line, still idle 61 min) is held again" eq "$W_RC" 2
+w_tr "$W/t59" 250000 $IDLE59
+w_run "$HOOKS_DIR" "$WS" "$(w_in w2 "$W/t59")"
+c2_chk pass "P7 pair: idle 59 min passes" eq "$W_RC" 0
+c2_chk pass "P7 pair: idle 59 min leaves no record" test ! -e "$WS/wake-warned/w2"
+w_tr "$W/t150" 150000 $IDLE61
+w_run "$HOOKS_DIR" "$WS" "$(w_in w3 "$W/t150")"
+c2_chk pass "P7 pair: idle 61 min with 150k tokens passes" eq "$W_RC" 0
+w_tr "$W/t200" 200000 $IDLE61
+w_run "$HOOKS_DIR" "$WS" "$(w_in w3b "$W/t200")"
+c2_chk pass "P7 pair: exactly 200,000 tokens is not MORE than the limit: passes" eq "$W_RC" 0
+for mp in '<task-notification>done</task-notification>' '[Cross-session delivery notice] hi' '<bash-input>ls</bash-input>' '<<autonomous-loop>>'; do
+  w_run "$HOOKS_DIR" "$WS" "$(w_in w4 "$W/t61" "$mp")"
+  c2_chk pass "P7 pair: the machine prompt '${mp:0:24}' passes" bash -c "[ '$W_RC' = 0 ] && [ ! -e '$WS/wake-warned/w4' ]"
+done
+mkdir -p "$W/proj/subagents"; w_tr "$W/proj/subagents/agent-1.jsonl" 250000 $IDLE61
+w_run "$HOOKS_DIR" "$WS" "$(w_in w5 "$W/proj/subagents/agent-1.jsonl")"
+c2_chk pass "P7 pair: a /subagents/ transcript passes" bash -c "[ '$W_RC' = 0 ] && [ ! -e '$WS/wake-warned/w5' ]"
+w_run "$HOOKS_DIR" "$WS" "$(w_in w6 "$W/no-such-transcript")"
+c2_chk pass "P7 pair: no transcript passes" eq "$W_RC" 0
+w_run "$HOOKS_DIR" "$WS" "$(w_in '' "$W/t61")"
+c2_chk pass "P7 pair: no session id passes" eq "$W_RC" 0
+w_run "$HOOKS_DIR" "$WS" "$(w_in w6b "$W/t61" go SessionStart)"
+c2_chk pass "P7 pair: an event other than UserPromptSubmit passes" eq "$W_RC" 0
+# a symlink at the record folder: pass, and nothing written through it
+WSL="$W/state-link"; mkdir -p "$WSL" "$W/elsewhere"; ln -s "$W/elsewhere" "$WSL/wake-warned"
+w_run "$HOOKS_DIR" "$WSL" "$(w_in w7 "$W/t61")"
+c2_chk pass "P7 pair: a symlink at the record folder passes and writes nothing through it" bash -c "[ '$W_RC' = 0 ] && [ -z \"\$(ls -A '$W/elsewhere')\" ]"
+# an unwritable record (a folder sits where the record file goes): pass
+WSU="$W/state-unw"; mkdir -p "$WSU/wake-warned/w8"
+w_run "$HOOKS_DIR" "$WSU" "$(w_in w8 "$W/t61")"
+c2_chk pass "P7 pair: an unwritable record passes (the chat is not held on every message)" eq "$W_RC" 0
+# a line under 15 s old is the prompt being submitted: the idle time is measured from the line before it
+w_tr "$W/tfresh" 250000 5
+printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":"old"}}\n' "$(w_iso $((WNOW - IDLE61)))" > "$W/tfresh.head"; cat "$W/tfresh" >> "$W/tfresh.head"
+python3 - "$W/tfresh.head" "$W/tfresh2" <<'PY'
+import sys
+L=open(sys.argv[1]).read().splitlines(); L.sort(key=lambda l: l.split('"timestamp":"')[1][:19]); open(sys.argv[2],'w').write("\n".join(L)+"\n")
+PY
+w_run "$HOOKS_DIR" "$WS" "$(w_in w9 "$W/tfresh2")"
+c2_chk pass "P7 pair: the freshest line is only 5 s old and the one before it is 60+ s old: passes" eq "$W_RC" 0
+w_tr "$W/t61z" 250000 $IDLE61
+printf '{"type":"assistant","timestamp":"%s","message":{"role":"assistant","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}\n' "$(w_iso $((WNOW - IDLE61 + 5)))" >> "$W/t61z"
+w_run "$HOOKS_DIR" "$WS" "$(w_in w10 "$W/t61z")"
+c2_chk refuse "P7 an all-zero API-error usage line after the big one does not hide the size: held" eq "$W_RC" 2
+# the conf (a private copy of the hook folder, so the real folder never gets a live conf)
+WH="$W/hk"; mkdir -p "$WH"; cp "$HOOKS_DIR/wake-warning.sh" "$HOOKS_DIR/guard-lib.sh" "$HOOKS_DIR/clock-in-context.sh" "$WH/" 2>/dev/null
+printf 'WAKE_IDLE_MIN=30\nWAKE_EXCESS_PER_MTOK=10\n' > "$WH/wake-warning.conf"
+w_tr "$W/t31" 250000 $((31 * 60 + 10)); w_tr "$W/t29" 250000 $((29 * 60 + 10))
+w_run "$WH" "$WS" "$(w_in c1 "$W/t31")"
+c2_chk refuse "P7 a conf WAKE_IDLE_MIN=30 makes 31 min held" eq "$W_RC" 2
+c2_chk refuse "P7 a conf WAKE_EXCESS_PER_MTOK=10 shows \$2.50 for 250k tokens" has 'about \$2.50 extra' "$W/err"
+w_run "$WH" "$WS" "$(w_in c2 "$W/t29")"
+c2_chk pass "P7 pair: the same conf, 29 min: passes" eq "$W_RC" 0
+w_run "$WH" "$WS" "$(w_in c3 "$W/t31")" WAKE_IDLE_MIN=90
+c2_chk pass "P7 pair: an environment WAKE_IDLE_MIN=90 beats the conf's 30: 31 min passes" eq "$W_RC" 0
+w_run "$HOOKS_DIR" "$WS" "$(w_in c5 "$W/t61")" WAKE_IDLE_MIN=61
+c2_chk refuse "P7 the limit itself counts: idle exactly 61 min with WAKE_IDLE_MIN=61 is held" eq "$W_RC" 2
+w_run "$HOOKS_DIR" "$WS" "$(w_in c6 "$W/t61")" WAKE_IDLE_MIN=62
+c2_chk pass "P7 pair: idle 61 min with WAKE_IDLE_MIN=62 passes" eq "$W_RC" 0
+w_run "$HOOKS_DIR" "$WS" "$(w_in c4 "$W/t31")"
+c2_chk pass "P7 pair: with no conf the default 60 applies: 31 min passes" eq "$W_RC" 0
+# no guard-lib beside the hook: the built-in reader gives the same answers
+WH2="$W/hk2"; mkdir -p "$WH2"; cp "$HOOKS_DIR/wake-warning.sh" "$WH2/" 2>/dev/null
+w_run "$WH2" "$WS" "$(w_in n1 "$W/t61")"
+c2_chk refuse "P7 without guard-lib.sh the built-in reader still holds a big idle chat" eq "$W_RC" 2
+w_run "$WH2" "$WS" "$(w_in n2 "$W/t150")"
+c2_chk pass "P7 pair: without guard-lib.sh a 150k chat passes" eq "$W_RC" 0
+
+# ---- the installer for it: a fake HOME, a pty to answer the question ----
+REPOW="$(cd "$HOOKS_DIR/.." && pwd -P)"
+w_count() { python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));print(sum(1 for g in s.get("hooks",{}).get("UserPromptSubmit",[]) for h in g.get("hooks",[]) if "wake-warning.sh" in h.get("command","")))' "$1" 2>/dev/null; }
+cat > "$W/drv.py" <<'PY'
+import os,pty,sys,select,re,signal
+home,script,outp,mode=sys.argv[1:5]
+pid,fd=pty.fork()
+if pid==0:
+    os.environ["HOME"]=home
+    os.execvp("bash",["bash",script])
+buf=b""; answered=0; killed=False
+while True:
+    r,_,_=select.select([fd],[],[],0.5)
+    if r:
+        try: d=os.read(fd,4096)
+        except OSError: break
+        if not d: break
+        buf+=d
+        if mode=="kill" and not killed and b"wake-warning.sh (UserPromptSubmit" in buf:
+            os.kill(pid,signal.SIGTERM); killed=True
+    elif len(buf)>answered and not killed:
+        tail=buf[-400:].decode("utf8","ignore")
+        if re.search(r"(\] |: |\? )$",tail):
+            yes = mode=="yes" and "wake-up warning" in tail.lower() and tail.rstrip().endswith("[y/N]")
+            os.write(fd,b"y\n" if yes else (b"n\n" if tail.rstrip().endswith(("[y/N]","[Y/n]")) else b"\n")); answered=len(buf)
+open(outp,"wb").write(buf)
+_,st=os.waitpid(pid,0); sys.exit(os.waitstatus_to_exitcode(st))
+PY
+w_inst() { python3 "$W/drv.py" "$1" "$REPOW/install.sh" "$2" "$3" >/dev/null 2>&1; }
+w_files() { ( cd "$1/.claude" 2>/dev/null && find . -type f ! -path './.setup-backup-*' | sort ); }
+HW1="$W/home1"; mkdir -p "$HW1"; env HOME="$HW1" bash "$REPOW/install.sh" --yes > "$W/inst1.out" 2>&1
+c2_chk refuse "P7 installer --yes: wake-warning.sh is copied and executable" test -x "$HW1/.claude/hooks/wake-warning.sh"
+c2_chk refuse "P7 installer --yes: both new conf examples are copied" bash -c "[ -f '$HW1/.claude/hooks/wake-warning.conf.example' ] && [ -f '$HW1/.claude/hooks/issue-number.conf.example' ] && [ -f '$HW1/.claude/hooks/heavy-suite.conf.example' ]"
+c2_chk pass "P7 pair: installer --yes does NOT register it (the answer is no)" eq "$(w_count "$HW1/.claude/settings.json")" 0
+c2_chk pass "P7 pair: installer --yes writes no live wake-warning.conf" test ! -e "$HW1/.claude/hooks/wake-warning.conf"
+HW2="$W/home2"; mkdir -p "$HW2"; w_inst "$HW2" "$W/inst2.out" yes
+W_CLEAN_FILES="$(w_files "$HW2")"; W_CLEAN_UPS="$(d2_count "$HW2/.claude/settings.json" UserPromptSubmit)"   # the end state of ONE clean run
+c2_chk refuse "P7 installer answering yes registers it once" eq "$(w_count "$HW2/.claude/settings.json")" 1
+c2_chk refuse "P7 ... with a timeout of 10" bash -c "python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));print([h.get(\"timeout\") for g in s[\"hooks\"][\"UserPromptSubmit\"] for h in g[\"hooks\"] if \"wake-warning.sh\" in h[\"command\"]])' '$HW2/.claude/settings.json' | grep -q '\[10\]'"
+w_inst "$HW2" "$W/inst2b.out" yes
+c2_chk pass "P7 pair: a second run answering yes again still leaves it registered once" eq "$(w_count "$HW2/.claude/settings.json")" 1
+w_inst "$HW2" "$W/inst2c.out" no
+c2_chk pass "P7 pair: a third run answering no keeps the earlier registration (once)" eq "$(w_count "$HW2/.claude/settings.json")" 1
+# a run killed (SIGTERM, by its PID) right after the copy step, then run again: the end state of a clean run
+HW3="$W/home3"; mkdir -p "$HW3"; w_inst "$HW3" "$W/inst3a.out" kill
+c2_chk refuse "P7 killed right after the copy step: the hook file is there (not yet made executable) and nothing is registered yet" bash -c "[ -f '$HW3/.claude/hooks/wake-warning.sh' ] && [ ! -e '$HW3/.claude/settings.json' -o '$(w_count "$HW3/.claude/settings.json")' = 0 ]"
+w_inst "$HW3" "$W/inst3b.out" yes
+c2_chk refuse "P7 killed then run again (yes): registered once" eq "$(w_count "$HW3/.claude/settings.json")" 1
+c2_chk refuse "P7 killed then run again: the same files as a clean run" eq "$(w_files "$HW3")" "$W_CLEAN_FILES"
+c2_chk refuse "P7 killed then run again: the same UserPromptSubmit entry count as a clean run" eq "$(d2_count "$HW3/.claude/settings.json" UserPromptSubmit)" "$W_CLEAN_UPS"
+{ echo "W-LEFT yes-once files: $(w_files "$HW2" | wc -l | tr -d ' ') UPS-entries: $(d2_count "$HW2/.claude/settings.json" UserPromptSubmit)"; echo "W-LEFT killed-then-rerun files: $(w_files "$HW3" | wc -l | tr -d ' ') UPS-entries: $(d2_count "$HW3/.claude/settings.json" UserPromptSubmit)"; echo "W-LEFT --yes files: $(w_files "$HW1" | wc -l | tr -d ' ') UPS-entries: $(d2_count "$HW1/.claude/settings.json" UserPromptSubmit)"; echo "W-LEFT killed-run (before rerun) tmp leftovers: $(find "$HW3/.claude" -name '*.tmp*' | wc -l | tr -d ' ')"; } > "$W/left.txt"
+cp "$W/left.txt" "${WLEFT_OUT:-/dev/null}" 2>/dev/null
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
