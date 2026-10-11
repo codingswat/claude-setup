@@ -4400,5 +4400,113 @@ c3_inst "$HC2" "$CH/inst2c.out" no
 c2_chk pass "P14 pair: a third run answering no keeps both registrations (once each)" eq "$(c3_count "$HC2/.claude/settings.json" Stop)$(c3_count "$HC2/.claude/settings.json" UserPromptSubmit)" 11
 c2_chk pass "P14 pair: the wake-up warning was answered no in the yes run, so only this hook was added to UserPromptSubmit by the question" eq "$(w_count "$HC2/.claude/settings.json")" 0
 
+# ---- guard port 2026-10-10 (F1): heavy-suite-guard, the routes a blind attacker found ----
+echo "guard port 2026-10-10 (F1)"
+f1k() { local kind="$1"; shift; local c; for c in "$@"; do gpa "$kind" "${F1_LABEL}" "$c" 2 100; done; }      # kill reading, light load
+f1t() { local kind="$1"; shift; local c; for c in "$@"; do gpa "$kind" "${F1_LABEL}" "$c" 50 100; done; }     # test reading, load 50
+f1m() { local kind="$1"; shift; local c; for c in "$@"; do gpa "$kind" "${F1_LABEL}" "$c" 2 20; done; }       # memory reading, 20% free
+F1_LABEL="A-B2 kill through a variable chain must refuse"
+f1k refuse 'pids=$(pgrep x); for p in $pids; do kill $p; done' 'P=$(pgrep x); Q=$P; kill $Q' $'P=$(pgrep x)\nQ=$P\nkill $Q' 'P="$(pgrep x)"; kill $P' 'P=$(pgrep x); Q="$P"; R=$Q; kill $R'
+F1_LABEL="A-B2 pair, must allow"
+f1k pass 'P=$(cat run.pid); Q=$P; kill $Q' 'for p in 1 2 3; do kill $p; done' 'P=$(cat run.pid); for p in $P; do kill $p; done' 'P=$(pgrep x); echo $P' 'P=$(pgrep x); Q=$P; echo $Q; kill 12345'
+F1_LABEL="A-B3 a test run inside a substitution must refuse (load 50)"
+f1t refuse 'out="$(npm test 2>&1)"' 'echo `npm test`' 'echo $(npm test)' 'x=$(cd web && npm test)' 'echo "got: $(npx vitest run)"'
+F1_LABEL="A-B3 a test run inside a substitution must refuse (20% free)"
+f1m refuse 'out="$(npm test 2>&1)"' 'echo `npx tsc --noEmit`'
+F1_LABEL="A-B3 pair, must allow (load 50)"
+f1t pass 'out="$(echo hi)"' 'echo "run npm test later"' 'out="$(npm test -- a.test.ts)"' 'echo "`date`"' 'echo '"'"'$(npm test)'"'"
+F1_LABEL="A-M1 unquoted eval must refuse"
+f1k refuse 'eval pkill x' 'eval kill -9 -1'
+f1t refuse 'eval npm test'
+f1m refuse 'eval tsc'
+F1_LABEL="A-M1 pair, must allow"
+f1t pass 'eval echo hi' 'eval ls'
+f1k pass 'eval kill 12345'
+F1_LABEL="A-M2 a quoted assignment before the command must refuse"
+f1k refuse 'DEBUG="*" pkill node' "FOO='a b' kill -9 -1" 'FOO="a b" killall node'
+F1_LABEL="A-M2 pair, must allow"
+f1k pass "FOO='a b' kill 12345" 'DEBUG="*" ls' "FOO='a b' pgrep x"
+F1_LABEL="A-M3 a lookup fed by redirection or grouping must refuse"
+f1k refuse 'while read p; do kill $p; done < <(pgrep x)' 'read -r p < <(pgrep x); kill $p' 'pgrep x | { read p; kill $p; }' 'mapfile -t ps < <(pgrep x); kill "${ps[@]}"' 'pids=($(pgrep x)); kill ${pids[@]}' 'readarray -t ps < <(pgrep x); kill ${ps[@]}'
+F1_LABEL="A-M3 pair, must allow"
+f1k pass 'while read p; do kill $p; done < <(cat run.pid)' 'read -r p < run.pid; kill $p' 'mapfile -t ps < run.pids; kill "${ps[@]}"' 'pids=($(cat run.pid)); kill ${pids[@]}' 'pids=(1 2); kill ${pids[@]}' 'cat run.pid | { read p; kill $p; }'
+F1_LABEL="A-M4 a lookup saved to a file and read back must refuse"
+f1k refuse 'pgrep vite > p.txt; kill $(cat p.txt)' 'pgrep x > p; xargs kill < p' 'pgrep x | tee p.txt; kill $(cat p.txt)' 'pgrep x > p; cat p | xargs kill'
+F1_LABEL="A-M4 pair, must allow"
+f1k pass 'echo 123 > p.txt; kill $(cat p.txt)' 'pgrep x > p; kill $(cat q)' 'xargs kill < p' 'pgrep x > p; wc -l p'
+F1_LABEL="A-M5 a group kill whose id comes from a file must refuse"
+f1k refuse 'kill -9 -$(cat pgid)' 'kill -HUP -$(cat pgid)'
+F1_LABEL="A-M5 pair, must allow"
+f1k pass 'kill -9 $(cat run.pid)' 'kill -HUP $(cat run.pid)' 'kill -s TERM $(cat run.pid)'
+F1_LABEL="A-M6 a group kill with a redirect glued on must refuse"
+f1k refuse 'kill -9 -1>/dev/null'
+F1_LABEL="A-M6 pair, must allow"
+f1k pass 'kill -9 12345>/dev/null' 'kill -9 12345 2>/dev/null'
+F1_LABEL="A-M7 the load exemption is for a real single-file or one-test run only: must refuse (load 50)"
+f1t refuse 'npm test > out.test.log' 'npm test -- --exclude=flaky.test.ts' 'npm test -- --outputFile=junit.test.xml' 'FOO=a.test.ts npm test' 'npm test # a.test.ts' 'npx vitest run a.test.ts src/' 'npx vitest run -t' 'npx vitest run -t ""' 'npx vitest run -t "."' 'npx vitest run --testNamePattern=.' 'npx vitest run --exclude flaky.test.ts' 'npx vitest run -t ".*"'
+F1_LABEL="A-M7 pair, must allow (load 50)"
+f1t pass 'npx vitest run a.test.ts' 'npm test -- a.test.ts b.spec.ts' 'npx vitest run -t "renders it"' 'npx vitest run --testNamePattern=login' 'npx vitest run a.test.ts > out.log' 'npx vitest run a.test.ts # note' 'npx vitest run src/a.test.ts --reporter verbose'
+F1_LABEL="A-M12 npm it, install-test and cit run the suite: must refuse (load 50)"
+f1t refuse 'npm it' 'npm install-test' 'npm cit'
+F1_LABEL="A-M12 pair, must allow (load 50)"
+f1t pass 'npm install' 'npm ls' 'npm i'
+# A-M13: no ledger line for a command that is then refused
+rm -f "$GPAL"; gpa refuse "A-M13 KILL_OK on the first, a second kill unwaived: refused" 'KILL_OK=1 pkill x; pkill y' 2 100
+if ledger_has "$GPAL" KILL_OK; then bad "A-M13 a refused command must leave no KILL_OK ledger line"; else ok; fi; refuse_n=$((refuse_n+1))
+rm -f "$GPAL"; gpa refuse "A-M13 SUITE_OK on the first, a second suite unwaived: refused" 'SUITE_OK=1 npm test && npm test' 50 100
+if ledger_has "$GPAL" SUITE_OK; then bad "A-M13 a refused command must leave no SUITE_OK ledger line"; else ok; fi; refuse_n=$((refuse_n+1))
+rm -f "$GPAL"; gpa pass "A-M13 pair: SUITE_OK on the only suite passes" 'SUITE_OK=1 npm test && echo done' 50 100
+if ledger_has "$GPAL" SUITE_OK; then ok; else bad "A-M13 pair: the passing waiver must be recorded"; fi; pass_n=$((pass_n+1))
+rm -f "$GPAL"; gpa pass "A-M13 pair: both segments waived passes" 'KILL_OK=1 pkill x; KILL_OK=1 pkill y' 2 100
+if ledger_has "$GPAL" KILL_OK; then ok; else bad "A-M13 pair: both waivers recorded when the command passes"; fi; pass_n=$((pass_n+1))
+F1_LABEL="A-M14 honest PID reads must allow"
+f1k pass 'kill $(tail -1 run.pid)' 'kill $(tail -n1 run.pid)' 'kill $(sed -n 1p run.pid)' 'kill $(jq .pid state.json)' 'kill $(jq -r .pid state.json)'
+F1_LABEL="A-M14 pair: a file a lookup wrote is still a lookup"
+f1k refuse 'pgrep x > run.pid; kill $(tail -1 run.pid)' 'pgrep x > state.json; kill $(jq .pid state.json)'
+F1_LABEL="A-M14 targeted runs must allow under load"
+f1t pass 'npx vitest run "src/a b.test.ts"' 'npx vitest run a.test.ts:12' 'npx playwright test -g login' 'npx playwright test --grep login'
+F1_LABEL="A-M14 pair: not targeted, must refuse under load"
+f1t refuse 'npx playwright test e2e/' 'npx playwright test'
+F1_LABEL="A-m redirection first must refuse"
+f1t refuse '> out.log npm test' '2> err.log npm test' '>out.log npm test'
+F1_LABEL="A-m pair, must allow"
+f1t pass '> out.log echo hi' '< in.txt cat'
+F1_LABEL="A-m an unquoted shell body must refuse"
+f1k refuse 'bash -c pkill' 'sh -c pkill\ x' 'bash -c killall\ node'
+F1_LABEL="A-m pair, must allow"
+f1k pass 'bash -c ls' 'sh -c echo\ hi'
+F1_LABEL="A-m a live substitution in a commit message or heredoc must refuse"
+f1k refuse 'git commit -m "$(pkill x)"' 'git commit -m "it'"'"'s $(pkill x)"' $'cat <<EOF\n$(pkill x)\nEOF' 'git commit -m "x" -m "`pkill x`"'
+f1t refuse 'git commit -m "$(npm test)"'
+F1_LABEL="A-m pair: text that only names the command, must allow"
+f1k pass 'git commit -m "fix \$(pkill x) text"' 'git commit -m "$(date)"' $'cat <<\'EOF\'\n$(pkill x)\nEOF' "git commit -m 'done \$(pkill x)'"
+f1t pass 'git commit -m "$(date)"'
+F1_LABEL="A-m wrappers must refuse"
+f1t refuse 'stdbuf -oL npm test' 'arch -arm64 npm test' 'xcrun npm test' 'script -q out.txt npm test' 'watch -n 5 npm test' 'coproc npm test' 'env -S "npm test"' 'env -S"npm test"'
+f1k refuse 'stdbuf -oL pkill x' 'arch -arm64 pkill x' 'watch -n 5 pkill x' 'script -q out.txt pkill x' 'env -S "pkill x"' 'bunx kill-port 3000' 'pnpm dlx kill-port 3000' 'yarn dlx kill-port 3000'
+F1_LABEL="A-m pair, must allow"
+f1t pass 'stdbuf -oL echo hi' 'arch -arm64 ls' 'watch -n 5 date' 'env -S "echo hi"' 'script -q out.txt ls'
+F1_LABEL="A-m a number inside arithmetic is the target: must refuse"
+f1k refuse 'kill -9 $((-1))' 'kill $((0))' 'kill -9 $(( -1 ))'
+F1_LABEL="A-m arithmetic pair, must allow"
+f1k pass 'kill $((12345))' 'kill $((PID+0))' 'kill -9 $((2+3))'
+F1_LABEL="A-m nesting past the old cap must refuse"
+nest='pkill x'; for _i in 1 2 3 4 5 6 7 8 9 10; do nest="echo \$($nest)"; done
+f1k refuse "$nest"
+nest='pkill x'; for _i in 1 2 3 4 5; do nest="echo \$($nest)"; done
+f1k refuse "$nest"
+F1_LABEL="A-m nesting deeper than it is read is refused, not guessed at"
+nest='date'; for _i in 1 2 3 4 5 6 7 8 9 10 11 12; do nest="echo \$($nest)"; done
+f1k refuse "$nest"
+F1_LABEL="A-m nesting pair, must allow"
+nest='date'; for _i in 1 2 3 4; do nest="echo \$($nest)"; done
+f1k pass "$nest"
+F1_LABEL="A-m tsc queries must allow (20% free)"
+f1m pass 'npx tsc --init' 'npx tsc --showConfig' 'npx tsc --listFiles'
+F1_LABEL="A-m pair: a real type-check still refuses (20% free)"
+f1m refuse 'npx tsc --noEmit' 'npx tsc -p .'
+if grep -q 'vue-tsc' "$HOOKS_DIR/heavy-suite.conf.example" && grep -q 'PATTERN/MEMPATTERN' "$HOOKS_DIR/heavy-suite.conf.example"; then ok; else bad "A-m the conf example must say other runners (vue-tsc, bun, turbo ...) go in PATTERN/MEMPATTERN"; fi; refuse_n=$((refuse_n+1))
+if grep -q 'NOT enforced' "$HOOKS_DIR/heavy-suite-guard.sh" && grep -q 'split by quotes' "$HOOKS_DIR/heavy-suite-guard.sh"; then ok; else bad "A-m the guard header must list what is NOT enforced (quote-split words, variable as command ...)"; fi; refuse_n=$((refuse_n+1))
+
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

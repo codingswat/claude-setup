@@ -28,6 +28,10 @@ MIN_FREE=35
 # cover a project runner of your own, add an alternative, e.g. one that matches `make bigbuild`:
 #   MEMPATTERN='(^|[;&| ])(npm|yarn|pnpm) +run +typecheck([ ;&|]|$)|(^|[;&| ])(npx +)?tsc([ ;&|]|$)|(^|[;&| ])make +bigbuild([ ;&|]|$)'
 MEMPATTERN='(^|[;&| ])(npm|yarn|pnpm) +run +typecheck([ ;&|]|$)|(^|[;&| ])(npx +)?tsc([ ;&|]|$)'
+# Other runners are NOT in the defaults: `npm run vitest`, `npm run e2e:*`, `type-check`,
+# `vue-tsc`, bun, turbo, nx, lerna, `yarn workspaces foreach`. Put the ones your project uses in
+# PATTERN (load and memory) or MEMPATTERN (memory only) as extra alternatives, for example
+# `|(^|[;&| ])turbo +run +test([ ;&|]|$)`. PATTERN/MEMPATTERN see the canonical spelling.
 # Not a setting, but worth knowing: the guard also refuses to stop processes by name (pkill,
 # killall, kill 0 / kill -1, kill $(pgrep x), xargs kill, fuser -k, ...) because that can stop the
 # Claude app itself. `kill <PID>` of a process you started is fine. KILL_OK=1 at the start of a
