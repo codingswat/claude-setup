@@ -15,13 +15,20 @@
 #     not match AUTHOR= in ~/.claude/hooks/backup.conf, the same setting and the same
 #     per-repo opt-out (`git config --local hooks.identity false`) git-hooks/pre-commit
 #     uses. No AUTHOR line, or the opt-out: only the Claude/Anthropic half applies.
-#     A commit already on the remote is never re-judged — only what this push adds.
+#     A commit already on the remote is never re-judged — only what this push adds. By design: a
+#     first push of a new ref excludes every commit already on ANY remote-tracking ref
+#     (`--not --remotes`); a commit the remote already holds is not re-judged.
+#     A remote tip that is not in this copy (a force push over work you never fetched) is REFUSED
+#     ("fetch first"): the range cannot be listed, so nothing could be judged.
+#     A push from a BARE repository is judged too (the git dir is read); only the type-check, which
+#     needs a working tree, is skipped there.
 #
 # (1b) ISSUE NUMBER, OPT-IN. Only for a repo listed in hooks/issue-number.conf (copy of
 #     hooks/issue-number.conf.example; one `owner/name` per line, # comments). No conf file,
 #     or no line matching, and this check never runs. For a push to refs/heads/main of a listed
 #     repo, every commit the push adds that changes any path outside the records set
-#     (docs/** and the root *.md files other than CLAUDE.md, in any letter case) must name an
+#     (docs/** and the root *.md files other than the rules files CLAUDE.md, AGENTS.md and
+#     GEMINI.md, in any letter case: `Docs/guide.md` is a record too) must name an
 #     issue in its message: `#<N>` standing alone, N >= 1 (not `C#12`, `x#3`, `&#38;`, `##3`,
 #     `#0`). Which repo is judged on the push TARGET (the URL git passes; a remote name is read
 #     as its pushurl, else its url), lower-cased, one trailing `/` and one `.git` dropped, last
@@ -45,6 +52,9 @@
 # A type-check that could not RUN (the binary it calls is not installed) is refused too,
 # but says so in those words rather than "fix the types" — a missing toolchain and a real
 # type error are different jobs.
+# NOT enforced, by design: an issue written `owner/repo#12` or `GH-12` does not count (write `#N`);
+# `.git/info/grafts` can hide a commit from the range (GIT_NO_REPLACE_OBJECTS does not cover grafts): a
+# deliberate act, not an accident.
 # Gap (stated plainly): `git push --no-verify` skips every pre-push hook, including this
 # one — that is git's own escape hatch, not a flaw in this script.
 # Per-repo opt-in: this hook is machine-wide once step 7 is on, so without an explicit
@@ -55,7 +65,10 @@
 # A `git replace` stand-in must fool no check below (identity, issue number, type-check): the
 # hook reads the real objects, whatever refs/replace holds.
 export GIT_NO_REPLACE_OBJECTS=1
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# A push from a BARE repository has no working tree: the checks read the git dir instead (only the
+# type-check, which needs a tree, is skipped there).
+bare=""
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || { root="$(git rev-parse --absolute-git-dir 2>/dev/null)" || exit 0; bare=1; }
 refs="$(cat)"          # <local ref> <local sha> <remote ref> <remote sha>, one line per ref
 
 # ---- (1) the identity of every commit this push would add ----
@@ -90,6 +103,14 @@ while read -r _lref lsha _rref rsha; do
   if [ -z "$rsha" ] || [ -z "${rsha//0/}" ]; then
     range=("$lsha" --not --remotes)                       # a new ref: everything not pushed yet
   else
+    # the remote's tip is not in this copy (a force push over work you never fetched sends exactly this):
+    # the range cannot be listed, so nothing could be judged. Refuse, as (1b) does — only while the
+    # identity check is on (backup.conf); with it off there is nothing here to judge, and git itself
+    # rejects a non-forced push over a tip it does not have.
+    if [ -n "$ident_conf" ] && ! git -C "$root" cat-file -e "$rsha^{commit}" 2>/dev/null; then
+      echo "pre-push hook: REFUSED — the remote's tip for ${_rref:-this ref} (${rsha:0:7}) is not in your copy, so the commits this push adds cannot be listed and none can be judged: fetch first (git fetch ${1:-origin}), then push again." >&2
+      exit 1
+    fi
     range=("$rsha..$lsha")                                # only what this push adds
   fi
   while IFS= read -r line; do
@@ -123,13 +144,12 @@ issue_listed() {   # 0 = the push target is a repo listed in the conf (normalise
   done < "$issue_conf"
   return 1
 }
-is_record_path() {   # $1 a repo-relative path; 0 = records (no issue needed): docs/**, or a root *.md that is not CLAUDE.md
-  case "$1" in
+is_record_path() {   # $1 a repo-relative path; 0 = records (no issue needed): docs/** or a root *.md that is not a rules file (CLAUDE.md, AGENTS.md, GEMINI.md), any letter case
+  local lc; lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$lc" in
     docs/*) return 0 ;;
     */*) return 1 ;;
-  esac
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-    claude.md) return 1 ;;
+    claude.md|agents.md|gemini.md) return 1 ;;
     *.md) return 0 ;;
   esac
   return 1
@@ -183,7 +203,7 @@ if [ -n "$issue_missing" ]; then
     echo "pre-push hook: ISSUE_OK=1 — pushing to main with commit(s) that name no issue (written to the override ledger):" >&2
     printf '%s' "$issue_missing" >&2
   else
-    echo "pre-push hook: REFUSED — a push to main of this repo needs an issue number (#<N>) in every commit that changes anything outside docs/ and the root *.md files (CLAUDE.md counts as outside). Missing in:" >&2
+    echo "pre-push hook: REFUSED — a push to main of this repo needs an issue number (#<N>) in every commit that changes anything outside docs/ and the root *.md files (CLAUDE.md, AGENTS.md and GEMINI.md count as outside). Missing in:" >&2
     printf '%s' "$issue_missing" >&2
     echo "  Add the number to each message listed (the tip: git commit --amend; an older commit: reword it in a rebase), then push again. Work with no issue behind it, on purpose: ISSUE_OK=1 git push ... (written to the override ledger). (gap: --no-verify skips this hook; do not use it.)" >&2
     exit 1
@@ -191,6 +211,7 @@ if [ -n "$issue_missing" ]; then
 fi
 
 # ---- (2) the type-check of every commit being pushed ----
+[ -z "$bare" ] || exit 0   # a bare repository has no tree to export and type-check
 if [ "$(git -C "$root" config --local --get hooks.typecheck 2>/dev/null)" != "true" ]; then
   echo "pre-push: type-check skipped — opt in per repo with: git config hooks.typecheck true" >&2
   exit 0

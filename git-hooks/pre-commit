@@ -61,7 +61,22 @@
 #           commit. An scp-style git remote (`git@<host>:user/repo.git`) is a URL, not
 #           an address, and is skipped. This half has a safe built-in default and does not
 #           fail closed.
-#       Zero-width characters (U+200B/C/D, U+2060, U+FEFF) are stripped before matching.
+#       Zero-width characters (U+200B/C/D, U+2060, U+FEFF) and the soft hyphen / invisible separator
+#       (U+00AD, U+2063) are stripped before matching. The diff is always read with `--no-ext-diff
+#       --no-textconv`, so a `diff.external` setting or a diff/textconv driver cannot blind the scans.
+#       A home path ends its name at a separator, a quote, whitespace, `:`, `,`, `;`, a closing bracket
+#       or the end of the line; the Users or home folder spelled in any letter case, `C:\Users\<name>` and the
+#       JSON-escaped `\/Users\/<name>` count (the any-case form only after a non-word character, and
+#       never with an all-digit name: an all-digit REST route is not a folder; a web URL ending in a home segment with nothing
+#       after the name passes). The system folders `Shared`, `Public` and `Default` are excluded like the
+#       placeholders (compared in any letter case). `-home-<name>` (the encoded
+#       Linux form) counts only with a name and then `-` or `/` after it, so CSS (`--home-banner`) and
+#       flags (`--home-dir`) pass; the cost is that a bare `-home-<name>` with nothing after it is not seen.
+#       A staged PATH is read for the encoded form and for `Users/<name>/` at its start or after a `/`
+#       (never `home/`: `docs/home/...` is honest).
+#       NOT enforced (stated plainly): a URL-encoded path (`%2FUsers%2F<name>`), a `~<name>/` spelling,
+#       a non-ASCII account name (`/home/józef/`), and the cases above that only a human can tell apart.
+#       A git worktree of a listed BARE repo counts as that repo (the listed path is the bare folder).
 #       Limits, stated plainly: a name SPLIT ACROSS TWO LINES is not caught (the scan is
 #       line by line), and neither is one that is base64- or otherwise encoded — the
 #       `npm run test:privacy`-style full sweep before anything goes public remains the
@@ -250,19 +265,26 @@ def hits(text):
 def git_bytes(args):
     return subprocess.run(["git"] + args, capture_output=True).stdout
 bad = {}
-text = git_bytes(["diff", "--cached", "-U0", "--no-color"]).decode("utf-8", "surrogateescape")
+text = git_bytes(["diff", "--cached", "--no-ext-diff", "--no-textconv", "-U0", "--no-color"]).decode("utf-8", "surrogateescape")
 cur = None
+in_hdr = False     # the "+++ " file header only counts between a "diff --git" line and the first "@@"
 for line in text.splitlines():
-    if line.startswith("+++ "):
-        p = line[4:]; cur = None if p == "/dev/null" else (p[2:] if p.startswith(("a/", "b/")) else p); continue
-    if not line.startswith("+") or line.startswith("+++") or "pragma: allow-secret" in line:
+    if line.startswith("diff --git "):
+        in_hdr = True; continue
+    if line.startswith("@@"):
+        in_hdr = False; continue
+    if in_hdr:
+        if line.startswith("+++ "):
+            p = line[4:]; cur = None if p == "/dev/null" else (p[2:] if p.startswith(("a/", "b/")) else p)
+        continue
+    if not line.startswith("+") or "pragma: allow-secret" in line:
         continue
     n = hits(line[1:])
     if n and cur: bad[cur] = bad.get(cur, 0) + n
-for p in [q for q in git_bytes(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape").split("\0") if q]:
+for p in [q for q in git_bytes(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape").split("\0") if q]:
     n = hits(p)
     if n: bad[p] = bad.get(p, 0) + n
-raw = git_bytes(["diff", "--cached", "--numstat", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape").split("\0")
+raw = git_bytes(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape").split("\0")
 i = 0
 while i < len(raw):
     rec = raw[i]; i += 1
@@ -293,7 +315,7 @@ HOOK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" HOOK_LABEL="$HOOK_LABEL
 import re, subprocess, sys, os
 
 LABEL = os.environ.get("HOOK_LABEL") or "pre-commit hook"
-ZW = dict.fromkeys(map(ord, "​‌‍⁠﻿"), None)
+ZW = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00ad\u2063"), None)
 def dezw(s):
     return s.translate(ZW)
 
@@ -342,8 +364,9 @@ if _root:
             try:
                 _common = subprocess.run(["git", "-C", _root, "rev-parse", "--path-format=absolute", "--git-common-dir"],
                                          capture_output=True, text=True, timeout=10).stdout.strip()
-                if os.path.basename(_common) == ".git":
-                    _main = os.path.realpath(os.path.dirname(_common))
+                # a worktree of a normal repo: the common dir is <listed>/.git; of a BARE repo: the
+                # bare folder itself is what is listed
+                _main = os.path.realpath(os.path.dirname(_common) if os.path.basename(_common) == ".git" else _common)
             except Exception:
                 _main = None
             if _root in _listed or (_main and _main in _listed):
@@ -351,14 +374,32 @@ if _root:
     except OSError:
         pass
 
-EXCLUDED = {"node", "runner", "user", "app", "USERNAME", "username", "you", "yourname", "example"}
-home_path = re.compile(r"/(?:Users|home)/([A-Za-z0-9_.-]+)/")
+EXCLUDED = {"node", "runner", "user", "app", "username", "you", "yourname", "example", "shared", "public", "default"}   # compared lower-cased; the last three are system folders
+# A home path: Users or home, a separator, a name, and the name must END there: at a separator, a quote,
+# whitespace, a colon, a comma, a semicolon, a closing bracket, or the end of the line (so `export HOME=<path>`
+# counts as much as a path with more after the name). A separator is `/`, `\`, a JSON-escaped `\/` or `\\`, so a Windows path
+# (C:\Users\x) and a JSON-escaped one count too. `Users`/`home` in any other letter case counts only when the
+# separator does not follow a word character (a REST route such as an API users endpoint is honest) and the name is not all digits.
+_SEP = r"(?:\\\\|\\/|[/\\])"
+_END = r"(?=[/\\\"'\s:,;)\]}>`]|$)"
+home_path = re.compile(_SEP + r"(?:Users|home)" + _SEP + r"([A-Za-z0-9_.-]+)" + _END)
+home_path_ci = re.compile(r"(?<![A-Za-z0-9_.-])" + _SEP + r"(?:Users|home)" + _SEP + r"([A-Za-z0-9_.-]+)" + _END, re.I)
 # The encoded form too: Claude Code names a project folder after its path (a dash, Users or home,
-# a dash, the account name). No letter or digit may stand before the first dash, so a word that
-# only ENDS in it passes, and a placeholder such as <account> passes. Counted and excluded exactly
-# like the slashed form. Staged file NAMES are read for this form only (a folder copied out of
-# the project store is named this way), never for the slashed one.
-home_enc = re.compile(r"(?<![A-Za-z0-9])-(?:Users|home)-([A-Za-z0-9_.]+)")
+# a dash, the account name). No letter, digit or dash may stand before the first dash, so a word that
+# only ENDS in it and a flag such as --home-dir pass, and a placeholder such as <account> passes.
+# `-home-` (a word CSS and flags use) counts only with a path-like neighbour: a name and then `-` or `/`.
+# Counted and excluded exactly like the slashed form. Staged file NAMES are read for the encoded form and
+# for a slashed `Users/<name>/` (a folder copied out of the project store, a backed-up home folder).
+home_enc = re.compile(r"(?<![A-Za-z0-9-])-(?:Users-([A-Za-z0-9_.]+)|home-([A-Za-z0-9_.]+)(?=[-/]))")
+path_users = re.compile(r"(?:^|/)Users/([A-Za-z0-9_.-]+)/")
+
+def _ok(n):
+    return n.lower() in EXCLUDED or not re.search(r"[A-Za-z0-9]", n)    # a run of dots/dashes is no name
+
+def _url_bare(d, m):
+    # `https://host/home/faq` (a web path with nothing after the name) is a URL, not a folder: keep the
+    # old rule there (a separator must follow the name)
+    return re.search(r"://[^\s/]*$", d[:m.start()]) is not None and d[m.end(1):m.end(1) + 1] not in ("/", "\\")
 
 def name_hits(text):
     low = dezw(text).lower()
@@ -372,10 +413,19 @@ def name_hits(text):
 
 def home_hits(text):
     d = dezw(text)
-    return sum(1 for m in home_path.finditer(d) if m.group(1) not in EXCLUDED) + enc_hits(d)
+    spans = set()
+    for m in home_path.finditer(d):
+        if not _ok(m.group(1)) and not _url_bare(d, m): spans.add(m.start(1))
+    for m in home_path_ci.finditer(d):
+        if not _ok(m.group(1)) and not m.group(1).isdigit() and not _url_bare(d, m): spans.add(m.start(1))
+    return len(spans) + enc_hits(d)
 
 def enc_hits(text):
-    return sum(1 for m in home_enc.finditer(dezw(text)) if m.group(1) not in EXCLUDED)
+    return sum(1 for m in home_enc.finditer(dezw(text)) if not _ok(m.group(1) or m.group(2)))
+
+def path_hits(p):
+    d = dezw(p)
+    return enc_hits(d) + sum(1 for m in path_users.finditer(d) if not _ok(m.group(1)))
 
 # Email domains: a small, universal built-in default plus anything the user adds in
 # hooks/allowed-email-domains.conf (one domain per line, # comments allowed). No conf file
@@ -407,16 +457,22 @@ def add_offender(path, n):
         offenders[path] = offenders.get(path, 0) + n
 
 # --- (a) the ADDED lines of the text diff ---
-text = git_bytes(["diff", "--cached", "-U0", "--no-color"]).decode("utf-8", "surrogateescape")
+text = git_bytes(["diff", "--cached", "--no-ext-diff", "--no-textconv", "-U0", "--no-color"]).decode("utf-8", "surrogateescape")
 cur_file = None
+in_hdr = False     # the "+++ " file header only counts between a "diff --git" line and the first "@@"
 for line in text.splitlines():
-    if line.startswith("+++ "):
-        p = line[4:]
-        cur_file = p[2:] if p.startswith(("a/", "b/")) else p
-        if cur_file == "/dev/null":
-            cur_file = None
+    if line.startswith("diff --git "):
+        in_hdr = True; continue
+    if line.startswith("@@"):
+        in_hdr = False; continue
+    if in_hdr:
+        if line.startswith("+++ "):
+            p = line[4:]
+            cur_file = p[2:] if p.startswith(("a/", "b/")) else p
+            if cur_file == "/dev/null":
+                cur_file = None
         continue
-    if not line.startswith("+") or line.startswith("+++"):
+    if not line.startswith("+"):
         continue
     added = line[1:]
     add_offender(cur_file, name_hits(added) + home_hits(added))
@@ -432,17 +488,18 @@ for line in text.splitlines():
                 email_offenders[cur_file] = (cnt + 1, f"{(local[:1] or 'x')}***@{domain}")
 
 # --- (b) the staged PATHS themselves: a name used as a filename has no "+" line at all ---
-staged = [p for p in git_bytes(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"])
+staged = [p for p in git_bytes(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--diff-filter=ACMR"])
           .decode("utf-8", "surrogateescape").split("\0") if p]
 for p in staged:
-    # names only: a staged path is always repo-relative, so it can never BE an absolute
-    # home path, and a repo with a folder called home inside docs must not be refused for it.
-    n = name_hits(p) + enc_hits(p)
+    # names, the encoded form and a slashed Users/<name>/: a staged path is always repo-relative, so it
+    # can never BE an absolute home path, and a repo with a folder called home inside docs must not be
+    # refused for it (only the capitalised Users/ counts, never home/).
+    n = name_hits(p) + path_hits(p)
     if n:
         offenders[p] = offenders.get(p, 0) + n
 
 # --- (c) staged blobs git calls binary: no "+" lines, so decode the bytes and look ---
-raw = git_bytes(["diff", "--cached", "--numstat", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape")
+raw = git_bytes(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--diff-filter=ACMR"]).decode("utf-8", "surrogateescape")
 fields = raw.split("\0")
 i = 0
 binary_paths = []

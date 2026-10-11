@@ -3872,7 +3872,7 @@ p10_hook pass "P10 pair: a remote NAME whose pushurl is unlisted passes though i
 p10_hook refuse "P10 remote main unknown to this copy refuses, saying fetch first" "$r" 'fetch first' "refs/heads/main $tip refs/heads/main $BOGUS40" origin 'https://example.test/o/r.git'
 p10_hook refuse "P10 a commit range git cannot list refuses (fail closed)" "$r" 'could not be listed' "refs/heads/main $BOGUS40 refs/heads/main $seedsha" origin 'https://example.test/o/r.git'
 p10_hook pass "P10 pair: deleting main pushes nothing to judge" "$r" . "(delete) $ZERO40 refs/heads/main $seedsha" origin 'https://example.test/o/r.git'
-p10_hook pass "P10 pair: remote main unknown but the target is unlisted passes" "$r" . "refs/heads/main $tip refs/heads/main $BOGUS40" origin 'https://example.test/x/unlisted.git'
+p10_hook pass "P10 pair: remote main unknown, target unlisted, identity check off: nothing to judge, passes" "$r" . "refs/heads/main $tip refs/heads/main $BOGUS40" origin 'https://example.test/x/unlisted.git'
 # a commit whose tree object is gone: rev-list lists it, diff-tree cannot read it
 r="$(p10_repo g2)"; p10_commit "$r" src/app.txt "feat: no number"; tip="$(git -C "$r" rev-parse main)"; seedsha="$(git -C "$r" rev-parse main~1)"
 tr_sha="$(git -C "$r" rev-parse "main^{tree}")"; rm -f "$r/.git/objects/${tr_sha:0:2}/${tr_sha:2}"
@@ -4539,6 +4539,185 @@ f2g pass "A-m pair: not piped, dry run, or a real -n after -o" 'time git push' '
 f2g refuse "A-m a loop polling a file or a log" 'while :; do rg -q DONE log && break; sleep 5; done' 'while :; do [ -f done.marker ] && break; sleep 5; done' 'while ! test -s result.json; do sleep 5; done' 'until [ "$(tail -1 log)" = DONE ]; do sleep 1; done' 'until [ "$(cat status)" = ok ]; do sleep 1; done'
 f2g pass "A-m pair: a loop waiting on a process or a port, or not waiting at all" 'while kill -0 $pid 2>/dev/null; do sleep 1; done' 'while ! nc -z localhost 3000; do sleep 1; done' 'until [ "$(curl -s localhost:3000/health)" = ok ]; do sleep 1; done' 'until pgrep -x vite; do sleep 1; done' 'for i in 1 2 3; do echo $i; sleep 1; done' 'while :; do [ -z "$x" ] && break; sleep 1; done'
 if grep -q 'NOT enforced' "$HOOKS_DIR/gate-guard.sh" && grep -q 'quote-split' "$HOOKS_DIR/gate-guard.sh"; then ok; else bad "A-m the gate-guard header must list what is NOT enforced (quote-split words, a variable as the command ...)"; fi; refuse_n=$((refuse_n+1))
+
+# ---- guard port 2026-10-10 (F3a): git hooks, the routes a blind attacker found ----
+echo "guard port 2026-10-10 (F3a)"
+UPf="/User""s"; HPf="/hom""e"; UNf="User""s"; LUf="user""s"; CUf="USER""S"
+SHYf="$(printf '\xc2\xad')"; INVf="$(printf '\xe2\x81\xa3')"
+f3_cfg_case() {   # <refuse|pass> <label> <file> <content> <git config key=value>...: one file, one commit, config set first
+  local kind="$1" label="$2" fn="$3" content="$4"; shift 4
+  local r kv; r="$(rb_new)"
+  for kv in "$@"; do git -C "$r" config "${kv%%=*}" "${kv#*=}"; done
+  mkdir -p "$r/$(dirname "$fn")"; printf '%s\n' "$content" > "$r/$fn"
+  rb_run "$kind" "$label" "$r" "$RBH"
+}
+# ---- B-B1: an external diff or a textconv driver blinds the scans ----
+RB_WANT='home path'
+f3_cfg_case refuse "B-B1 diff.external set: a home path still refuses" a.txt "see $UPf/alice/x" diff.external=true
+RB_WANT='real name|listed name|matches|home path'
+f3_cfg_case refuse "B-B1 diff.external set: a listed name still refuses" a.txt "met zebulonquixote" diff.external=true
+RB_WANT='key-shaped'
+f3_cfg_case refuse "B-B1 diff.external set: a key still refuses" a.txt "token $S_GHP" diff.external=true
+f3_gattr_case() {   # <refuse|pass> <label> <content> <diff driver key=value>: a gitattributes driver
+  local kind="$1" label="$2" content="$3" kv="$4" r; r="$(rb_new)"
+  printf '*.txt diff=nb\n' > "$r/.gitattributes"; git -C "$r" config "diff.nb.${kv%%=*}" "${kv#*=}"
+  printf '%s\n' "$content" > "$r/a.txt"; rb_run "$kind" "$label" "$r" "$RBH"
+}
+RB_WANT='home path'
+f3_gattr_case refuse "B-B1 a diff driver command: a home path still refuses" "see $UPf/alice/x" command=true
+f3_gattr_case refuse "B-B1 a textconv driver: a home path still refuses" "see $UPf/alice/x" textconv=true
+RB_WANT='key-shaped'
+f3_gattr_case refuse "B-B1 a textconv driver: a key still refuses" "token $S_GHP" textconv=true
+f3_cfg_case pass "B-B1 pair: diff.external set, honest content passes" a.txt "nothing private here" diff.external=true
+f3_gattr_case pass "B-B1 pair: a textconv driver, honest content passes" "nothing private here" textconv=true
+# the merge hook reads the same diff
+f3_merge_ext() {   # <refuse|pass> <label> <content>: a merge whose branch carries <content>, diff.external set
+  local kind="$1" label="$2" content="$3" r b0 b1
+  r="$(rb_new)"; git -C "$r" config diff.external true
+  echo seed > "$r/a.txt"; git -C "$r" add -A; env HOME="$RBH" "${ID[@]}" git -C "$r" commit -q -m init >/dev/null 2>&1
+  git -C "$r" checkout -q -b side; printf '%s\n' "$content" > "$r/t.txt"; git -C "$r" add -A
+  env HOME="$RBH" PRIVACY_OK=1 "${ID[@]}" git -C "$r" commit -q -m side >/dev/null 2>&1
+  git -C "$r" checkout -q main; echo other > "$r/b.txt"; git -C "$r" add -A; env HOME="$RBH" "${ID[@]}" git -C "$r" commit -q -m other >/dev/null 2>&1
+  b0="$(git -C "$r" rev-list --count HEAD)"
+  env HOME="$RBH" "${ID[@]}" git -C "$r" merge --no-ff -m merged side >/dev/null 2>&1
+  b1="$(git -C "$r" rev-list --count HEAD)"
+  if [ "$kind" = refuse ]; then
+    if [ "$b1" = "$b0" ]; then ok; else bad "$label (the merge must be refused)"; fi; refuse_n=$((refuse_n+1))
+  else
+    if [ "$b1" -gt "$b0" ]; then ok; else bad "$label (the merge must go through)"; fi; pass_n=$((pass_n+1))
+  fi
+}
+f3_merge_ext refuse "B-B1 pre-merge-commit with diff.external set: a home path in the merged branch refuses" "see $UPf/alice/x"
+f3_merge_ext pass "B-B1 pair: pre-merge-commit with diff.external set, an honest branch merges" "fine"
+
+# ---- B-B2: a home path with no slash after the name ----
+RB_WANT='home path'
+rb_case refuse "B-B2 export HOME=<path> with no trailing slash" "$RBH" a.sh "export HOME=$UPf/alice"
+rb_case refuse "B-B2 a JSON cwd value ending in the name" "$RBH" a.json "\"cwd\": \"$HPf/alice\""
+rb_case refuse "B-B2 single quoted" "$RBH" a.sh "cd '$UPf/alice'"
+rb_case refuse "B-B2 followed by a comma" "$RBH" a.txt "paths: $UPf/alice, and more"
+rb_case refuse "B-B2 followed by a colon" "$RBH" a.txt "PATH=$HPf/alice:/bin"
+rb_case refuse "B-B2 followed by a closing parenthesis" "$RBH" a.txt "(see $UPf/alice)"
+rb_case refuse "B-B2 at the end of the line" "$RBH" a.txt "the folder is $HPf/alice"
+rb_case pass "B-B2 pair: the macOS system folder Shared passes" "$RBH" a.txt "see $UPf/Shared/ and $UPf/Shared"
+rb_case pass "B-B2 pair: the excluded name in capitals passes" "$RBH" a.txt "see $UPf/YOU/x and $UPf/YOU"
+rb_case pass "B-B2 pair: an encoded excluded name in mixed case passes" "$RBH" a.txt "-${UNf}-Username"
+rb_case pass "B-B2 pair: a placeholder with no slash passes" "$RBH" a.txt "export HOME=$HPf/user"
+rb_case pass "B-B2 pair: a bare folder name with nothing after it passes" "$RBH" a.txt "the $HPf/ folder"
+
+# ---- B-M3: a remote tip this copy does not hold ----
+r="$(p10_repo f3a)"; p10_commit "$r" src/app.txt "feat: x"; tip="$(git -C "$r" rev-parse main)"; seedsha="$(git -C "$r" rev-parse main~1)"
+ZERO40="$(printf '0%.0s' {1..40})"; BOGUS40="$(printf 'a%.0s' {1..40})"
+P10_HOME="$(p10_home f3none)"
+P10_HOME="$(p10_home f3ident)"; printf '%s\n' 'AUTHOR=Tester <tester@example.com>' > "$P10_HOME/.claude/hooks/backup.conf"
+p10_hook refuse "B-M3 the remote tip is not in this copy (force push over unfetched work): refused, fetch first" "$r" 'fetch first' "refs/heads/topic $tip refs/heads/topic $BOGUS40" origin 'https://example.test/x/unlisted.git'
+P10_HOME="$(p10_home f3none)"
+p10_hook pass "B-M3 pair: the same unknown tip with the identity check off passes (nothing to judge; git rejects a non-forced push itself)" "$r" . "refs/heads/topic $tip refs/heads/topic $BOGUS40" origin 'https://example.test/x/unlisted.git'
+p10_hook pass "B-M3 pair: the remote tip is known" "$r" . "refs/heads/topic $tip refs/heads/topic $seedsha" origin 'https://example.test/x/unlisted.git'
+p10_hook pass "B-M3 pair: a new ref (all-zero remote sha) needs no tip" "$r" . "refs/heads/topic $tip refs/heads/topic $ZERO40" origin 'https://example.test/x/unlisted.git'
+p10_hook pass "B-M3 pair: a deletion with an unknown tip pushes nothing" "$r" . "(delete) $ZERO40 refs/heads/topic $BOGUS40" origin 'https://example.test/x/unlisted.git'
+unset P10_HOME
+
+# ---- B-M4: a push from a bare repository ----
+f3_bare_push() {   # <refuse|pass> <label> <want-regex> <author name>: a bare clone pushes its main to another bare repo
+  local kind="$1" label="$2" want="$3" an="$4" src bare dst tree par c err rc
+  src="$(p10_repo "f3b$RANDOM")"
+  tree="$(git -C "$src" rev-parse 'main^{tree}')"; par="$(git -C "$src" rev-parse main)"
+  c="$(env GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL=a@example.com GIT_COMMITTER_NAME="$an" GIT_COMMITTER_EMAIL=a@example.com git -C "$src" commit-tree -p "$par" -m "work #1" "$tree")"
+  git -C "$src" update-ref refs/heads/main "$c"
+  bare="$P10/bare-$RANDOM.git"; dst="$P10/dst-$RANDOM.git"
+  git clone -q --bare "$src" "$bare" >/dev/null 2>&1; git init -q --bare "$dst"; git -C "$bare" config core.hooksPath "$GIT_HOOKS_DIR"
+  err="$(env HOME="$P10H" git -C "$bare" push "$dst" main 2>&1 >/dev/null)"; rc=$?
+  if [ "$kind" = refuse ]; then
+    if [ "$rc" != 0 ] && printf '%s' "$err" | grep -q 'REFUSED' && printf '%s' "$err" | grep -qE "$want"; then ok; else bad "$label (rc=$rc err='$err')"; fi; refuse_n=$((refuse_n+1))
+  else
+    if [ "$rc" = 0 ]; then ok; else bad "$label (rc=$rc err='$err')"; fi; pass_n=$((pass_n+1))
+  fi
+}
+f3_bare_push refuse "B-M4 a push from a bare repo is judged: a Claude-named author refuses" 'Claude/Anthropic' "Clau""de"
+f3_bare_push pass "B-M4 pair: a push from a bare repo with an honest author goes through" . "Tester"
+
+# ---- B-M9: the encoded form must not refuse honest CSS and flags ----
+RB_WANT='home path'
+rb_case pass "B-M9 pair: a CSS custom property --home-banner passes" "$RBH" a.css "--home-banner: red;"
+rb_case pass "B-M9 pair: a flag --home-dir passes" "$RBH" a.txt "tool --home-dir /tmp/x"
+rb_case pass "B-M9 pair: (-home-page) passes" "$RBH" a.txt "see (-home-page) here"
+rb_case pass "B-M9 pair: a doubled dash before the Users form passes" "$RBH" a.txt "--${UNf}-banner: red"
+rb_case refuse "B-M9 the encoded form after a parenthesis still refuses" "$RBH" a.txt "(${EH}alice-proj)"
+rb_case refuse "B-M9 the encoded form followed by a slash still refuses" "$RBH" a.txt "ls ${EH}alice/sub"
+rb_case refuse "B-M9 the encoded Users form with only the name still refuses" "$RBH" a.txt "ls ${EU}alice"
+
+# ---- B-M10: a slashed home path in a staged PATH ----
+RB_WANT='home path|matches'
+rb_case refuse "B-M10 Users/<name>/ at the start of a staged path" "$RBH" "${UNf}/alice/.zshrc" "harmless body"
+rb_case refuse "B-M10 Users/<name>/ after a folder in a staged path" "$RBH" "backup/${UNf}/alice/n.txt" "harmless body"
+rb_case pass "B-M10 pair: docs/home/<name>/ is an honest folder" "$RBH" "docs/home/alice/n.md" "harmless body"
+rb_case pass "B-M10 pair: an excluded name under Users/ passes" "$RBH" "${UNf}/runner/n.txt" "harmless body"
+rb_case pass "B-M10 pair: a lower-case users folder is an honest folder" "$RBH" "src/${LUf}/alice/n.txt" "harmless body"
+
+# ---- B-m11: other spellings of the slashed path ----
+rb_case refuse "B-m11 lower case users folder" "$RBH" a.txt "see /${LUf}/alice/x"
+rb_case refuse "B-m11 upper case users folder" "$RBH" a.txt "see /${CUf}/alice/x"
+rb_case refuse "B-m11 a Windows path C:\\Users\\<name>\\" "$RBH" a.txt "see C:\\${UNf}\\alice\\x"
+rb_case refuse "B-m11 a JSON-escaped Windows path C:\\\\Users\\\\<name>" "$RBH" a.json "\"p\": \"C:\\\\${UNf}\\\\alice\\\\x\""
+rb_case refuse "B-m11 JSON-escaped slashes \\/Users\\/<name>\\/" "$RBH" a.json "\"p\": \"\\/${UNf}\\/alice\\/x\""
+rb_case pass "B-m11 pair: an API route with a name passes" "$RBH" a.txt "GET /api/${LUf}/alice/ and /api/${LUf}/me"
+rb_case pass "B-m11 pair: a lower-case route with a number passes" "$RBH" a.txt "GET /${LUf}/123/"
+rb_case pass "B-m11 pair: the Windows excluded name passes" "$RBH" a.txt "see C:\\${UNf}\\Public\\x and C:\\${UNf}\\runner\\x"
+
+# ---- B-m12: soft hyphen and invisible separator ----
+rb_case refuse "B-m12 a soft hyphen inside a home-path name" "$RBH" a.txt "see $UPf/ali${SHYf}ce/x"
+rb_case refuse "B-m12 an invisible separator inside a home-path name" "$RBH" a.txt "see $UPf/ali${INVf}ce/x"
+RB_WANT='real name|listed name|matches'
+rb_case refuse "B-m12 a soft hyphen inside a listed name" "$RBH" a.txt "met Zebulon${SHYf}Quixote"
+rb_case pass "B-m12 pair: a soft hyphen inside an excluded name still passes" "$RBH" a.txt "see $UPf/Sha${SHYf}red/x"
+RB_WANT='home path'
+
+# ---- B-m13: an added line that starts with ++ ----
+rb_case refuse "B-m13 a content line starting with ++ still gets the home-path scan" "$RBH" a.txt "++ see $UPf/alice/x"
+RB_WANT='key-shaped'
+rb_case refuse "B-m13 a content line starting with ++ still gets the key scan" "$RBH" a.txt "++ token $S_GHP"
+rb_case refuse "B-m13 a content line that looks like a file header still gets the key scan" "$RBH" a.txt "++ b/x $S_GHP"
+RB_WANT='.'
+rb_case pass "B-m13 pair: an honest ++ line passes" "$RBH" a.txt "++ i = i + 1"
+RB_WANT='home path'
+r="$(rb_new)"; printf 'one\n' > "$r/a.txt"; printf 'two\n' > "$r/b.txt"; printf '++ see %s/alice/x\n' "$UPf" >> "$r/b.txt"
+rb_run refuse "B-m13 the home path is charged to the right file after a ++ line" "$r" "$RBH"
+
+# ---- B-m15: a worktree of a listed BARE repo ----
+H15="$(rb_home m15)"; S15="$(rb_new)"
+env HOME="$H15" "${ID[@]}" git -C "$S15" commit -q --no-verify --allow-empty -m seed >/dev/null 2>&1
+git clone -q --bare "$S15" "$RB/m15.git" >/dev/null 2>&1; git -C "$RB/m15.git" config core.hooksPath "$GIT_HOOKS_DIR"
+git -C "$RB/m15.git" worktree add -q "$RB/wt15" -b wt15 >/dev/null 2>&1
+printf '# listed\n%s\n' "$(cd "$RB/m15.git" && pwd -P)" > "$H15/.claude/.privacy-name-exceptions.local"
+printf 'the guard refuses zebulonquixote\n' > "$RB/wt15/n.txt"; RB_WANT='.'
+rb_run pass "B-m15 a listed name in a worktree of a LISTED bare repo passes" "$RB/wt15" "$H15"
+printf 'see %s/alice/x\n' "$UPf" > "$RB/wt15/p.txt"; RB_WANT='home path'
+rb_run refuse "B-m15 a home path still binds in a worktree of a listed bare repo" "$RB/wt15" "$H15"; git -C "$RB/wt15" reset -q; rm -f "$RB/wt15/p.txt"
+git clone -q --bare "$S15" "$RB/m15b.git" >/dev/null 2>&1; git -C "$RB/m15b.git" config core.hooksPath "$GIT_HOOKS_DIR"
+git -C "$RB/m15b.git" worktree add -q "$RB/wt15b" -b wt15b >/dev/null 2>&1
+printf 'the guard refuses zebulonquixote\n' > "$RB/wt15b/n.txt"; RB_WANT='name|matches'
+rb_run refuse "B-m15 pair: the same name in a worktree of an UNLISTED bare repo refuses" "$RB/wt15b" "$H15"; RB_WANT='.'
+
+# ---- B-m17 / B-m19: the records set of the issue-number check ----
+P10_HOME="$P10H"
+r="$(p10_repo f3c1)"; p10_commit "$r" Docs/guide.md "docs: a note"; p10_push pass "B-m17 Docs/guide.md (any letter case of docs) is a record" "$r" .
+r="$(p10_repo f3c2)"; p10_commit "$r" DOCS/a/b.md "docs: a note"; p10_push pass "B-m17 DOCS/a/b.md is a record" "$r" .
+r="$(p10_repo f3c3)"; p10_commit "$r" Documents/guide.md "docs: a note"; p10_push refuse "B-m17 pair: a folder merely starting with docs is not the records folder" "$r" 'issue number'
+r="$(p10_repo f3c4)"; p10_commit "$r" AGENTS.md "rules"; p10_push refuse "B-m19 root AGENTS.md is a rules file: counts as code" "$r" 'issue number'
+r="$(p10_repo f3c5)"; p10_commit "$r" GEMINI.md "rules"; p10_push refuse "B-m19 root GEMINI.md is a rules file: counts as code" "$r" 'issue number'
+r="$(p10_repo f3c6)"; p10_commit "$r" agents.md "rules"; p10_push refuse "B-m19 root agents.md (lower case) counts as code" "$r" 'issue number'
+r="$(p10_repo f3c7)"; p10_commit "$r" AGENTS.md "rules, fixes #4"; p10_push pass "B-m19 pair: AGENTS.md with a number passes" "$r" .
+r="$(p10_repo f3c8)"; p10_commit "$r" README.md "docs: readme"; p10_push pass "B-m19 pair: README.md is still a record" "$r" .
+unset P10_HOME
+
+# ---- the header comments list what is not enforced ----
+for f in pre-commit pre-push; do
+  if grep -q 'NOT enforced' "$GIT_HOOKS_DIR/$f"; then ok; else bad "B-hdr $f header must list what is NOT enforced"; fi; refuse_n=$((refuse_n+1))
+done
+if grep -q '%2F' "$GIT_HOOKS_DIR/pre-commit" && grep -qF '~<name>/' "$GIT_HOOKS_DIR/pre-commit" && grep -qi 'non-ASCII' "$GIT_HOOKS_DIR/pre-commit"; then ok; else bad "B-hdr pre-commit header must name URL-encoded paths, ~name/ and non-ASCII names as not enforced"; fi; refuse_n=$((refuse_n+1))
+if grep -q 'owner/repo#12' "$GIT_HOOKS_DIR/pre-push" && grep -q 'info/grafts' "$GIT_HOOKS_DIR/pre-push" && grep -q -- '--remotes' "$GIT_HOOKS_DIR/pre-push"; then ok; else bad "B-hdr pre-push header must state owner/repo#12, info/grafts and the --remotes exclusion"; fi; refuse_n=$((refuse_n+1))
+
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]
