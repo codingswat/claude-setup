@@ -21,13 +21,13 @@ through filling in your rulebook afterwards — which is the part that actually 
 
 | Path | What happens |
 |---|---|
-| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `agent-model-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-size-post.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Six more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`, `commit-size`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
+| `~/.claude/hooks/` | `check-claude-md.sh`, `auto-backup.sh`, `interview.md`, `clock-in-context.sh`, `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`, `agent-model-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-size-post.sh`, `helper-ledger.py`, `test-hooks.sh`, `test-helper-ledger.sh` and `test-rules-cap.sh` are copied in (backed up first if different) — the last two aren't hooks themselves, but `test-hooks.sh` runs them as subprocesses and needs them alongside it. The multi-chat coordination group (`channel-provenance-pre.sh`, `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`) is copied in too, so the opt-in question below has something to register, but stays unregistered until you say yes. So are two single opt-in hooks, each with its own question (default no): `wake-warning.sh` (the idle-chat warning) and `chapter-note.sh` (the chapter reminder, for the Claude desktop app only). `owner-card.md` and `heavy-suite.conf` are copied **only if you don't already have them** — the first you personalise, the second is written from `heavy-suite.conf.example`; their config files (`backup.conf`, `project-roots.conf`) are written fresh from your answers. Eight more `.conf.example` files (`gate-guard`, `channel-ceiling`, `allowed-email-domains`, `block-dangerous-git`, `state-check`, `commit-size`, `issue-number`, `wake-warning`) are copied as **examples only** — each matching guard stays inert until you copy one to its live name yourself |
 | `~/.claude/git-hooks/` | `commit-msg`, `pre-commit`, `pre-merge-commit`, `pre-push` are copied in and made executable. They sit inert here until you opt in below — they don't run anywhere until then |
 | `~/.claude/CLAUDE.md` | The starter rulebook is installed **only if you don't already have one**. It is a fill-in form, but its 18 rules are active from your next session — rules 1 and 2 grant Claude standing permission to commit, push and merge to `main` |
 | `~/.claude/.redaction-names.local` | Created **only if missing**, empty, with a comment explaining its two sections (`[guard]`, `[redact-only]`) — `git-hooks/pre-commit`'s privacy check fails CLOSED (refuses every commit) with no file there at all, so a fresh machine needs at least this to unblock ordinary commits. The installer's closing summary tells you to open it and fill it in |
 | `~/.claude/project-template/` | Starter files for new projects; existing files are never replaced |
 | `~/.claude/skills/` | Every skill folder in this repo (currently sixteen); any skill folder of the same name is left alone |
-| `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`), to `Agent` (`agent-model-guard.sh`, which refuses a helper launch that does not name its model) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), `PostToolUse` on the same matcher (`channel-size-post.sh`), and `Stop` (the helper cost ledger) — up to **eleven** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` and `SessionStart` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **five** more, so **sixteen** in total with everything on. The two hooks that run on every message you type (`clock-in-context.sh`, `doorman.sh`) and the end-of-turn check (`stop-state-check.sh`) are registered with a 10-second time limit, so a stuck one cannot hang your session Everything else in the file is preserved |
+| `~/.claude/settings.json` | Hook registrations are **merged in**. By default: `SessionStart` and `UserPromptSubmit` (the rulebook check and the owner-card loader), `PreToolUse` matched to `Bash` (the git-safety guards, `gate-guard.sh`), to `Agent` (`agent-model-guard.sh`, which refuses a helper launch that does not name its model) and to `Write\|Edit\|MultiEdit\|Bash` (`channel-size-guard.sh`), `PostToolUse` on the same matcher (`channel-size-post.sh`), and `Stop` (the helper cost ledger) — up to **eleven** entries, fewer when `python3` or `jq` is missing. On top of that, opt-in: the multi-chat coordination group asked as one question (`PreToolUse`/`PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` for the provenance pair, `UserPromptSubmit` and `SessionStart` for `doorman.sh`, `Stop` for `stop-state-check.sh`) — up to **five** more; then two single opt-in hooks, each its own question: the idle-chat warning (`UserPromptSubmit`, `wake-warning.sh`) is **one** more, and the chapter reminder (`Stop` and `UserPromptSubmit`, `chapter-note.sh`) is **two** more. That is up to **eight** opt-in entries and **nineteen** in total with everything on. The hooks that run on every message you type (`clock-in-context.sh`, `doorman.sh`, `wake-warning.sh`, `chapter-note.sh`) and the end-of-turn checks (`stop-state-check.sh`, `chapter-note.sh`) are registered with a 10-second time limit, so a stuck one cannot hang your session. Everything else in the file is preserved |
 | `~/.claude/.gitignore` | Only if you opt into the backup hook, and only if you don't have one |
 | git's **global** config | Only if you opt into the "git hooks" step: sets `core.hooksPath` to `~/.claude/git-hooks`, which then applies to every repository on this machine |
 
@@ -95,6 +95,7 @@ cp hooks/check-claude-md.sh hooks/auto-backup.sh hooks/interview.md \
    hooks/helper-ledger.py \
    hooks/channel-provenance-pre.sh hooks/channel-provenance-post.sh hooks/provenance.py \
    hooks/doorman.sh hooks/stop-state-check.sh \
+   hooks/wake-warning.sh hooks/chapter-note.sh \
    hooks/test-hooks.sh hooks/test-helper-ledger.sh hooks/test-rules-cap.sh \
    ~/.claude/hooks/
 chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
@@ -106,6 +107,7 @@ chmod +x ~/.claude/hooks/check-claude-md.sh ~/.claude/hooks/auto-backup.sh \
          ~/.claude/hooks/helper-ledger.py \
          ~/.claude/hooks/channel-provenance-pre.sh ~/.claude/hooks/channel-provenance-post.sh \
          ~/.claude/hooks/provenance.py ~/.claude/hooks/doorman.sh \
+         ~/.claude/hooks/wake-warning.sh ~/.claude/hooks/chapter-note.sh \
          ~/.claude/hooks/stop-state-check.sh ~/.claude/hooks/test-hooks.sh \
          ~/.claude/hooks/test-helper-ledger.sh ~/.claude/hooks/test-rules-cap.sh
 cp -Rn project-template/. ~/.claude/project-template/
@@ -119,11 +121,13 @@ cp -Rn skills/. ~/.claude/skills/
 # hooks/heavy-suite.conf.example (whose PATTERN is now exactly the guard's built-in
 # default) and widen yours, or delete yours to fall back to the built-in.
 
-# Six more .conf.example files — copied as EXAMPLES only, next to their hooks. Each
-# matching guard stays inert until you copy one to its live name yourself:
+# Eight more .conf.example files — copied as EXAMPLES only, next to their hooks. Each
+# matching guard stays inert until you copy one to its live name yourself (-n: a conf
+# you already made is never overwritten):
 cp -n hooks/gate-guard.conf.example hooks/channel-ceiling.conf.example \
       hooks/allowed-email-domains.conf.example hooks/block-dangerous-git.conf.example \
       hooks/state-check.conf.example hooks/commit-size.conf.example \
+      hooks/issue-number.conf.example hooks/wake-warning.conf.example \
       ~/.claude/hooks/
 
 # The git hooks proper — copied in and made executable, but inert until step 7:
@@ -368,8 +372,45 @@ make something public (`gh repo create --public`, `gh repo edit --visibility pub
 `npm publish` without `--dry-run`), and deleting a branch on the remote that has not been
 merged. That last check has to look at the remote, so **on a delete of a remote branch only,
 this guard makes a quick network fetch** (limited to 10 seconds); a branch it cannot check is
-refused. `GITGUARD=1` approves a refusal on purpose. One loosening: `gate-guard.sh` now refuses a test run piped into a reader only when a
-commit, a push or a "READY" message is chained after it; the pipe alone passes.
+refused. `GITGUARD=1` approves a refusal on purpose. One loosening: `gate-guard.sh` refuses a test run piped into a reader only when a
+commit, a push or a "READY" message comes later in the command; the pipe alone passes. Its
+other check on a test run is the opposite join: a `;`, `&`, `||` or a new line after the run,
+and then a commit, a push or "READY" anywhere further on (`npm test; git commit -m x`), because
+a red run would carry on into it. `|| exit 1` between them passes, and so does a run that is
+an `if` condition. The run is found whether it is `npm`, `yarn` or `pnpm` and whatever
+`time`, `timeout` or `sudo` stands in front.
+
+`heavy-suite-guard.sh` makes three checks, in this order. Downside first: all three can say no
+to honest work, and each has a one-word way past it.
+
+- **Stopping by name is refused.** `pkill`, `killall`, `kill 0` or `kill -1` (a whole group or
+  everything), `kill $(pgrep x)` (a kill fed by a lookup), `xargs kill` and `fuser -k` are
+  refused, because a name match once stopped the Claude app itself. `kill <PID>` of a process
+  you started, and `kill $(cat run.pid)`, are fine. Start the part of the command that is
+  refused with `KILL_OK=1 ` to override it on purpose; the use goes into the override ledger, and an override that cannot be
+  written there is refused.
+- **Busy machine.** A test run is refused while the 1-minute load is at or above `MAX_LOAD`
+  (default 10). A run of one named test file, or one `-t` test, is exempt from this check.
+- **Low memory.** A test-like command is refused when free memory is under `MIN_FREE` percent
+  (default 35), and so is anything matching `MEMPATTERN` (by default the type-check commands:
+  `npm run typecheck`, `tsc`). A one-file run is *not* exempt from this one. It reads macOS's
+  `memory_pressure`; on Linux, or whenever the reading is missing, it passes. Both keys live in
+  `hooks/heavy-suite.conf` (see `heavy-suite.conf.example`); `SUITE_OK=1` waives a run, also
+  recorded.
+
+More ways of writing a test run are now recognised as the same thing: `npm t`, `npm run-script
+test`, `yarn test`, `pnpm vitest`, `npm exec vitest`, `npx -y vitest@latest`, `timeout 60 npm
+test`, `nice`, `sudo`, `xargs` and `find -exec` in front, and `bash -c "npm test"` or `eval
+"npm test"` around it. A project runner that is none of those goes in `PATTERN` or
+`MEMPATTERN`.
+
+`gate-guard.sh` also refuses a `git push`, `git rebase` or `git pull` whose output is piped into
+anything (`git push 2>&1 | tail`). The pipe hides git's exit code, so a rejected push looks like
+success; every piped `git pull` is refused for the same reason. A `--dry-run` (or `-n`, on a
+push only), a `set -o pipefail` earlier in the command that is not switched off again, or a
+`${PIPESTATUS[0]}` read afterwards lets it through, and `GATE_OK=1` waives it as for the other
+rules. A command with several refusals needs `GATE_OK=1` at the start of each one, and the
+ledger lines are written only when the whole command passes.
 
 `gate-guard.sh` is gated on `python3` (see the note above the "Requires" paragraph): with
 no `python3` it passes everything with a warning, so registering it would cost a subprocess
@@ -463,6 +504,16 @@ and says so when it skips it; `stop-state-check.sh` does not need `jq`. Both car
   a notice. The provenance pair credits an `Edit` or `MultiEdit` to a session only when the
   file holds exactly what that edit would produce; a `Write` or a `Bash` edit is credited
   whole, so another session's change landing during one of those is not caught.
+- **Several chats in one folder.** A folder name cannot tell them apart, so a repo can opt in
+  by committing `.claude/state-roles.tsv` at its top (only a file git tracks counts; an
+  untracked or ignored one opts nobody in): one line per role, a pattern, a tab, then
+  a state-file path from the repo top (`#` lines and blank lines skipped; an absolute path or
+  one holding `..` is ignored). A chat whose title (or, with no title, first message) contains
+  the pattern, in any letter case, is that role. It is used only when no `state-check.conf`
+  line matched the folder. These chats get the end-of-turn state-file check only (no
+  retirement, wrap-up or holding), and only when *that* chat's own turn (counted from your last typed message) wrote a file that
+  is among the changed tracked files, or committed, so another chat's work in the same folder
+  never blocks it.
 - **An unattended run** (an overnight run nobody is watching) skips the wrap-up while a file
   holds an end time in the future. Nothing here writes that file; you set it by hand, for
   example for eight hours:
@@ -496,6 +547,58 @@ and says so when it skips it; `stop-state-check.sh` does not need `jq`. Both car
 All four are harmless to register even before `hooks/state-check.conf` exists — with no
 config, or a working-directory name matching no line in it, every one of them is a no-op.
 
+### 6c. Optional: the idle-chat warning
+
+Off unless you say yes (the installer asks; default no). Downside first: **it holds one of your
+messages.** A chat that has sat idle for about an hour loses its saved copy (the "prompt cache"),
+so your next message re-reads the whole chat at full price. `wake-warning.sh` holds that one
+message once, with a plain warning, only when the chat is over `WAKE_CTX_TOKENS` (default
+200000) and idle for `WAKE_IDLE_MIN` minutes (default 60). Send the message again and it goes
+through. It needs `jq` (it reads the typed prompt with it), and fails open everywhere else.
+The dollar figure in the warning comes from `WAKE_EXCESS_PER_MTOK`, whose default (5.75) is an
+**example price, not yours to trust: set it for your own model**: the cache-write price minus the cache-read price, per
+million tokens. On a subscription there is no bill; the same re-read counts against your usage
+limit. Keys live in `hooks/wake-warning.conf` (copy `wake-warning.conf.example`):
+`WAKE_IDLE_MIN`, `WAKE_CTX_TOKENS` and `WAKE_EXCESS_PER_MTOK`, one `KEY=VALUE` per line (a
+trailing `# comment` is fine); an environment variable of the same name wins. The example
+price is 6.25 for a cache write minus 0.50 for a cache read, which is where 5.75 comes from;
+yours will differ. Register it
+like step 4, under `"UserPromptSubmit"`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/wake-warning.sh\"", "timeout": 10 } ] }
+    ]
+  }
+}
+```
+
+### 6d. Optional: the chapter reminder (Claude desktop app only)
+
+Off unless you say yes (default no). The Claude desktop app has a chapter tool that titles a
+phase of work in its session list; other clients do not, and there this hook does nothing
+useful. `chapter-note.sh` leaves the model one short note to call that tool after a session's
+first change to files, and after a `git push`. It never blocks anything and never repeats for
+the same trigger. The tool's name is `mark_chapter` unless you set `CHAPTER_TOOL` (an
+environment variable, or one line in `hooks/chapter-note.conf`). Known gap: when the idle-chat
+warning holds a prompt at the same moment, that prompt can swallow one note. Two entries, `Stop`
+and `UserPromptSubmit`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/chapter-note.sh\"", "timeout": 10 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "/bin/bash \"$HOME/.claude/hooks/chapter-note.sh\"", "timeout": 10 } ] }
+    ]
+  }
+}
+```
+
 ### 7. Optional: git hooks for every repo on this machine
 
 Read this before running it:
@@ -515,7 +618,22 @@ rebase` (and `git commit --author="…"`, which never reaches the author check e
 reach the remote unseen. An author or committer naming Claude/Anthropic is refused always;
 matching `AUTHOR=` in `hooks/backup.conf` is required only when that line exists, with the
 same per-repo opt-out as `pre-commit` (`git config --local hooks.identity false`). Only what
-the push ADDS is judged, never history the remote already has.
+the push ADDS is judged, never history the remote already has. While that identity check is on,
+a push is refused ("fetch first") when the remote's tip for a branch is not in your copy, because
+the commits it adds cannot then be listed. A push made from a bare repository is judged too; only
+the type-check, which needs a working tree, is skipped there.
+
+Two more lines of `pre-push`. It sets `GIT_NO_REPLACE_OBJECTS=1` before any check, so a `git
+replace` stand-in cannot make a commit look different from what it is. And there is an opt-in
+**issue-number check**: copy `hooks/issue-number.conf.example` to `hooks/issue-number.conf` and
+list repos as `owner/name`, one per line. A push to `main` of a listed repo is then refused when
+any commit it adds changes a file outside `docs/` (in any letter case) and the root `*.md` files
+without a number like `#12` in its message. The root rules files `CLAUDE.md`, `AGENTS.md` and
+`GEMINI.md` count as outside, so a change to them needs a number too. The repo is judged on the URL you push
+to, not the folder; with no conf, or a repo not listed, the check never runs. It fails closed
+when it cannot read the commits or `main` is not in your copy ("fetch first"), and it checks the
+format only, never the network. `ISSUE_OK=1 git push ...` waives it for one push and writes a
+ledger line (refused if the line cannot be written).
 
 Second, the type-check — and that one will not run in a repo unless the repo opts in: without
 it, a pushed repo's own `package.json` would otherwise run whatever its `scripts.typecheck`
@@ -534,6 +652,22 @@ onto commits that were themselves made with `git commit`, and each of those alre
 `pre-commit` when it was written. The case to watch is a merge of commits made on **another
 machine** (a pull, a PR merge) — run the full privacy sweep before any public step rather
 than trusting a hook for that.
+
+The privacy check also catches the *encoded* form of a home path — Claude Code names a
+project's memory folder `-Users-<name>` or `-home-<name>` — unless a letter, digit or dash comes
+right before the first dash (`--home-banner` passes); `-home-<name>` counts only with a `-` or `/`
+after the name, so a bare one is not seen; a placeholder such as `<account>` passes, and the
+excluded-names list works the same as for the plain home-path form. If a repo is listed in
+`~/.claude/.privacy-name-exceptions.local` (it skips the name check only), a git worktree of
+that repo counts as that repo too; home-path, email and key checks still apply there.
+
+A home path counts when the name ends at a quote, a space, a comma or the end of the line, not
+only at a slash (`export HOME=` followed by a home path), and `Users` or `home` in any letter case, a
+Windows `C:\Users\<name>` and the JSON-escaped form count too. The system folders `Shared`,
+`Public` and `Default` pass (so the shared folder under the macOS users folder is fine). A staged file *path* that holds `Users/<name>/`
+is refused as well (never `home/`, so `docs/home/...` is fine). The privacy and key scans read the
+diff with git's external diff tool and text converters switched off, so setting `diff.external`
+does not blind them.
 
 `pre-commit` also refuses a commit that stages a key-shaped secret (an API key, a token, a
 private key) — the same list the backup hook uses. `PRIVACY_OK=1` does not lift it; a
@@ -581,6 +715,15 @@ backup folders it made (`~/.claude/.setup-backup-skills-*`). The two retired ski
 them, move them to the same backup folder (`mv ~/.claude/skills/handover
 ~/.claude/skills/ponytail "$b/"`).
 
+### Upgrading the guards
+
+An existing `hooks/heavy-suite.conf` keeps working as it is. The new keys (`MIN_FREE`,
+`MEMPATTERN`) are optional; leave them out and the guard's built-in defaults apply. To use
+them, copy the two lines from `heavy-suite.conf.example`. The installer never overwrites a
+conf you already have, and `issue-number.conf` and `wake-warning.conf` do not exist until you
+copy their examples (`wake-warning.conf.example` shows its keys, and that the price in it is an
+example).
+
 ## Checking it worked
 
 Open a **new** session and ask:
@@ -603,8 +746,14 @@ it names which one.
 
 ## Known limits
 
-- **The heavy-suite guard does not see a test runner behind a wrapper.** `npm test` is
-  caught; `timeout 60 npm test` (or a runner started through `xargs`) is not.
+- **The guards read a command's text; they do not run it.** The common wrappers
+  (`timeout 60 npm test`, `xargs`, `bash -c "..."`, `eval "..."`) are seen through. These are
+  deliberately **not** enforced, so a determined bypass passes: a word split by quotes
+  (`pk""ill`, `"git" push`), a variable or alias used as the command (`K=pkill; $K x`), text
+  piped into a shell (`echo pkill x | bash`), another interpreter (`python3 -c`, `node -e`,
+  `ssh`), and `NPM test` on a case-insensitive disk. The gate rules also do not promise to read
+  function bodies, `xargs`, process substitution `<(...)`, or a quoted `echo "READY"`. They stop
+  honest slips, not a hostile script.
 - **The compaction handling has not been tried against a real compaction.** The doorman's
   notice, and the rule that an unknown context size is never held, were built from the
   transcript format and tested on made-up ones. Whether Claude Code's `SessionStart` really
@@ -624,7 +773,7 @@ without deleting anything, remove the `hooks` entries you added from
 
 To turn off just the multi-chat coordination group, remove its five `hooks` entries from
 `~/.claude/settings.json` (or simplest: never create `~/.claude/hooks/state-check.conf` —
-all of them stay inert without it).
+all of them stay inert without it). The idle-chat warning and the chapter reminder are separate: remove the one `wake-warning.sh` entry and the two `chapter-note.sh` entries to turn them off.
 
 To turn off the git hooks step: `git config --global --unset core.hooksPath` (or, if the installer saved an earlier value in `~/.claude/.setup-prev-hookspath`, set it back to that) — the files stay
 at `~/.claude/git-hooks/`, just unwired from every repo. The new files themselves, if you want
@@ -632,6 +781,7 @@ them gone entirely: `~/.claude/hooks/clock-in-context.sh`, `owner-card.md`,
 `guard-lib.sh`, `block-dangerous-git.sh`, `commit-pathspec-guard.sh`, `heavy-suite-guard.sh`,
 `agent-model-guard.sh`, `override-ledger.sh`, `gate-guard.sh`, `channel-size-guard.sh`, `channel-provenance-pre.sh`,
 `channel-provenance-post.sh`, `provenance.py`, `doorman.sh`, `stop-state-check.sh`,
+`wake-warning.sh` and `chapter-note.sh` (the two opt-in ones),
 `channel-size-post.sh`, `heavy-suite.conf`, `test-hooks.sh`, `test-helper-ledger.sh`,
 `test-rules-cap.sh`, `.redaction-names.local`, and
 `~/.claude/git-hooks/{commit-msg,pre-commit,pre-merge-commit,pre-push}`.

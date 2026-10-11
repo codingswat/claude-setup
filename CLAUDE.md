@@ -16,11 +16,13 @@ Greet them briefly and offer the install. Say plainly what it will touch:
 
 > This will add hook scripts, a project template and some skills under `~/.claude`, and
 > register the hooks (up to eleven entries by default, fewer without a working python3 or jq;
-> up to five more, sixteen in total, if you also turn on the multi-chat coordination group) in
+> up to eight more, nineteen in total, if you also turn on the multi-chat coordination group,
+> the idle-chat warning and the chapter reminder) in
 > `~/.claude/settings.json`. Anything it would overwrite gets backed up
-> first, and nothing is deleted. The three sharp-edged or opt-in pieces — the auto-backup
-> hook, the multi-chat coordination group, and the machine-wide git hooks — are off unless
-> you ask for them.
+> first, and nothing is deleted. The five sharp-edged or opt-in pieces — the auto-backup
+> hook, the multi-chat coordination group, the machine-wide git hooks, the idle-chat warning
+> (it holds one message) and the chapter reminder (for the Claude desktop app) — are off
+> unless you ask for them.
 
 Then, with their go-ahead, run it and show them the output:
 
