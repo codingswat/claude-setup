@@ -41,7 +41,7 @@
 #     ready to retire. Never on the forced second stop, never while an unattended run is on
 #     (guard-lib.sh's unattended_run_active), once per session ($STATE/wrapup-fired/<sid>,
 #     which also tells clock-in-context.sh to swap its fullness line for the wrap-up words).
-# (4) THE HELPER TELL: a turn that grew the context by TELL_GROWTH_K thousand or more (default
+# (4) THE HELPER TELL: a turn that grew the context by TELL_GROWTH_K thousand tokens or more, compared in exact tokens (default
 #     30, illustrative) with no Agent/Workflow launched leaves one line in $STATE/tell/<sid>;
 #     doorman.sh shows it at the next passing prompt, then deletes it. Roles in
 #     TELL_EXEMPT_ROLES never get it. The growth is measured from $STATE/turn-start/<sid>
@@ -55,12 +55,19 @@
 # are also left as a pending notice in $STATE/notices/<source>, shown at the next typed prompt.
 #
 # SHARED-FOLDER CHATS (opt-in per repo): a folder the conf does not name may still hold several chats that
-# share it. A repo opts in by COMMITTING `.claude/state-roles.tsv` at its git top (`<pattern><TAB><state file path
+# share it. A repo opts in by COMMITTING `.claude/state-roles.tsv` at its git top, tracked (an untracked or ignored file does not count) (`<pattern><TAB><state file path
 # from the top>`; see state-check.conf.example); guard-lib.sh's hook_state_role reads the chat's role from its
-# title or first message. Such a chat gets job (2) only, with a lighter rule: a turn whose OWN transcript wrote a
-# file (Edit/Write/MultiEdit/NotebookEdit) or ran a Bash git commit/merge/cherry-pick/revert, and that changed
-# tracked files without changing its state file, is blocked once (a Heartbeat line is asked); a state file with
-# uncommitted changes is asked to be committed by path. Another chat's edit in the same folder never blocks.
+# title or first message. Such a chat gets job (2) only, with a lighter rule: a turn whose OWN transcript wrote one
+# of the tracked files that changed, or committed (git commit/merge/cherry-pick/revert, with or without -C/-c
+# options), or wrote something whose target cannot be read (sed -i, a quoted or variable redirect target, git
+# apply, an interpreter body that writes), and that did not change its state file, is blocked once (a Heartbeat
+# line is asked); a state file with uncommitted changes is asked to be committed by path. Another chat's edit in
+# the same folder never blocks, and neither does this chat's write to a file outside the changed set (a /tmp
+# file). What this chat wrote is read by guard-lib.sh's turn_scan (also used by chapter-note.sh) from the last
+# TYPED prompt on: a mid-turn task notification, an isMeta skill body or a slash-command wrapper does not move
+# the start. Not covered: a write through eval, xargs, a function or a variable as the command; a path written
+# as a shell glob or a quoted word counts as unreadable (this chat's); a queued owner message that the app
+# writes as a typed user line starts a new turn like any prompt.
 # No retirement, wrap-up or helper tell for these chats. Every threshold above compares the EXACT token count
 # (399,999 is under 400k); the "k" figure in a message is only the rounded display.
 # No hooks/state-check.conf at all, or the folder matches no line in it and no repo mapping: EVERY job is off for
@@ -155,8 +162,15 @@ if [ -z "$mapped_sf" ] && [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
       _exempt_lc=$(printf ' %s ' "$STC_TELL_EXEMPT" | tr 'A-Z\t' 'a-z ')
       case "$_exempt_lc" in *" $(printf '%s' "$role" | tr 'A-Z' 'a-z') "*) tell_exempt=1;; esac
       if [ -n "$start_k" ] && [ "$tell_exempt" = 0 ]; then
-        growth_k=$(( ctx_k - 10#$start_k ))
-        if [ "$growth_k" -ge "$STC_TELL_K" ]; then
+        # exact tokens, as every other threshold: the exact size doorman.sh wrote beside the rounded one
+        # (turn-start-tok/<sid>) when it agrees with it, else the rounded figure
+        start_tok=$((10#$start_k * 1000))
+        if [ -f "$STATE/turn-start-tok/$sid" ] && ! [ -L "$STATE/turn-start-tok/$sid" ] && ! [ -L "$STATE/turn-start-tok" ]; then
+          _st=$(head -1 "$STATE/turn-start-tok/$sid" 2>/dev/null)
+          case "$_st" in ''|*[!0-9]*) ;; *) [ $(( (10#$_st + 500) / 1000 )) -eq $((10#$start_k)) ] && start_tok=$((10#$_st));; esac
+        fi
+        growth_tok=$(( ctx_tok - start_tok )); growth_k=$(( (growth_tok + 500) / 1000 ))
+        if [ "$growth_tok" -ge "$((STC_TELL_K * 1000))" ]; then
           last_prompt_line=$(/usr/bin/grep -nE '"type"[[:space:]]*:[[:space:]]*"user".*"origin"[[:space:]]*:[[:space:]]*\{[[:space:]]*"kind"[[:space:]]*:[[:space:]]*"(human|peer)"' "$tp" 2>/dev/null | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
           if [ -n "$last_prompt_line" ]; then
             agent_count=$(/usr/bin/tail -n "+$((last_prompt_line+1))" "$tp" 2>/dev/null | /usr/bin/grep '"type":"tool_use"' 2>/dev/null | /usr/bin/grep -cE '"name"[[:space:]]*:[[:space:]]*"(Agent|Workflow)"' 2>/dev/null)
@@ -174,6 +188,10 @@ if [ -z "$mapped_sf" ] && [ -n "$tp" ] && [ -r "$tp" ] && [ -n "$sid" ]; then
     if [ ! -L "$snap_start" ] && [ ! -L "$STATE/turn-start" ]; then
       mkdir -p "$STATE/turn-start" 2>/dev/null
       printf '%s\n' "$ctx_k" > "$snap_start" 2>/dev/null
+    fi
+    if [ ! -L "$STATE/turn-start-tok" ] && [ ! -L "$STATE/turn-start-tok/$sid" ]; then
+      mkdir -p "$STATE/turn-start-tok" 2>/dev/null
+      printf '%s\n' "$ctx_tok" > "$STATE/turn-start-tok/$sid" 2>/dev/null
     fi
 
     # (1) retire.
@@ -315,9 +333,36 @@ if [ "$snap_ok" = 1 ]; then
   # line that is not a tool result), holds a file-writing tool use or a Bash git commit/merge/cherry-pick/revert:
   # another chat's edit in the same folder never blocks.
   if [ -n "$mapped_sf" ]; then
-    _m_pl=$(/usr/bin/grep -anE '"type"[[:space:]]*:[[:space:]]*"user"' "$tp" 2>/dev/null | /usr/bin/grep -av '"type"[[:space:]]*:[[:space:]]*"tool_result"' | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)
-    _m_own=$(/usr/bin/tail -n "+$((${_m_pl:-0}+1))" "$tp" 2>/dev/null | /usr/bin/grep -aE '"type"[[:space:]]*:[[:space:]]*"tool_use"' | /usr/bin/grep -aE '"name"[[:space:]]*:[[:space:]]*"(Edit|Write|MultiEdit|NotebookEdit)"|"name"[[:space:]]*:[[:space:]]*"Bash".*git[[:space:]]+(commit|merge|cherry-pick|revert)' | head -1)
-    [ -n "$_m_own" ] || exit 0
+    turn_scan "$tp" "" || exit 0
+    [ "${TS_PL:-0}" -gt 0 ] || exit 0
+    _m_own=0
+    { [ "${TS_COMMIT:-0}" -gt 0 ] || [ "${TS_UNREAD:-0}" = 1 ]; } && _m_own=1
+    if [ "$_m_own" = 0 ] && [ -n "$TS_PATHS" ]; then
+      # hold only when a written path is one of the tracked paths that changed (dirty now, or moved by a commit since the snapshot)
+      _m_chg=$(git -C "$top" -c core.quotepath=false diff --no-ext-diff --no-textconv --name-only HEAD 2>/dev/null)
+      if [ -n "$snap_head" ] && [ "$snap_head" != "$cur_head" ] && git -C "$top" rev-parse --verify -q "$snap_head^{commit}" >/dev/null 2>&1; then
+        _m_chg="$_m_chg
+$(git -C "$top" -c core.quotepath=false diff --no-ext-diff --no-textconv --name-only "$snap_head" HEAD 2>/dev/null)"
+      fi
+      _m_topp=$(cd "$top" 2>/dev/null && pwd -P); _m_cwdp=$(cd "$cwd" 2>/dev/null && pwd -P); _m_rel=""
+      case "$_m_cwdp/" in "$_m_topp/"*) _m_rel="${_m_cwdp#"$_m_topp"}"; _m_rel="${_m_rel#/}";; esac
+      while IFS= read -r _m_p; do
+        [ -n "$_m_p" ] || continue
+        case "$_m_p" in /*) _m_d=$(cd "${_m_p%/*}" 2>/dev/null && pwd -P) && [ -n "$_m_d" ] && _m_p="${_m_d%/}/${_m_p##*/}";; esac   # resolve links in the folder part
+        case "$_m_p" in
+          "$top"/*) _m_p="${_m_p#"$top"/}";;
+          "$_m_topp"/*) _m_p="${_m_p#"$_m_topp"/}";;
+          /*) continue;;
+          *) [ -n "$_m_rel" ] && _m_p="$_m_rel/${_m_p#./}" || _m_p="${_m_p#./}";;
+        esac
+        _m_p="${_m_p%/}"
+        [ -n "$_m_p" ] || continue
+        if printf '%s\n' "$_m_chg" | /usr/bin/grep -qxF -- "$_m_p" || printf '%s\n' "$_m_chg" | /usr/bin/grep -qF -- "$_m_p/"; then _m_own=1; break; fi
+      done <<EOF_P
+$TS_PATHS
+EOF_P
+    fi
+    [ "$_m_own" = 1 ] || exit 0
     _m_ask=""
     if [ "$cur_sf" = "$snap_sf" ]; then
       _m_ask="this turn changed tracked files in $base but $sf did not change since the turn started. Files are memory: rewrite $sf now (under 200 words: current task, next step, open questions, what must not be repeated) with a Heartbeat: line holding the current time."

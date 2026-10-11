@@ -485,11 +485,12 @@ state_conf_read() {
 
 # hook_state_role CWD TRANSCRIPT [PROMPT] — the role lookup for a project whose chats SHARE one folder,
 # where the folder name cannot name the role. A repo opts in by COMMITTING `.claude/state-roles.tsv` at its
-# git top: one line per role, `<pattern><TAB><state file path from the top>` ('#' lines and blank lines
+# git top (TRACKED: git ls-files must list it): one line per role, `<pattern><TAB><state file path from the top>` ('#' lines and blank lines
 # skipped). No state-check.conf line is needed; callers run this only when state_conf_read found no row for
 # the folder. The chat's identity is the session's title (the last {"type":"custom-title"} line of the
 # transcript), else the text of its first user message (system-reminder blocks stripped, first 300
-# characters), else the optional PROMPT (the prompt hook's text: a chat's very first prompt, before the
+# characters; an isMeta line and a slash-command wrapper, text starting <command- or <local-command-, are
+# skipped), else the optional PROMPT (the prompt hook's text: a chat's very first prompt, before the
 # transcript holds anything). The first pattern found in the identity (case-insensitive, literal substring)
 # wins. Prints "<pattern><TAB><state file>" and returns 0; returns 1, printing nothing, for no git repo, no
 # mapping file, no identity, no match, no jq, or a path that is absolute or holds "..". Needs jq.
@@ -502,14 +503,16 @@ hook_state_role() {
   [ -n "$top" ] || return 1
   map="$top/.claude/state-roles.tsv"
   [ -f "$map" ] && [ -r "$map" ] || return 1
+  git -C "$top" ls-files --error-unmatch -- .claude/state-roles.tsv >/dev/null 2>&1 || return 1   # tracked only: an untracked or ignored file opts nobody in
   ident=""
   [ -n "$tp" ] && [ -r "$tp" ] && ident="$(/usr/bin/grep -a '"type"[[:space:]]*:[[:space:]]*"custom-title"' "$tp" 2>/dev/null | /usr/bin/tail -1 | jq -r '.customTitle // empty' 2>/dev/null)"
   if [ -z "$ident" ] && [ -n "$tp" ] && [ -r "$tp" ]; then
     ident="$(/usr/bin/grep -a -m 40 '"type"[[:space:]]*:[[:space:]]*"user"' "$tp" 2>/dev/null | jq -R -r '
-      fromjson? | select(.isSidechain != true and (.message.role // "") == "user")
+      fromjson? | select(.isSidechain != true and .isMeta != true and (.message.role // "") == "user")
       | .message.content
       | (if type == "string" then . elif type == "array" then (map(select(.type == "text") | .text) | join(" ")) else "" end)
       | gsub("<system-reminder>.*?</system-reminder>"; ""; "s") | gsub("^\\s+|\\s+$"; "") | select(length > 0)
+      | select(test("^<(local-)?command-") | not)
       | .[0:300] | gsub("\\s+"; " ")' 2>/dev/null | head -1)"
   fi
   if [ -z "$ident" ] && [ -n "$prompt" ]; then
@@ -565,5 +568,201 @@ stc_ctx_read() {
     [ "$_w" = 0 ] && break
     { [ "$_t" -gt 0 ] || [ "$_c" -gt 0 ]; } && break
   done
+  return 0
+}
+
+# ---- "what did this turn write or commit": the ONE transcript reader of the opt-in chat hooks ----
+# Used by stop-state-check.sh (shared-folder chats: did THIS chat change the repo?) and chapter-note.sh
+# (is this the session's first change, did it push?). turn_scan TRANSCRIPT [CHAPTER_TOOL] reads only the
+# CURRENT turn: the file's last 1 MB, then 8 MB, then 64 MB, then the whole file, stopping at the first
+# window that holds the turn's start. The turn starts at the last TYPED prompt: a user line whose "origin"
+# kind is human or peer; a user line without an "origin" counts when it is not a tool result, not
+# isMeta, and its text does not start with <task-notification, <command- or <local-command- (so a
+# mid-turn task notification, a skill body or a slash-command wrapper never moves the start). Sets
+#   TS_PL      transcript line number of that prompt (0 = none found: callers do nothing)
+#   TS_MC      the turn's last chapter-tool call (a tool_use whose name ENDS with CHAPTER_TOOL), else 0
+#   TS_PU      the turn's last counted `git push` (not --dry-run/-n/--help; not one whose result is an
+#              error, says "rejected]" with no ref updated, or says "Everything up-to-date"), else 0
+#   TS_ED      the turn's last change: Edit/Write/MultiEdit/NotebookEdit, a Bash `sed -i`, tee, a > or >>
+#              redirect to a file (not /dev/*), cp, mv, git apply, an interpreter -c/-e body that writes,
+#              or a git commit/merge/cherry-pick/revert; else 0
+#   TS_ANY     1 when a chapter-tool call exists anywhere in the part read
+#   TS_COMMIT  the turn's last git commit/merge/cherry-pick/revert, else 0
+#   TS_UNREAD  1 when a write was seen whose target could not be read (sed -i, git apply, a quoted or
+#              variable target, an interpreter body): the caller counts it as this chat's
+#   TS_PATHS   the file paths the turn wrote, one per line, as spelled (absolute or relative)
+# A command counts only at a command start: `git` after ; & | ( && ||, after if/then/elif/else/do/while/
+# until, after `command`, inside bash|sh|zsh -c "...", with global options (-C dir, -c k=v, --no-pager...)
+# before the verb. A word inside quotes, a heredoc body or a commit message never counts. Not covered:
+# eval, xargs, a function wrapper, a variable as the command, env/time/nice prefixes, { ...; } groups.
+# Tests: hooks/test-hooks.sh "guard port 2026-10-10 (F3b)" and (C3).
+TURN_AWK='
+function endswith(s, t) { return length(s) >= length(t) && substr(s, length(s) - length(t) + 1) == t }
+function unesc(v) {
+  gsub(/\\\\/, "\001", v); gsub(/\\n/, "\n", v); gsub(/\\t/, "\t", v); gsub(/\\r/, "", v); gsub(/\\"/, "\"", v)
+  return v
+}
+function nohd(t,   n, a, i, o, tag, m, pre) {   # drop heredoc bodies
+  n = split(t, a, "\n"); o = ""; tag = ""
+  for (i = 1; i <= n; i++) {
+    if (tag != "") { if (a[i] ~ ("^[ \t]*" tag "[ \t]*$")) tag = ""; continue }
+    o = o a[i] "\n"
+    if (match(a[i], /<<-?[ \t]*["\047\\]?[A-Za-z_][A-Za-z0-9_]*/)) {
+      pre = (RSTART > 1) ? substr(a[i], RSTART - 1, 1) : ""
+      if (pre != "<") { m = substr(a[i], RSTART, RLENGTH); sub(/^<<-?[ \t]*["\047\\]?/, "", m); tag = m }
+    }
+  }
+  return o
+}
+function gitcmd(t, verb, skipdry,   re, c, seg, k) {   # is there a `git ... <verb>` at a command start?
+  re = "(^|[;&|(])[[:space:]]*(" KW "[[:space:]]+)*(command[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(/[^[:space:]]*/)?git[[:space:]]+(" OPT "[[:space:]]+)*" verb
+  while (match(t, re)) {
+    c = substr(t, RSTART + RLENGTH, 1); seg = substr(t, RSTART + RLENGTH + 1); t = seg
+    if (c ~ /[A-Za-z0-9_-]/) continue
+    if (skipdry) {
+      k = match(seg, /[;&|]/); if (k > 0) seg = substr(seg, 1, k - 1)
+      seg = c seg
+      if (seg ~ /(^|[[:space:]])(--dry-run|--help)([[:space:]=]|$)/ || seg ~ /(^|[[:space:]])-[A-Za-z]*n[A-Za-z]*([[:space:]]|$)/) continue
+    }
+    return 1
+  }
+  return 0
+}
+# one left-to-right quote strip: a double-quoted string may hold a backslash-escaped character (the
+# backslash is \001 by now), so an escaped quote does not end it; a single-quoted one holds none
+function stripq(t) { gsub(/"([^"\001]|\001.)*"|\047[^\047]*\047/, "Q", t); return t }
+# `bash|sh|zsh [-opts] -c "body"` at a command start runs its body: the body replaces the wrapper
+function unwrap(t,   re, n, b, pre, post) {
+  re = "(^|[;&|(\n])[[:space:]]*(/[^[:space:]]*/)?(bash|sh|zsh)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(\"([^\"\001]|\001.)*\"|\047[^\047]*\047)"
+  for (n = 0; n < 6 && match(t, re); n++) {
+    b = substr(t, RSTART, RLENGTH); pre = substr(t, 1, RSTART - 1); post = substr(t, RSTART + RLENGTH)
+    sub(/^[^"\047]*[ \t]-[A-Za-z]*c[ \t]+/, "", b)
+    if (substr(b, 1, 1) == "\"") { b = substr(b, 2, length(b) - 2); gsub(/\001"/, "\"", b); gsub(/\001\$/, "$", b) } else b = substr(b, 2, length(b) - 2)
+    t = pre ";" b ";" post
+  }
+  return t
+}
+function addpath(p) {
+  if (p ~ /^\/dev\//) return
+  if (p == "Q" || p ~ /[$`*?]/) { un = 1; return }
+  if (wn < 500) wp[++wn] = p
+}
+# does this command write? (u = the command with quoted text blanked, wrappers brought out); records the
+# targets it can read in wp[], sets un when one cannot be read, returns 1 for a write
+function bashw(t, raw,   u, rest, w, hit, n, a, i, k, seg, st, opt, lastw) {
+  u = stripq(t); gsub(/\001/, "_", u); gsub(/\n/, ";", u)
+  gsub(/[0-9&]?>>?[ \t]*\/dev\/[A-Za-z0-9_\/.-]*/, "", u)
+  hit = 0
+  rest = u
+  while (match(rest, /(^|[^0-9&>])>>?[ \t]*[^ \t;&|<>()]+/)) {
+    w = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
+    sub(/^[^>]*>>?[ \t]*/, "", w); hit = 1; addpath(w)
+  }
+  rest = u
+  while (match(rest, /(^|[[:space:];&|(])tee([[:space:]]|$)/)) {
+    seg = substr(rest, RSTART + RLENGTH); rest = seg; hit = 1
+    st = match(seg, /[;&|]/); if (st > 0) seg = substr(seg, 1, st - 1)
+    n = split(seg, a, /[ \t]+/)
+    for (i = 1; i <= n; i++) if (a[i] != "" && a[i] !~ /^-/) addpath(a[i])
+  }
+  rest = u
+  while (match(rest, "(^|[;&|(])[[:space:]]*(" KW "[[:space:]]+)*(/[^[:space:]]*/)?(cp|mv)[[:space:]]+[^;&|]*")) {
+    seg = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH); hit = 1
+    opt = (seg ~ /(^|[[:space:]])(-[A-Za-z]*[tT]|--target-directory|--no-target-directory)([[:space:]=]|$)/)
+    n = split(seg, a, /[ \t]+/); k = 0; lastw = ""
+    for (i = 1; i <= n; i++) if (a[i] ~ /^(.*\/)?(cp|mv)$/) { k = i; break }
+    for (i = k + 1; i <= n; i++) if (a[i] != "" && a[i] !~ /^-/) { lastw = a[i]; if (a[k] ~ /mv$/) addpath(a[i]) }
+    if (opt) un = 1
+    else if (lastw != "") addpath(lastw)
+  }
+  if (u ~ /(^|[[:space:];&|(])sed[[:space:]]+([^;&|]*[[:space:]])?(-[A-Za-z]*i|--in-place)/) { hit = 1; un = 1 }
+  if (u ~ /(^|[[:space:];&|(])perl[[:space:]]+([^;&|]*[[:space:]])?-[A-Za-z]*i/) { hit = 1; un = 1 }
+  if (gitcmd(u, "apply", 0)) { hit = 1; un = 1 }
+  if (raw ~ /(^|[;&|(\n])[[:space:]]*(\/[^[:space:]]*\/)?(python[0-9.]*|node|perl|ruby)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*[ceE][[:space:]]/ && raw ~ /(open\(|write|shutil|os\.(remove|rename|replace)|unlink|truncate|rmSync|renameSync)/) { hit = 1; un = 1 }
+  return hit
+}
+# is this user line a typed prompt? (see the header)
+function isprompt(l) {
+  if (l ~ /"isMeta"[ \t]*:[ \t]*true/) return 0
+  if (index(l, "\"origin\"")) return (l ~ /"origin"[ \t]*:[ \t]*\{[ \t]*"kind"[ \t]*:[ \t]*"(human|peer)"/)
+  if (index(l, "\"tool_result\"")) return 0
+  if (l ~ /"(content|text)"[ \t]*:[ \t]*"([ \t]|\\n)*<(task-notification|command-|local-command-)/) return 0
+  return 1
+}
+# did a push result show a ref that went? (an updated ref, a new branch or tag, a deleted ref)
+function went(l) {
+  return (l ~ /[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+\.\.\.?[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+[ \t]+[^ \t]+[ \t]+->/ || l ~ /\[new (branch|tag)\]/ || l ~ /- \[deleted\]/)
+}
+BEGIN {
+  Q1 = "\"[^\"]*\""; Q2 = "\047[^\047]*\047"; ARG = "(" Q1 "|" Q2 "|[^[:space:]]+)"
+  OPT = "(-C[[:space:]]+" ARG "|-c[[:space:]]+" ARG "|-[Pp]|--[A-Za-z-]+(=" ARG ")?)"
+  KW = "(if|then|elif|else|do|while|until)"
+  CV = "(commit|merge|cherry-pick|revert)"
+}
+{
+  line = $0
+  if (part && NR == 1) next   # a window cut from the middle of the file starts inside a line
+  if (index(line, "\"user\"") && line ~ /"type"[ \t]*:[ \t]*"user"/ && isprompt(line)) { pl = NR; mc = 0; ed = 0; cm = 0; un = 0; wn = 0; pn = 0; delete wp; delete pushes; delete bad; delete seen; cur = ""; curpush = 0; next }
+  if (index(line, "\"tool_result\"")) {
+    if (pl && (line ~ /"is_error"[ \t]*:[ \t]*true/ || index(line, "rejected]") || index(line, "Everything up-to-date")) && !went(line)) {
+      tid = ""; if (match(line, /"tool_use_id"[ \t]*:[ \t]*"[^"]*"/)) { tid = substr(line, RSTART, RLENGTH); sub(/^"tool_use_id"[ \t]*:[ \t]*"/, "", tid); sub(/"$/, "", tid) }
+      if (tid in pushes) bad[pushes[tid]] = 1
+      else if (!(tid in seen) && curpush) bad[cur] = 1
+    }
+    next
+  }
+  if (!index(line, "\"tool_use\"")) next
+  if (!match(line, /"type"[ \t]*:[ \t]*"tool_use"/)) next
+  s = substr(line, RSTART); nm = ""; id = ""
+  if (match(s, /"name"[ \t]*:[ \t]*"[^"]*"/)) { nm = substr(s, RSTART, RLENGTH); sub(/^"name"[ \t]*:[ \t]*"/, "", nm); sub(/"$/, "", nm) }
+  if (match(s, /"id"[ \t]*:[ \t]*"[^"]*"/)) { id = substr(s, RSTART, RLENGTH); sub(/^"id"[ \t]*:[ \t]*"/, "", id); sub(/"$/, "", id) }
+  if (id != "") seen[id] = 1
+  cur = NR; curpush = 0
+  if (endswith(nm, CT)) { any = 1; if (pl) mc = NR; next }
+  if (!pl) next
+  if (nm == "Edit" || nm == "Write" || nm == "MultiEdit" || nm == "NotebookEdit") {
+    ed = NR
+    if (match(s, /"(file_path|notebook_path)"[ \t]*:[ \t]*"([^"\\]|\\.)*"/)) {
+      w = substr(s, RSTART, RLENGTH); sub(/^"[a-z_]*"[ \t]*:[ \t]*"/, "", w); sub(/"$/, "", w); gsub(/\\\//, "/", w); gsub(/\\\\/, "\\", w); addpath(w)
+    } else un = 1
+    next
+  }
+  if (nm == "Bash") {
+    if (!match(s, /"command"[ \t]*:[ \t]*"([^"\\]|\\.)*"/)) next
+    cmd = substr(s, RSTART, RLENGTH); sub(/^"command"[ \t]*:[ \t]*"/, "", cmd); sub(/"$/, "", cmd)
+    cmd = nohd(unesc(cmd)); gsub(/\001[ \t]*\n/, " ", cmd)
+    unw = unwrap(cmd)
+    if (bashw(unw, cmd)) ed = NR
+    cmd = stripq(unw); gsub(/\001/, "_", cmd); gsub(/\n/, ";", cmd)
+    if (gitcmd(cmd, CV, 0)) { ed = NR; cm = NR }
+    if (gitcmd(cmd, "push", 1)) { pn++; pl_at[pn] = NR; curpush = 1; if (id != "") pushes[id] = NR }
+  }
+}
+END {
+  pu = 0
+  for (k = pn; k >= 1; k--) if (!(pl_at[k] in bad)) { pu = pl_at[k]; break }
+  off = total - NR   # a window numbers its lines from 1: shift to whole-file numbers so the record keys never move
+  print (pl ? pl + off : 0), (mc ? mc + off : 0), (pu ? pu + off : 0), (ed ? ed + off : 0), any + 0, (cm ? cm + off : 0), un + 0
+  for (k = 1; k <= wn; k++) print "P" wp[k]
+}'
+turn_scan() {
+  local _tp="$1" _ct="${2:-}" _size _total _w _out="" _l1
+  TS_PL=0; TS_MC=0; TS_PU=0; TS_ED=0; TS_ANY=0; TS_COMMIT=0; TS_UNREAD=0; TS_PATHS=""
+  [ -n "$_tp" ] && [ -r "$_tp" ] || return 1
+  case "$_ct" in ''|*[!A-Za-z0-9_.-]*) _ct="-no-chapter-tool-" ;; esac
+  _size=$(/usr/bin/wc -c < "$_tp" 2>/dev/null | tr -d ' '); _total=$(/usr/bin/wc -l < "$_tp" 2>/dev/null | tr -d ' ')
+  [ -n "$(/usr/bin/tail -c 1 "$_tp" 2>/dev/null)" ] && _total=$((${_total:-0} + 1))
+  for _w in 1048576 8388608 67108864 0; do
+    if [ "$_w" = 0 ] || [ "${_size:-0}" -le "$_w" ]; then
+      _out=$(LC_ALL=C /usr/bin/awk -v part=0 -v total="${_total:-0}" -v CT="$_ct" "$TURN_AWK" < "$_tp" 2>/dev/null); break
+    fi
+    _out=$(/usr/bin/tail -c "$_w" "$_tp" 2>/dev/null | LC_ALL=C /usr/bin/awk -v part=1 -v total="${_total:-0}" -v CT="$_ct" "$TURN_AWK" 2>/dev/null)
+    _l1="${_out%%$'\n'*}"
+    [ "${_l1%% *}" != 0 ] && [ -n "$_out" ] && break
+  done
+  _l1="${_out%%$'\n'*}"
+  read -r TS_PL TS_MC TS_PU TS_ED TS_ANY TS_COMMIT TS_UNREAD <<< "$_l1"
+  case "$TS_PL$TS_MC$TS_PU$TS_ED$TS_ANY$TS_COMMIT$TS_UNREAD" in ''|*[!0-9]*) TS_PL=0; TS_MC=0; TS_PU=0; TS_ED=0; TS_ANY=0; TS_COMMIT=0; TS_UNREAD=0; return 1 ;; esac
+  case "$_out" in *$'\n'*) TS_PATHS=$(printf '%s\n' "${_out#*$'\n'}" | /usr/bin/sed -n 's/^P//p') ;; esac
   return 0
 }

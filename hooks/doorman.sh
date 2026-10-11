@@ -54,7 +54,8 @@
 #     against these very fields.
 #   - the context size $STATE/turn-start/<sid> (thousands of tokens, from the newest usage line; read once
 #     with a growing tail window by guard-lib.sh's stc_ctx_read, an all-zero API-error line skipped),
-#     the base the helper tell measures growth from.
+#     the base the helper tell measures growth from; the exact token count goes beside it in
+#     $STATE/turn-start-tok/<sid>, because the tell compares exact tokens like every other threshold.
 # It also SHOWS the helper tell $STATE/tell/<sid> that stop-state-check.sh left (one line on
 # stdout, which reaches the model), and deletes it — but only on a prompt that PASSES: a held
 # prompt (exit 2) leaves it for the next one that does. Symlinked state files are never followed.
@@ -251,6 +252,11 @@ if [ -n "$tp" ] && [ -r "$tp" ]; then
   if [ -n "$ctx_k" ] && [ -n "$safe_sid" ] && [ ! -L "$STATE/turn-start" ] && [ ! -L "$STATE/turn-start/$safe_sid" ]; then
     mkdir -p "$STATE/turn-start" 2>/dev/null
     printf '%s\n' "$ctx_k" > "$STATE/turn-start/$safe_sid" 2>/dev/null
+  fi
+  # ... and the exact token count beside it (the helper tell compares exact tokens, as every other threshold).
+  if [ -n "$ctx_tok" ] && [ -n "$safe_sid" ] && [ ! -L "$STATE/turn-start-tok" ] && [ ! -L "$STATE/turn-start-tok/$safe_sid" ]; then
+    mkdir -p "$STATE/turn-start-tok" 2>/dev/null
+    printf '%s\n' "$ctx_tok" > "$STATE/turn-start-tok/$safe_sid" 2>/dev/null
   fi
 fi
 

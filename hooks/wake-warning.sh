@@ -13,10 +13,11 @@
 # THE PASS: the warning records the newest line's time in $STATE/wake-warned/<session_id>. While the
 # chat's newest line is still that line (the next message is the same wake), the next message of any
 # text goes through. A later wake, after a newer line, is warned again.
-# FAILS OPEN everywhere: no transcript, no timestamp, no session id, no jq, an unreadable usage line,
-# a record folder that is a link or cannot be written (or does not read back) = pass, nothing held.
+# FAILS OPEN everywhere: no transcript, no timestamp, no session id, no jq, no guard-lib.sh, an unreadable usage line,
+# a record folder or record file that is a link or cannot be written (or does not read back) = pass, nothing held.
 # A chat compacted after its last usage line has an unknown size = pass.
-# Config: hooks/wake-warning.conf (copy wake-warning.conf.example), KEY=VALUE lines, never executed:
+# Config: hooks/wake-warning.conf (copy wake-warning.conf.example), KEY=VALUE lines (a trailing ` # comment`
+#   is ignored), never executed:
 #   WAKE_IDLE_MIN, WAKE_CTX_TOKENS, WAKE_EXCESS_PER_MTOK. An environment variable of the same name wins.
 # Test seams: WAKE_NOW (epoch seconds), STATE_CHECK_STATE_DIR (the doorman's state folder; default
 #   ~/.claude/state/state-check), and the three keys above. Tests: hooks/test-hooks.sh "guard port
@@ -35,7 +36,7 @@ here="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
 # the conf: KEY=VALUE lines read as text (never sourced); only an unset environment key takes the conf's value
 conf_val() {  # $1 = key
   [ -r "$here/wake-warning.conf" ] || return 0
-  /usr/bin/sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*['\"]\{0,1\}\([0-9][0-9.]*\)['\"]\{0,1\}[[:space:]]*\$/\1/p" "$here/wake-warning.conf" 2>/dev/null | /usr/bin/tail -1
+  /usr/bin/sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*['\"]\{0,1\}\([0-9][0-9.]*\)['\"]\{0,1\}[[:space:]]*\(#.*\)\{0,1\}\$/\1/p" "$here/wake-warning.conf" 2>/dev/null | /usr/bin/tail -1
 }
 IDLE_MIN="${WAKE_IDLE_MIN:-$(conf_val WAKE_IDLE_MIN)}"
 CTX_MIN="${WAKE_CTX_TOKENS:-$(conf_val WAKE_CTX_TOKENS)}"
@@ -52,27 +53,10 @@ case "$head_p" in
 esac
 if [ -r "$here/clock-in-context.sh" ] && printf '%s' "$prompt" | /bin/bash "$here/clock-in-context.sh" --classify-prompt >/dev/null 2>&1; then exit 0; fi
 
-# the context size: the doorman's windowed reader (guard-lib.sh); the same whole-file fallback
-# clock-in-context.sh uses when the library is missing
+# the context size: the doorman's windowed reader (guard-lib.sh, which the installer requires); a missing
+# library passes
 [ -r "$here/guard-lib.sh" ] && . "$here/guard-lib.sh" 2>/dev/null
-if ! command -v stc_ctx_read >/dev/null 2>&1; then
-  stc_ctx_read() {
-    STC_CTX_TOT=0; STC_CTX_ULN=0; STC_CTX_CLN=0
-    read -r STC_CTX_TOT STC_CTX_ULN STC_CTX_CLN <<<"$(/bin/cat "$1" 2>/dev/null | /usr/bin/grep -E 'cache_read_input_tokens|"subtype"[[:space:]]*:[[:space:]]*"compact_boundary"' 2>/dev/null | /usr/bin/awk '
-      function lastnum(s, key,   re, r, v) { re="\"" key "\"[ \t]*:[ \t]*[0-9]+"; v=0
-        while (match(s, re)) { r=substr(s,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",r); v=r+0; s=substr(s,RSTART+RLENGTH) }
-        return v }
-      { l=$0; ln=NR
-        if (index(l,"compact_boundary") && l ~ /"subtype"[ \t]*:[ \t]*"compact_boundary"/) cln=ln
-        if (index(l,"cache_read_input_tokens") && l ~ /"type"[ \t]*:[ \t]*"assistant"/) { n++; ring[n%64]=l; rln[n%64]=ln } }
-      END { for (k=n; k>0 && k>n-64; k--) { l=ring[k%64]
-              t=lastnum(l,"input_tokens")+lastnum(l,"cache_creation_input_tokens")+lastnum(l,"cache_read_input_tokens")
-              if (t>0) { tot=t; uln=rln[k%64]; break } }
-            printf "%d %d %d\n", tot+0, uln+0, cln+0 }' 2>/dev/null)"
-    case "$STC_CTX_TOT$STC_CTX_ULN$STC_CTX_CLN" in ''|*[!0-9]*) STC_CTX_TOT=0; STC_CTX_ULN=0; STC_CTX_CLN=0;; esac
-    return 0
-  }
-fi
+command -v stc_ctx_read >/dev/null 2>&1 || exit 0
 stc_ctx_read "$tp"
 tokens="${STC_CTX_TOT:-0}"
 case "$tokens" in ''|*[!0-9]*) exit 0;; esac
@@ -104,6 +88,7 @@ mk="$STATE/wake-warned/$sid"
 # the same wake already warned: this message goes through
 if [ -f "$mk" ] && [ ! -L "$mk" ] && [ "$(head -1 "$mk" 2>/dev/null)" = "$newest" ]; then exit 0; fi
 [ -L "$STATE/wake-warned" ] && exit 0
+[ -L "$mk" ] && exit 0   # a link AT the record file: never written through (the target would be overwritten)
 umask 077
 mkdir -p "$STATE/wake-warned" 2>/dev/null
 { printf '%s\n' "$newest" > "$mk"; } 2>/dev/null

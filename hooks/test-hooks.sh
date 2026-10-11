@@ -4137,10 +4137,10 @@ w_run "$HOOKS_DIR" "$WS" "$(w_in c6 "$W/t61")" WAKE_IDLE_MIN=62
 c2_chk pass "P7 pair: idle 61 min with WAKE_IDLE_MIN=62 passes" eq "$W_RC" 0
 w_run "$HOOKS_DIR" "$WS" "$(w_in c4 "$W/t31")"
 c2_chk pass "P7 pair: with no conf the default 60 applies: 31 min passes" eq "$W_RC" 0
-# no guard-lib beside the hook: the built-in reader gives the same answers
+# no guard-lib beside the hook: nothing is held (the private fallback reader was dropped in F3b: the installer requires the library)
 WH2="$W/hk2"; mkdir -p "$WH2"; cp "$HOOKS_DIR/wake-warning.sh" "$WH2/" 2>/dev/null
 w_run "$WH2" "$WS" "$(w_in n1 "$W/t61")"
-c2_chk refuse "P7 without guard-lib.sh the built-in reader still holds a big idle chat" eq "$W_RC" 2
+c2_chk pass "P7 without guard-lib.sh a big idle chat passes (fail open; F3b dropped the private reader)" eq "$W_RC" 0
 w_run "$WH2" "$WS" "$(w_in n2 "$W/t150")"
 c2_chk pass "P7 pair: without guard-lib.sh a 150k chat passes" eq "$W_RC" 0
 
@@ -4287,7 +4287,7 @@ ch_mk "$CH/pr" P "B:git push origin main" "R:1:! [rejected]        main -> main 
 c2_chk pass "P14 pair: a push whose tool result says rejected: no note" ch_nonote pr
 ch_mk "$CH/pe" P "B:git push origin main" "R:1:fatal no remote:err" N; ch_stop pe "$CH/pe"
 c2_chk pass "P14 pair: a push whose tool result is an error: no note" ch_nonote pe
-ch_mk "$CH/pg" P "B:git push origin main" "R:1:Everything up-to-date" N; ch_stop pg "$CH/pg"
+ch_mk "$CH/pg" P "B:git push origin main" "R:1:   abc1234..def5678  main -> main" N; ch_stop pg "$CH/pg"
 c2_chk refuse "P14 a push whose result is fine: note" ch_note pg
 ch_mk "$CH/pb" P "B:bash -c \"git push origin main\"" N; ch_stop pb "$CH/pb"
 c2_chk refuse "P14 bash -c \"git push\": note" ch_note pb
@@ -4350,7 +4350,7 @@ ch_mk "$CH/t1" P "T:Edit" "T:set_title" N; ch_stop t1 "$CH/t1" CHAPTER_TOOL=set_
 c2_chk pass "P14 pair: CHAPTER_TOOL=set_title: a set_title call after the Edit: no note" ch_nonote t1
 ch_mk "$CH/t2" P "T:Edit" "T:mark_chapter" N; ch_stop t2 "$CH/t2" CHAPTER_TOOL=set_title
 c2_chk refuse "P14 CHAPTER_TOOL=set_title: mark_chapter is no longer the chapter tool: note, and it names set_title" bash -c "grep -q '(set_title)' '$CS/chapter-notes/t2'"
-HK3="$CH/hk"; mkdir -p "$HK3"; cp "$HOOKS_DIR/chapter-note.sh" "$HK3/"; printf 'CHAPTER_TOOL=set_title\n' > "$HK3/chapter-note.conf"
+HK3="$CH/hk"; mkdir -p "$HK3"; cp "$HOOKS_DIR/chapter-note.sh" "$HOOKS_DIR/guard-lib.sh" "$HK3/"; printf 'CHAPTER_TOOL=set_title\n' > "$HK3/chapter-note.conf"
 printf '{"hook_event_name":"Stop","session_id":"t3","transcript_path":"%s"}' "$CH/t1" | env STATE_CHECK_STATE_DIR="$CS" bash "$HK3/chapter-note.sh" >/dev/null 2>&1
 c2_chk pass "P14 pair: a conf CHAPTER_TOOL=set_title is read: set_title call, no note" ch_nonote t3
 printf '{"hook_event_name":"Stop","session_id":"t4","transcript_path":"%s"}' "$CH/t2" | env STATE_CHECK_STATE_DIR="$CS" bash "$HK3/chapter-note.sh" >/dev/null 2>&1
@@ -4717,6 +4717,187 @@ for f in pre-commit pre-push; do
 done
 if grep -q '%2F' "$GIT_HOOKS_DIR/pre-commit" && grep -qF '~<name>/' "$GIT_HOOKS_DIR/pre-commit" && grep -qi 'non-ASCII' "$GIT_HOOKS_DIR/pre-commit"; then ok; else bad "B-hdr pre-commit header must name URL-encoded paths, ~name/ and non-ASCII names as not enforced"; fi; refuse_n=$((refuse_n+1))
 if grep -q 'owner/repo#12' "$GIT_HOOKS_DIR/pre-push" && grep -q 'info/grafts' "$GIT_HOOKS_DIR/pre-push" && grep -q -- '--remotes' "$GIT_HOOKS_DIR/pre-push"; then ok; else bad "B-hdr pre-push header must state owner/repo#12, info/grafts and the --remotes exclusion"; fi; refuse_n=$((refuse_n+1))
+
+
+# ---- guard port 2026-10-10 (F3b): the chat hooks, the routes a blind attacker found ----
+echo "guard port 2026-10-10 (F3b): stop-state-check, doorman, wake-warning, chapter-note"
+FB="$T/f3b"; mkdir -p "$FB"
+# a transcript builder. Items: TITLE (a custom-title line "Reviewer"), P (a typed prompt, origin human), PN (a typed
+# line with no origin, as a terminal app may write it), PT (a user line holding a task notification, no origin),
+# PK (a user line whose origin kind is task-notification), PM (an isMeta skill-body user line), PC (a slash-command
+# wrapper user line), PQ (a queued-command attachment), U:<text> / UM:<text> (a user line / an isMeta user line with
+# this text), E:<tool>:<path> (Edit/Write ... with a file_path; an empty path = an input with none), B:<cmd> (Bash),
+# R:<n>:<text> (the n-th tool_use's result), N (assistant text). "@R@" in any item = $FB_R.
+cat > "$FB/mk.py" <<'PY'
+import json,sys,os
+out=sys.argv[1]; R=os.environ.get("FB_R",""); n=0; L=[]
+def user(c,**k):
+    d={"type":"user","message":{"role":"user","content":c}}; d.update(k); return d
+for it in sys.argv[2:]:
+    it=it.replace("@R@",R)
+    if it=="TITLE": L.append({"type":"custom-title","customTitle":"Reviewer","sessionId":"x"})
+    elif it=="P": L.append(user("do it",origin={"kind":"human"}))
+    elif it=="PN": L.append(user("do it now"))
+    elif it=="PT": L.append(user("<task-notification>helper done</task-notification>"))
+    elif it=="PK": L.append(user("helper done",origin={"kind":"task-notification"}))
+    elif it=="PM": L.append(user("Base directory for this skill: x",isMeta=True))
+    elif it=="PC": L.append(user("<command-name>/clear</command-name>"))
+    elif it=="PQ": L.append({"type":"attachment","attachment":{"type":"queued_command","prompt":"later"}})
+    elif it.startswith("UM:"): L.append(user(it[3:],isMeta=True))
+    elif it.startswith("U:"): L.append(user(it[2:]))
+    elif it=="N": L.append({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}})
+    elif it.startswith("E:"):
+        _,nm,path=it.split(":",2); n+=1
+        L.append({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d"%n,"name":nm,"input":({"file_path":path} if path else {})}]}})
+    elif it.startswith("B:"):
+        n+=1; L.append({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d"%n,"name":"Bash","input":{"command":it[2:]}}]}})
+    elif it.startswith("R:"):
+        _,k,txt=it.split(":",2)
+        L.append(user([{"type":"tool_result","tool_use_id":"t"+k,"content":txt}]))
+open(out,"w").write("".join(json.dumps(x)+"\n" for x in L))
+PY
+fb_n=0
+fb_mapped() {   # <refuse|pass> <label> <changed file> <items...>: a fresh shared-folder repo, one turn, another file changed; refuse = blocked
+  local kind="$1" label="$2" chg="$3"; shift 3
+  fb_n=$((fb_n+1)); R="$FB/shared$fb_n"; S="$FB/s$fb_n"
+  if [ -n "${FB_TSV:-}" ]; then g1_shared "$R" ""; else g1_shared "$R"; fi
+  case "${FB_TSV:-tracked}" in
+    untracked) mkdir -p "$R/.claude"; printf 'reviewer\tnotes/reviewer.md\n' > "$R/.claude/state-roles.tsv";;
+    ignored) printf '.claude/\n' > "$R/.gitignore"; git -C "$R" add .gitignore; "${ID[@]}" git -C "$R" commit -q -m ignore; mkdir -p "$R/.claude"; printf 'reviewer\tnotes/reviewer.md\n' > "$R/.claude/state-roles.tsv";;
+  esac
+  FB_R="$R" python3 "$FB/mk.py" "$FB/t$fb_n" "$@"
+  g1_prompt "$R" "fb$fb_n" "$FB/t$fb_n"
+  echo more >> "$R/$chg"
+  g1_stop "$R" "fb$fb_n" false "$FB/t$fb_n"
+  if [ "$kind" = refuse ]; then c2_chk refuse "$label" g1_blocked; else c2_chk pass "$label" g1_quiet; fi
+}
+g1_conf 'g1seat*  dev  850'
+
+echo "  B-M5 what this chat wrote: any Bash write, not only a spelled-out git commit"
+fb_mapped refuse "B-M5 sed -i on a tracked file counts as this chat's own write" README.md TITLE P "B:sed -i s/a/b/ README.md" N
+fb_mapped refuse "B-M5 a heredoc redirect (cat > f <<EOF) counts" README.md TITLE P $'B:cat > README.md <<EOF\nnew text\nEOF' N
+fb_mapped refuse "B-M5 python -c open(...).write(...) counts" README.md TITLE P "B:python3 -c \"open('README.md','w').write('x')\"" N
+fb_mapped refuse "B-M5 git -C . commit counts as a commit" README.md TITLE P "B:git -C . commit -m x" N
+fb_mapped refuse "B-M5 git -c k=v commit counts as a commit" README.md TITLE P "B:git -c user.name=x commit -m x" N
+fb_mapped refuse "B-M5 a write after a harmless first command in the same line counts" README.md TITLE P "B:ls && echo more >> README.md" N
+fb_mapped pass "B-M5 pair: read-only Bash (ls, git status, git diff) is no write" README.md TITLE P "B:ls -la; git status; git diff" N
+fb_mapped pass "B-M5 pair: the words git commit inside quotes are no commit" README.md TITLE P "B:echo \"git commit\"" N
+fb_mapped pass "B-M5 pair: python -c print(1) is no write" README.md TITLE P "B:python3 -c \"print(1)\"" N
+fb_mapped pass "B-M5 pair: a redirect to /dev/null is no write" README.md TITLE P "B:cat README.md > /dev/null" N
+
+echo "  B-M6 the turn starts at the last TYPED prompt"
+fb_mapped refuse "B-M6 a mid-turn task-notification user line does not hide the turn's own Edit" README.md TITLE P "E:Edit:@R@/README.md" PT N
+fb_mapped refuse "B-M6 a user line whose origin kind is task-notification does not hide it" README.md TITLE P "E:Edit:@R@/README.md" PK N
+fb_mapped refuse "B-M6 an isMeta skill body does not hide it" README.md TITLE P "E:Edit:@R@/README.md" PM N
+fb_mapped refuse "B-M6 a slash-command wrapper line does not hide it" README.md TITLE P "E:Edit:@R@/README.md" PC N
+fb_mapped refuse "B-M6 a queued-command attachment does not hide it" README.md TITLE P "E:Edit:@R@/README.md" PQ N
+fb_mapped refuse "B-M6 with no origin anywhere (a terminal app), the typed line still starts the turn" README.md TITLE PN "E:Edit:@R@/README.md" N
+fb_mapped pass "B-M6 pair: a typed prompt AFTER the Edit starts a new turn: the old Edit is not this turn's" README.md TITLE P "E:Edit:@R@/README.md" N P N
+fb_mapped pass "B-M6 pair: a typed line with no origin after the Edit starts a new turn too" README.md TITLE P "E:Edit:@R@/README.md" N PN N
+
+echo "  B-M7 another chat's change holds this chat only when it wrote that path, or committed"
+fb_mapped refuse "B-M7 an Edit of the changed file (absolute path) holds" README.md TITLE P "E:Edit:@R@/README.md" N
+fb_mapped refuse "B-M7 an Edit of the changed file (relative path) holds" README.md TITLE P "E:Edit:README.md" N
+fb_mapped refuse "B-M7 a Bash redirect to the changed file holds" README.md TITLE P "B:echo x >> README.md" N
+fb_mapped refuse "B-M7 a Write whose path cannot be read counts as this chat's" README.md TITLE P "E:Write:" N
+fb_mapped refuse "B-M7 a Bash write whose target is a variable counts as this chat's" README.md TITLE P "B:echo x > \$OUT" N
+fb_mapped refuse "B-M7 a real commit by this chat holds" README.md TITLE P "B:git commit -m work" N
+fb_mapped refuse "B-M7 mv of the changed file holds" README.md TITLE P "B:mv README.md README.old" N
+fb_mapped pass "B-M7 pair: a Write to a temp file while another chat changed the tracked file: no hold" README.md TITLE P "E:Write:/tmp/fb-unrelated.txt" N
+fb_mapped pass "B-M7 pair: a Bash redirect to a temp file: no hold" README.md TITLE P "B:echo x > /tmp/fb-unrelated.txt" N
+fb_mapped pass "B-M7 pair: an Edit of another tracked file that did not change: no hold" README.md TITLE P "E:Edit:@R@/notes/builder.md" N
+fb_mapped pass "B-M7 pair: Bash text that merely says git commit: no hold" README.md TITLE P "B:echo 'run git commit later' > /tmp/fb-note.txt" N
+
+echo "  B-m21 / B-m22 who the chat is"
+fb_mapped refuse "B-m21 a meta caveat line and a command wrapper before the first real message are skipped" README.md "UM:<local-command-caveat>Caveat: the messages below were generated by the user</local-command-caveat>" PC "U:You are the reviewer chat" P "E:Edit:@R@/README.md" N
+fb_mapped refuse "B-m21 an isMeta line before the first real message is skipped" README.md "UM:Base directory for this skill: x" "U:You are the reviewer chat" P "E:Edit:@R@/README.md" N
+fb_mapped pass "B-m21 pair: only meta and wrapper lines, no real message: not mapped" README.md "UM:Caveat: reviewer" "U:<command-name>/reviewer</command-name>" P "E:Edit:@R@/README.md" N
+FB_TSV=untracked fb_mapped pass "B-m22 an UNTRACKED .claude/state-roles.tsv does not opt the repo in" README.md TITLE P "E:Edit:@R@/README.md" N
+FB_TSV=ignored fb_mapped pass "B-m22 a gitignored .claude/state-roles.tsv does not opt the repo in" README.md TITLE P "E:Edit:@R@/README.md" N
+fb_mapped refuse "B-m22 pair: the same file committed opts the repo in" README.md TITLE P "E:Edit:@R@/README.md" N
+
+echo "  B-m23 the helper tell compares exact tokens"
+FRT="$FB/g1seat7"; c2_repo "$FRT"; c2_tp "$FB/tp130" 130; c2_tp "$FB/tp140" 140
+S="$FB/s23"; mkdir -p "$S/turn-start" "$S/turn-start-tok"
+echo 100 > "$S/turn-start/a"; echo 100400 > "$S/turn-start-tok/a"; g1_stop "$FRT" a false "$FB/tp130"
+c2_chk pass "B-m23 pair: 130,000 now, 100,400 at the start (29,600 grown, rounded 30k): under 30k, no tell" test ! -e "$S/tell/a"
+echo 100 > "$S/turn-start/b"; echo 100000 > "$S/turn-start-tok/b"; g1_stop "$FRT" b false "$FB/tp130"
+c2_chk refuse "B-m23 130,000 now, 100,000 at the start (exactly 30,000 grown): tell" eq "$(cat "$S/tell/b" 2>/dev/null)" "30"
+echo 100 > "$S/turn-start/c"; g1_stop "$FRT" c false "$FB/tp130"
+c2_chk refuse "B-m23 pair: no exact size beside the rounded one: the rounded figure is the start, tell as before" eq "$(cat "$S/tell/c" 2>/dev/null)" "30"
+echo 100 > "$S/turn-start/d"; echo 55000 > "$S/turn-start-tok/d"; g1_stop "$FRT" d false "$FB/tp130"
+c2_chk refuse "B-m23 pair: an exact size that disagrees with the rounded one is ignored: tell" eq "$(cat "$S/tell/d" 2>/dev/null)" "30"
+g1_stop "$FRT" a false "$FB/tp140"
+c2_chk refuse "B-m23 the Stop hook writes the exact end size beside the rounded one" eq "$(cat "$S/turn-start-tok/a" 2>/dev/null)" "140000"
+g1_prompt "$FRT" m23p "$FB/tp140"
+c2_chk refuse "B-m23 the prompt hook writes the exact size (140,000) beside the rounded one" eq "$(cat "$S/turn-start-tok/m23p" 2>/dev/null)" "140000"
+c2_chk pass "B-m23 pair: ... and the rounded file still holds 140" eq "$(cat "$S/turn-start/m23p" 2>/dev/null)" "140"
+
+echo "  B-M8 / B-m24 wake-warning"
+WS8="$FB/ws8"; mkdir -p "$WS8/wake-warned"; printf 'keep\n' > "$FB/w-sentinel"; ln -s "$FB/w-sentinel" "$WS8/wake-warned/lk8"
+w_run "$HOOKS_DIR" "$WS8" "$(w_in lk8 "$W/t61")"
+c2_chk refuse "B-M8 a link AT the record file is not written through (the target keeps its content)" bash -c "[ \"\$(cat '$FB/w-sentinel')\" = keep ]"
+c2_chk pass "B-M8 pair: ... and nothing is held (exit 0)" eq "$W_RC" 0
+ln -s "$FB/w-missing" "$WS8/wake-warned/lk8b"; w_run "$HOOKS_DIR" "$WS8" "$(w_in lk8b "$W/t61")"
+c2_chk refuse "B-M8 a dangling link at the record file creates nothing at its target" test ! -e "$FB/w-missing"
+w_run "$HOOKS_DIR" "$WS8" "$(w_in plain8 "$W/t61")"
+c2_chk refuse "B-M8 pair: a plain record is still written and the chat held" bash -c "[ '$W_RC' = 2 ] && [ -s '$WS8/wake-warned/plain8' ]"
+WK="$FB/wk"; mkdir -p "$WK"; cp "$HOOKS_DIR/wake-warning.sh" "$HOOKS_DIR/guard-lib.sh" "$WK/"
+IDLE10=$((10 * 60 + 10)); w_tr "$W/t10" 250000 $IDLE10
+printf 'WAKE_IDLE_MIN=5   # five minutes\n' > "$WK/wake-warning.conf"
+w_run "$WK" "$FB/ws24a" "$(w_in k1 "$W/t10")"
+c2_chk refuse "B-m24 a conf line with a trailing comment is read (idle 5 min limit, chat idle 10 min: held)" eq "$W_RC" 2
+printf 'WAKE_IDLE_MIN=5\n' > "$WK/wake-warning.conf"
+w_run "$WK" "$FB/ws24b" "$(w_in k2 "$W/t10")"
+c2_chk refuse "B-m24 pair: the same line without a comment holds" eq "$W_RC" 2
+printf 'WAKE_IDLE_MIN=15   # fifteen minutes\n' > "$WK/wake-warning.conf"
+w_run "$WK" "$FB/ws24c" "$(w_in k3 "$W/t10")"
+c2_chk pass "B-m24 pair: a commented 15 min limit and a chat idle 10 min: passes" eq "$W_RC" 0
+printf "WAKE_IDLE_MIN='5'\t# five\n" > "$WK/wake-warning.conf"
+w_run "$WK" "$FB/ws24d" "$(w_in k4 "$W/t10")"
+c2_chk refuse "B-m24 a quoted value and a tab before the comment are read" eq "$W_RC" 2
+printf 'WAKE_IDLE_MIN=5x\n' > "$WK/wake-warning.conf"
+w_run "$WK" "$FB/ws24e" "$(w_in k5 "$W/t10")"
+c2_chk pass "B-m24 pair: junk after the number (5x) is still ignored: the default 60 applies, passes" eq "$W_RC" 0
+printf 'WAKE_IDLE_MIN=5\n' > "$WK/wake-warning.conf"; rm -f "$WK/guard-lib.sh"
+w_run "$WK" "$FB/ws24f" "$(w_in k6 "$W/t10")"
+c2_chk refuse "B-m24 without guard-lib.sh the hook passes (the private reader is gone)" eq "$W_RC" 0
+
+echo "  B-m25 chapter-note"
+f3_cn() { ch_mk "$CH/f$1" "${@:2}"; ch_stop "f$1" "$CH/f$1"; }
+f3_cn 1 P "B:command git push origin main" N
+c2_chk refuse "B-m25 command git push gives a note" ch_note f1
+f3_cn 2 P "B:command -v git" N
+c2_chk pass "B-m25 pair: command -v git is no push" ch_nonote f2
+f3_cn 3 P "B:git push origin main" "R:1:Everything up-to-date" N
+c2_chk pass "B-m25 a push whose result is Everything up-to-date pushed nothing: no note" ch_nonote f3
+f3_cn 4 P "B:git push origin main" "R:1:   abc1234..def5678  main -> main" N
+c2_chk refuse "B-m25 pair: a push whose result shows an updated ref: note" ch_note f4
+f3_cn 5 P "B:git push origin main topic" $'R:1:To remote\n   abc1234..def5678  main -> main\n ! [rejected]        topic -> topic (fetch first):err' N
+c2_chk refuse "B-m25 a push of two refs, one rejected, one updated: note" ch_note f5
+f3_cn 6 P "B:git push origin topic" $'R:1:To remote\n ! [rejected]        topic -> topic (fetch first):err' N
+c2_chk pass "B-m25 pair: a push of one ref, rejected: no note" ch_nonote f6
+f3_cn 7 P "B:git push origin topic" $'R:1:To remote\n * [new branch]      topic -> topic' N
+c2_chk refuse "B-m25 pair: a push that made a new branch: note" ch_note f7
+f3_cn 8 P "B:echo hi > /dev/stderr" N
+c2_chk pass "B-m25 echo hi > /dev/stderr is no change" ch_nonote f8
+f3_cn 9 P "B:echo hi 2>&1 > /dev/stdout; true" N
+c2_chk pass "B-m25 a redirect to /dev/stdout is no change" ch_nonote f9
+f3_cn 10 P "B:cp a.txt b.txt" N
+c2_chk refuse "B-m25 cp as the first change gives a note" ch_note f10
+f3_cn 11 P "B:mv a.txt b.txt" N
+c2_chk refuse "B-m25 mv as the first change gives a note" ch_note f11
+f3_cn 12 P "B:git apply fix.patch" N
+c2_chk refuse "B-m25 git apply as the first change gives a note" ch_note f12
+f3_cn 13 P "B:echo cp a b; echo \"mv a b\"" N
+c2_chk pass "B-m25 pair: cp or mv as plain words (or in quotes) is no change" ch_nonote f13
+f3_cn 14 P "B:git -C . commit -m x" N
+c2_chk refuse "B-m25 pair: git -C . commit is the first change (the shared reader)" ch_note f14
+
+echo "  B-hdr the header comments"
+if grep -q 'Not covered' "$HOOKS_DIR/stop-state-check.sh" && grep -q 'turn_scan' "$HOOKS_DIR/stop-state-check.sh" && grep -q 'queued' "$HOOKS_DIR/stop-state-check.sh"; then ok; else bad "B-hdr stop-state-check header must say what is not covered and name turn_scan"; fi; refuse_n=$((refuse_n+1))
+if grep -q 'turn_scan' "$HOOKS_DIR/chapter-note.sh" && grep -q 'Not covered' "$HOOKS_DIR/chapter-note.sh" && grep -q 'Everything up-to-date' "$HOOKS_DIR/chapter-note.sh"; then ok; else bad "B-hdr chapter-note header must name turn_scan, what is not covered and the up-to-date rule"; fi; refuse_n=$((refuse_n+1))
+if grep -q 'trailing' "$HOOKS_DIR/wake-warning.sh" && grep -q 'link' "$HOOKS_DIR/wake-warning.sh"; then ok; else bad "B-hdr wake-warning header must name the conf comment and the link rule"; fi; refuse_n=$((refuse_n+1))
 
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
