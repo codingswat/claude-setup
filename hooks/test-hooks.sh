@@ -2878,7 +2878,7 @@ pid,fd=pty.fork()
 if pid==0:
     os.environ["HOME"]=home
     os.execvp("bash",["bash",script])
-os.write(fd,b"\ny\n\n\n\n")
+os.write(fd,b"\ny\n\n\n\n\n")
 while True:
     try:
         if not os.read(fd,4096): break
@@ -4196,6 +4196,209 @@ c2_chk refuse "P7 killed then run again: the same files as a clean run" eq "$(w_
 c2_chk refuse "P7 killed then run again: the same UserPromptSubmit entry count as a clean run" eq "$(d2_count "$HW3/.claude/settings.json" UserPromptSubmit)" "$W_CLEAN_UPS"
 { echo "W-LEFT yes-once files: $(w_files "$HW2" | wc -l | tr -d ' ') UPS-entries: $(d2_count "$HW2/.claude/settings.json" UserPromptSubmit)"; echo "W-LEFT killed-then-rerun files: $(w_files "$HW3" | wc -l | tr -d ' ') UPS-entries: $(d2_count "$HW3/.claude/settings.json" UserPromptSubmit)"; echo "W-LEFT --yes files: $(w_files "$HW1" | wc -l | tr -d ' ') UPS-entries: $(d2_count "$HW1/.claude/settings.json" UserPromptSubmit)"; echo "W-LEFT killed-run (before rerun) tmp leftovers: $(find "$HW3/.claude" -name '*.tmp*' | wc -l | tr -d ' ')"; } > "$W/left.txt"
 cp "$W/left.txt" "${WLEFT_OUT:-/dev/null}" 2>/dev/null
+
+# ---- guard port 2026-10-10 (C3): chapter-note.sh (opt-in, Claude desktop app) and its installer step ----
+echo "guard port 2026-10-10 (C3): chapter-note.sh"
+CH="$T/c3"; mkdir -p "$CH"; CS="$CH/state"
+# a transcript builder: P = a typed prompt, N = an assistant text line, B:<cmd> = a Bash tool_use, T:<name> = another tool_use,
+# R:<n>:<text>[:err] = the result of the n-th tool_use (is_error when err). Tool ids are t1, t2 ... in order.
+cat > "$CH/mk.py" <<'PY'
+import json,sys
+out=sys.argv[1]; n=0; L=[]
+for it in sys.argv[2:]:
+    if it=="P": L.append({"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"do it"}})
+    elif it=="N": L.append({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}})
+    elif it.startswith("B:") or it.startswith("T:"):
+        n+=1
+        if it[0]=="B": nm,inp="Bash",{"command":it[2:]}
+        else: nm,inp=it[2:],{"file_path":"/x/y"}
+        L.append({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d"%n,"name":nm,"input":inp}]}})
+    elif it.startswith("R:"):
+        _,k,txt,*e=it.split(":",3)
+        c={"type":"tool_result","tool_use_id":"t"+k,"content":txt}
+        if e and e[0]=="err": c["is_error"]=True
+        L.append({"type":"user","message":{"role":"user","content":[c]}})
+open(out,"w").write("".join(json.dumps(x)+"\n" for x in L))
+PY
+ch_mk() { python3 "$CH/mk.py" "$@"; }
+ch_run() {   # <event> <sid> <transcript> [env...]: run the hook; stdout -> $CH/out, rc in $CH_RC
+  local ev="$1" sid="$2" tp="$3"; shift 3
+  printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s"}' "$ev" "$sid" "$tp" | env STATE_CHECK_STATE_DIR="$CS" "$@" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2> "$CH/err"; CH_RC=$?
+}
+ch_note() { [ -s "$CS/chapter-notes/$1" ]; }
+ch_nonote() { [ ! -e "$CS/chapter-notes/$1" ]; }
+ch_stop() { ch_run Stop "$@"; }
+ch_rm() { rm -f "$CS/chapter-notes/$1"; }
+
+echo "  P14 first change"
+ch_mk "$CH/e1" P "T:Edit" N; ch_stop e1 "$CH/e1"
+c2_chk refuse "P14 the first Edit of a session with no chapter call writes a note" ch_note e1
+c2_chk refuse "P14 the note says it is the first change, names the tool and asks for a short title" bash -c "grep -q 'Mark a chapter: this session just made its first change\\.' '$CS/chapter-notes/e1' && grep -q 'call the chapter tool (mark_chapter) with a short title' '$CS/chapter-notes/e1'"
+c2_chk pass "P14 pair: Stop prints nothing on stdout and exits 0" bash -c "[ '$CH_RC' = 0 ] && [ ! -s '$CH/out' ]"
+ch_mk "$CH/e1c" P "T:Edit" N; ch_stop e1c "$CH/e1c"; ch_rm e1c
+ch_mk "$CH/e1c2" P "T:Edit" N P "T:Write" N; ch_stop e1c "$CH/e1c2"
+c2_chk pass "P14 pair: a later Edit in the same session writes no new note" ch_nonote e1c
+ch_mk "$CH/e2" P "T:Edit" "T:mark_chapter" N; ch_stop e2 "$CH/e2"
+c2_chk pass "P14 pair: an Edit followed by a chapter call in the same turn: no note" ch_nonote e2
+ch_mk "$CH/e2b" P "T:mark_chapter" "B:git push origin main" N; ch_stop e2b "$CH/e2b"
+c2_chk refuse "P14 a chapter call BEFORE the push in the turn does not cancel it: note" ch_note e2b
+ch_mk "$CH/e2c" P "T:mark_chapter" "T:Edit" N; ch_stop e2c "$CH/e2c"
+c2_chk pass "P14 pair: a chapter call before the first Edit of the turn: the session has a chapter, so no first note" ch_nonote e2c
+ch_mk "$CH/e3" P "T:mcp__app__mark_chapter" N P "T:Edit" N; ch_stop e3 "$CH/e3"
+c2_chk pass "P14 pair: a session that called the (namespaced) chapter tool earlier: no first note" ch_nonote e3
+ch_mk "$CH/e3b" P "T:mark_chapter_x" N P "T:Edit" N; ch_stop e3b "$CH/e3b"
+c2_chk refuse "P14 a tool whose name only CONTAINS the chapter name is not a chapter call: note" ch_note e3b
+ch_mk "$CH/e4" P "B:sed -i s/a/b/ f.txt" N; ch_stop e4 "$CH/e4"
+c2_chk refuse "P14 a Bash sed -i counts as a change: note" ch_note e4
+ch_mk "$CH/e5" P "B:echo hi > out.txt" N; ch_stop e5 "$CH/e5"
+c2_chk refuse "P14 a Bash redirect to a file counts as a change: note" ch_note e5
+ch_mk "$CH/e6" P "B:echo hi 2>/dev/null; ls" N; ch_stop e6 "$CH/e6"
+c2_chk pass "P14 pair: a redirect to /dev/null is no change" ch_nonote e6
+ch_mk "$CH/e7" P "B:git commit -m x" N; ch_stop e7 "$CH/e7"
+c2_chk refuse "P14 a git commit counts as the first change: note" ch_note e7
+ch_mk "$CH/e8" P "T:Read" "B:ls -la" N; ch_stop e8 "$CH/e8"
+c2_chk pass "P14 pair: a read-only turn: no note" ch_nonote e8
+ch_mk "$CH/e9" P "B:echo \"git commit\"" N; ch_stop e9 "$CH/e9"
+c2_chk pass "P14 pair: the words git commit inside quotes are no commit" ch_nonote e9
+ch_mk "$CH/ch10" P "T:Edit" N; ch_stop ch10 "$CH/ch10"; ch_rm ch10; ch_stop ch10 "$CH/ch10"
+c2_chk pass "P14 the same trigger seen twice (the same Stop again) gives one note only" ch_nonote ch10
+
+echo "  P14 git push"
+ch_mk "$CH/p1" P "B:git push origin main" N; ch_stop p1 "$CH/p1"
+c2_chk refuse "P14 git push origin main: note" ch_note p1
+c2_chk refuse "P14 the push note says pushed" bash -c "grep -q 'this session just pushed\\.' '$CS/chapter-notes/p1'"
+ch_mk "$CH/p1b" P "T:Edit" "B:git push origin main" N; ch_stop p1b "$CH/p1b"
+c2_chk refuse "P14 a first change AND a push in one turn: one note saying both" bash -c "grep -q 'made its first change and pushed' '$CS/chapter-notes/p1b'"
+ch_rm p1; ch_stop p1 "$CH/p1"
+c2_chk pass "P14 pair: the same push seen again: no second note" ch_nonote p1
+ch_mk "$CH/p1c" P "B:git push origin main" N P "B:git push origin main" N; ch_stop p1 "$CH/p1c"
+c2_chk refuse "P14 a push in a LATER turn is asked again" ch_note p1
+for pc in 'git push --dry-run origin main' 'git push -n' 'git push --help' 'echo "git push"' "echo 'git push'" 'git commit -m "git push"' 'git status'; do
+  sidp="pn$(printf '%s' "$pc" | cksum | cut -d' ' -f1)"
+  ch_mk "$CH/$sidp" P "B:$pc" N; ch_stop "$sidp" "$CH/$sidp"
+  case "$pc" in 'git commit'*) c2_chk pass "P14 pair: [$pc] makes no PUSH note (it is a commit: first-change wording only)" bash -c "! grep -q pushed '$CS/chapter-notes/$sidp' 2>/dev/null";;
+    *) c2_chk pass "P14 pair: [$pc] makes no note" ch_nonote "$sidp";; esac
+done
+ch_mk "$CH/ph" P "B:cat <<EOF
+git push origin main
+EOF" N; ch_stop ph "$CH/ph"
+c2_chk pass "P14 pair: a heredoc holding git push is no push" ch_nonote ph
+ch_mk "$CH/pr" P "B:git push origin main" "R:1:! [rejected]        main -> main (fetch first)" N; ch_stop pr "$CH/pr"
+c2_chk pass "P14 pair: a push whose tool result says rejected: no note" ch_nonote pr
+ch_mk "$CH/pe" P "B:git push origin main" "R:1:fatal no remote:err" N; ch_stop pe "$CH/pe"
+c2_chk pass "P14 pair: a push whose tool result is an error: no note" ch_nonote pe
+ch_mk "$CH/pg" P "B:git push origin main" "R:1:Everything up-to-date" N; ch_stop pg "$CH/pg"
+c2_chk refuse "P14 a push whose result is fine: note" ch_note pg
+ch_mk "$CH/pb" P "B:bash -c \"git push origin main\"" N; ch_stop pb "$CH/pb"
+c2_chk refuse "P14 bash -c \"git push\": note" ch_note pb
+ch_mk "$CH/pi" P "B:if true; then git push origin main; fi" N; ch_stop pi "$CH/pi"
+c2_chk refuse "P14 if x; then git push; fi: note" ch_note pi
+ch_mk "$CH/pc" P "B:git -C repo push" N; ch_stop pc "$CH/pc"
+c2_chk refuse "P14 git -C repo push: note" ch_note pc
+ch_mk "$CH/pd" P "B:git push origin main" "T:mark_chapter" N; ch_stop pd "$CH/pd"
+c2_chk pass "P14 pair: a push followed by a chapter call in the turn: no note" ch_nonote pd
+ch_mk "$CH/pl" P "B:git pushd" N; ch_stop pl "$CH/pl"
+c2_chk pass "P14 pair: git pushd is not git push" ch_nonote pl
+
+echo "  P14 safety and failing open"
+mkdir -p "$CH/elsewhere"; CSL="$CH/state-l1"; mkdir -p "$CSL"; ln -s "$CH/elsewhere" "$CSL/chapter-notes"
+printf '{"hook_event_name":"Stop","session_id":"l1","transcript_path":"%s"}' "$CH/e1" | env STATE_CHECK_STATE_DIR="$CSL" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>"$CH/err"; rcl=$?
+c2_chk refuse "P14 a link at chapter-notes: nothing written through it, exit 0" bash -c "[ $rcl = 0 ] && [ -z \"\$(ls -A '$CH/elsewhere')\" ] && [ ! -s '$CH/out' ]"
+CSL2="$CH/state-l2"; mkdir -p "$CSL2/chapter-notes"; ln -s "$CH/elsewhere/x" "$CSL2/chapter-notes/l2"
+printf '{"hook_event_name":"Stop","session_id":"l2","transcript_path":"%s"}' "$CH/e1" | env STATE_CHECK_STATE_DIR="$CSL2" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>"$CH/err"; rcl=$?
+c2_chk refuse "P14 a link at the note path: nothing written through it, exit 0" bash -c "[ $rcl = 0 ] && [ ! -e '$CH/elsewhere/x' ]"
+CSL3="$CH/state-l3"; mkdir -p "$CSL3"; ln -s "$CH/elsewhere" "$CSL3/chapters-ask"
+printf '{"hook_event_name":"Stop","session_id":"l3","transcript_path":"%s"}' "$CH/e1" | env STATE_CHECK_STATE_DIR="$CSL3" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>"$CH/err"; rcl=$?
+c2_chk refuse "P14 a link at chapters-ask: no note, nothing written through it, exit 0" bash -c "[ $rcl = 0 ] && [ -z \"\$(ls -A '$CH/elsewhere')\" ] && [ ! -e '$CSL3/chapter-notes/l3' ]"
+CSU="$CH/state-u"; mkdir -p "$CSU/chapters-ask/u1"
+printf '{"hook_event_name":"Stop","session_id":"u1","transcript_path":"%s"}' "$CH/e1" | env STATE_CHECK_STATE_DIR="$CSU" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>"$CH/err"; rcl=$?
+c2_chk refuse "P14 an unwritable record (a folder sits at the record path): no note, exit 0" bash -c "[ $rcl = 0 ] && [ ! -e '$CSU/chapter-notes/u1' ]"
+CSU2="$CH/state-u2"; mkdir -p "$CSU2"; : > "$CSU2/chapters-ask"
+printf '{"hook_event_name":"Stop","session_id":"u2","transcript_path":"%s"}' "$CH/e1" | env STATE_CHECK_STATE_DIR="$CSU2" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>"$CH/err"; rcl=$?
+c2_chk refuse "P14 a record folder that cannot be made (a file in its place): no note, exit 0" bash -c "[ $rcl = 0 ] && [ ! -e '$CSU2/chapter-notes/u2' ]"
+for badsid in '../x' 'a/b' '..'; do
+  printf '{"hook_event_name":"Stop","session_id":"%s","transcript_path":"%s"}' "$badsid" "$CH/e1" | env STATE_CHECK_STATE_DIR="$CH/state-bs" bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>"$CH/err"
+  c2_chk pass "P14 pair: the session id [$badsid] is ignored: nothing written" bash -c "[ ! -e '$CH/state-bs' ] && [ ! -e '$CH/x' ]"
+done
+ch_run Stop ch11 "$CH/no-such-transcript"
+c2_chk pass "P14 pair: no transcript: exit 0, no output, no note" bash -c "[ '$CH_RC' = 0 ] && [ ! -s '$CH/out' ] && [ ! -e '$CS/chapter-notes/ch11' ]"
+printf '' | bash "$HOOKS_DIR/chapter-note.sh" > "$CH/out" 2>&1; rcn=$?
+c2_chk pass "P14 pair: no input: exit 0, no output" bash -c "[ $rcn = 0 ] && [ ! -s '$CH/out' ]"
+ch_run SessionStart ch12 "$CH/e1"
+c2_chk pass "P14 pair: another event (SessionStart): exit 0, no output, no note" bash -c "[ '$CH_RC' = 0 ] && [ ! -s '$CH/out' ] && [ ! -e '$CS/chapter-notes/ch12' ]"
+ch_run PreToolUse ch12 "$CH/e1"
+c2_chk pass "P14 pair: another event (PreToolUse): no note" ch_nonote ch12
+ch_mk "$CH/ch13" T:Edit; ch_stop ch13 "$CH/ch13"
+c2_chk pass "P14 pair: a transcript with no typed prompt: no note" ch_nonote ch13
+ch_mk "$CH/ch14" P "T:Edit" N; ch_stop ch14 "$CH/ch14"
+c2_chk pass "P14 pair: Stop output is empty and the exit code 0 even when a note was written" bash -c "[ '$CH_RC' = 0 ] && [ ! -s '$CH/out' ] && [ -s '$CS/chapter-notes/ch14' ]"
+
+echo "  P14 delivery on UserPromptSubmit"
+ch_run UserPromptSubmit e1c "$CH/e1"
+c2_chk pass "P14 pair: UserPromptSubmit with no note waiting: empty output, exit 0" bash -c "[ '$CH_RC' = 0 ] && [ ! -s '$CH/out' ]"
+ch_run UserPromptSubmit ch14 "$CH/ch14"
+c2_chk refuse "P14 UserPromptSubmit with a note waiting prints it" has 'Mark a chapter: this session just made its first change' "$CH/out"
+c2_chk refuse "P14 ... and removes it" ch_nonote ch14
+ch_run UserPromptSubmit ch14 "$CH/ch14"
+c2_chk pass "P14 pair: the second UserPromptSubmit prints nothing (the note is shown once)" bash -c "[ '$CH_RC' = 0 ] && [ ! -s '$CH/out' ]"
+mkdir -p "$CS/chapter-notes"; ln -s "$CH/ch14" "$CS/chapter-notes/lk"
+ch_run UserPromptSubmit lk "$CH/ch14"
+c2_chk pass "P14 pair: a link at the note path is never read" bash -c "[ ! -s '$CH/out' ]"
+
+echo "  P14 the chapter tool name"
+ch_mk "$CH/t1" P "T:Edit" "T:set_title" N; ch_stop t1 "$CH/t1" CHAPTER_TOOL=set_title
+c2_chk pass "P14 pair: CHAPTER_TOOL=set_title: a set_title call after the Edit: no note" ch_nonote t1
+ch_mk "$CH/t2" P "T:Edit" "T:mark_chapter" N; ch_stop t2 "$CH/t2" CHAPTER_TOOL=set_title
+c2_chk refuse "P14 CHAPTER_TOOL=set_title: mark_chapter is no longer the chapter tool: note, and it names set_title" bash -c "grep -q '(set_title)' '$CS/chapter-notes/t2'"
+HK3="$CH/hk"; mkdir -p "$HK3"; cp "$HOOKS_DIR/chapter-note.sh" "$HK3/"; printf 'CHAPTER_TOOL=set_title\n' > "$HK3/chapter-note.conf"
+printf '{"hook_event_name":"Stop","session_id":"t3","transcript_path":"%s"}' "$CH/t1" | env STATE_CHECK_STATE_DIR="$CS" bash "$HK3/chapter-note.sh" >/dev/null 2>&1
+c2_chk pass "P14 pair: a conf CHAPTER_TOOL=set_title is read: set_title call, no note" ch_nonote t3
+printf '{"hook_event_name":"Stop","session_id":"t4","transcript_path":"%s"}' "$CH/t2" | env STATE_CHECK_STATE_DIR="$CS" bash "$HK3/chapter-note.sh" >/dev/null 2>&1
+c2_chk refuse "P14 a conf CHAPTER_TOOL=set_title: only mark_chapter called, so a note" ch_note t4
+printf '{"hook_event_name":"Stop","session_id":"t5","transcript_path":"%s"}' "$CH/t2" | env STATE_CHECK_STATE_DIR="$CS" CHAPTER_TOOL=mark_chapter bash "$HK3/chapter-note.sh" >/dev/null 2>&1
+c2_chk pass "P14 pair: an environment CHAPTER_TOOL beats the conf" ch_nonote t5
+
+echo "  P14 installer"
+c3_count() { python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));print(sum(1 for g in s.get("hooks",{}).get(sys.argv[2],[]) for h in g.get("hooks",[]) if "chapter-note.sh" in h.get("command","")))' "$1" "$2" 2>/dev/null; }
+cat > "$CH/drv.py" <<'PY'
+import os,pty,sys,select,re
+home,script,outp,mode=sys.argv[1:5]
+pid,fd=pty.fork()
+if pid==0:
+    os.environ["HOME"]=home
+    os.execvp("bash",["bash",script])
+buf=b""; answered=0
+while True:
+    r,_,_=select.select([fd],[],[],0.5)
+    if r:
+        try: d=os.read(fd,4096)
+        except OSError: break
+        if not d: break
+        buf+=d
+    elif len(buf)>answered:
+        tail=buf[-400:].decode("utf8","ignore")
+        if re.search(r"(\] |: |\? )$",tail):
+            yes = mode=="yes" and "chapter note" in tail.lower() and tail.rstrip().endswith("[y/N]")
+            os.write(fd,b"y\n" if yes else (b"n\n" if tail.rstrip().endswith(("[y/N]","[Y/n]")) else b"\n")); answered=len(buf)
+open(outp,"wb").write(buf)
+_,st=os.waitpid(pid,0); sys.exit(os.waitstatus_to_exitcode(st))
+PY
+c3_inst() { python3 "$CH/drv.py" "$1" "$REPOW/install.sh" "$2" "$3" >/dev/null 2>&1; }
+HC1="$CH/home1"; mkdir -p "$HC1"; env HOME="$HC1" bash "$REPOW/install.sh" --yes > "$CH/inst1.out" 2>&1
+c2_chk refuse "P14 installer --yes: chapter-note.sh is copied and executable" test -x "$HC1/.claude/hooks/chapter-note.sh"
+c2_chk pass "P14 pair: installer --yes does not register it (Stop)" eq "$(c3_count "$HC1/.claude/settings.json" Stop)" 0
+c2_chk pass "P14 pair: installer --yes does not register it (UserPromptSubmit)" eq "$(c3_count "$HC1/.claude/settings.json" UserPromptSubmit)" 0
+HC2="$CH/home2"; mkdir -p "$HC2"; c3_inst "$HC2" "$CH/inst2.out" yes
+c2_chk refuse "P14 installer answering yes registers it once on Stop" eq "$(c3_count "$HC2/.claude/settings.json" Stop)" 1
+c2_chk refuse "P14 ... and once on UserPromptSubmit" eq "$(c3_count "$HC2/.claude/settings.json" UserPromptSubmit)" 1
+c2_chk refuse "P14 ... both with a timeout of 10" bash -c "python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));print(sorted(h.get(\"timeout\") for e in (\"Stop\",\"UserPromptSubmit\") for g in s[\"hooks\"][e] for h in g[\"hooks\"] if \"chapter-note.sh\" in h[\"command\"]))' '$HC2/.claude/settings.json' | grep -q '\[10, 10\]'"
+c2_chk refuse "P14 the question says it is for the Claude desktop app" bash -c "grep -q 'Claude desktop app' '$CH/inst2.out'"
+c3_inst "$HC2" "$CH/inst2b.out" yes
+c2_chk pass "P14 pair: a second run answering yes: still once on Stop" eq "$(c3_count "$HC2/.claude/settings.json" Stop)" 1
+c2_chk pass "P14 pair: a second run answering yes: still once on UserPromptSubmit" eq "$(c3_count "$HC2/.claude/settings.json" UserPromptSubmit)" 1
+c3_inst "$HC2" "$CH/inst2c.out" no
+c2_chk pass "P14 pair: a third run answering no keeps both registrations (once each)" eq "$(c3_count "$HC2/.claude/settings.json" Stop)$(c3_count "$HC2/.claude/settings.json" UserPromptSubmit)" 11
+c2_chk pass "P14 pair: the wake-up warning was answered no in the yes run, so only this hook was added to UserPromptSubmit by the question" eq "$(w_count "$HC2/.claude/settings.json")" 0
 
 echo "RESULT: $pass passed, $fail failed ($refuse_n must-refuse cases, $pass_n must-pass cases)"
 [ "$fail" = 0 ]

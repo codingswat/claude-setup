@@ -166,6 +166,7 @@ copy_if_present  "$SRC/hooks/provenance.py"              "$DEST/hooks/provenance
 copy_if_present  "$SRC/hooks/doorman.sh"                 "$DEST/hooks/doorman.sh"                 "doorman.sh (UserPromptSubmit, opt-in)"
 copy_if_present  "$SRC/hooks/stop-state-check.sh"        "$DEST/hooks/stop-state-check.sh"        "stop-state-check.sh (Stop, opt-in)"
 copy_if_present  "$SRC/hooks/wake-warning.sh"           "$DEST/hooks/wake-warning.sh"           "wake-warning.sh (UserPromptSubmit, opt-in)"
+copy_if_present  "$SRC/hooks/chapter-note.sh"          "$DEST/hooks/chapter-note.sh"          "chapter-note.sh (Stop + UserPromptSubmit, opt-in)"
 copy_if_present  "$SRC/hooks/test-hooks.sh"            "$DEST/hooks/test-hooks.sh"            "test-hooks.sh (run it yourself to check the hooks)"
 # The next two are not hooks — test-hooks.sh runs them as subprocesses and folds their
 # counts into its own RESULT line, so they need to sit alongside it to make that promise true.
@@ -177,7 +178,7 @@ chmod +x "$DEST/hooks/check-claude-md.sh" "$DEST/hooks/auto-backup.sh" "$DEST/ho
          "$DEST/hooks/heavy-suite-guard.sh" "$DEST/hooks/override-ledger.sh" "$DEST/hooks/gate-guard.sh" \
          "$DEST/hooks/channel-size-guard.sh" "$DEST/hooks/channel-size-post.sh" "$DEST/hooks/helper-ledger.py" \
          "$DEST/hooks/channel-provenance-pre.sh" "$DEST/hooks/channel-provenance-post.sh" \
-         "$DEST/hooks/provenance.py" "$DEST/hooks/doorman.sh" "$DEST/hooks/stop-state-check.sh" "$DEST/hooks/wake-warning.sh" \
+         "$DEST/hooks/provenance.py" "$DEST/hooks/doorman.sh" "$DEST/hooks/stop-state-check.sh" "$DEST/hooks/wake-warning.sh" "$DEST/hooks/chapter-note.sh" \
          "$DEST/hooks/test-hooks.sh" "$DEST/hooks/test-helper-ledger.sh" "$DEST/hooks/test-rules-cap.sh" 2>/dev/null
 
 # .conf.example files for the new guards — copied as EXAMPLES only, never as a live conf:
@@ -648,6 +649,20 @@ if ask "Register the wake-up warning?" "n"; then
   fi
 else
   skip "Skipped — wake-warning.sh is copied but not registered."
+fi
+
+# The chapter note (opt-in, its own question, default no): copied above, registered only on a yes.
+head2 "The chapter note (optional, Claude desktop app only)"
+say "  chapter-note.sh: this is for the Claude desktop app, whose chapter tool it nudges; it does nothing"
+say "  useful in any other client. After a session's first change, or a push, it leaves the model one"
+say "  short note to call that tool with a title (never blocks anything, never repeats for the same trigger)."
+if ask "Register the chapter note?" "n"; then
+  res=$(register_hook "Stop" '/bin/bash "$HOME/.claude/hooks/chapter-note.sh"' "10" "")
+  report_hook_result "$res" "the Stop hook (chapter-note.sh)"
+  res=$(register_hook "UserPromptSubmit" '/bin/bash "$HOME/.claude/hooks/chapter-note.sh"' "10" "")
+  report_hook_result "$res" "the UserPromptSubmit hook (chapter-note.sh)"
+else
+  skip "Skipped — chapter-note.sh is copied but not registered."
 fi
 
 # #9: a backup copy only earns its place if we actually changed the file.
