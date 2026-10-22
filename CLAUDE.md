@@ -83,6 +83,10 @@ rest of the form is still the part that actually matters:
   diff. If they turn it on, make sure the allowlist `~/.claude/.gitignore` went in first and
   that the backup repo is private.
 
+## Maintainer: zipping this repo
+
+On request, zip the repo to `~/Downloads/claude-setup.zip`, excluding `.git/` and `.DS_Store`. If content changed since the last security review, re-check it for identity and domain leaks first; private originals under `~/.claude` never go in the zip.
+
 ## House style while doing this
 
 Plain English. Explain a term the moment you use it, in the same sentence. Short answers. If
