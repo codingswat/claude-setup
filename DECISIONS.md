@@ -1,8 +1,9 @@
 # Decision log
 
-Every significant choice gets three lines: **Decided** (what), **Why**, and **Rules out**
-(what this closes off). Newest at the bottom. Check here before proposing changes —
-settled decisions aren't relitigated without saying so explicitly.
+Every significant choice gets four lines: **Decided** (what), **Why** (one sentence; an
+owner quote alone is not a reason), **Rules out** (what this closes off) and **Revisit if**
+(a date or a named condition). Newest at the bottom. Check here before proposing changes.
+Decisions can be reopened with a reason they did not weigh; only 🔒 LOCKED entries stay shut.
 
 This is the format, shown on a few of this repo's own decisions. The full log stays with
 the private setup; a decision log is for the people working on a thing, not its readers.
